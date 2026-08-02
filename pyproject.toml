@@ -1,0 +1,29 @@
+[project]
+name = "fantasyedge"
+version = "0.1.0"
+description = "Fantasy football valuation and risk engine — comps, volatility, and an MCP server"
+requires-python = ">=3.11"
+
+dependencies = [
+    "nflreadpy>=0.1.5",
+    "polars>=1.0",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+league = ["espn-api>=0.45"]
+mcp = ["mcp>=1.2"]
+viz = ["matplotlib>=3.8", "shap>=0.45"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fantasyedge*"]

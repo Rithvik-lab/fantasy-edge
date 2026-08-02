@@ -1,0 +1,25 @@
+# Secrets — never commit ESPN cookies
+.env
+
+# Data cache (regenerate with `python scripts/pull_data.py`)
+data/raw/*
+data/processed/*
+!data/**/.gitkeep
+
+# Trained models
+models/*
+!models/.gitkeep
+
+# Generated diagnostics
+reports/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# OS
+.DS_Store
