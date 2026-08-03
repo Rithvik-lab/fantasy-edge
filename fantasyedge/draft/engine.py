@@ -192,6 +192,7 @@ def target_volatility(
     n_rounds: int,
     tolerance: str,
     roster_risk: float | None = None,
+    roster_strength: float | None = None,
 ) -> float:
     """Desired volatility percentile for this pick, 0 = floor, 1 = upside.
 
@@ -216,10 +217,24 @@ def target_volatility(
     shift = {"conservative": -0.15, "balanced": 0.0, "aggressive": 0.15}
     target = base + shift.get(tolerance, 0.0)
 
-    if roster_risk is not None:
-        # Pull toward the complement of what you already hold. A safe roster
-        # (0.2) nudges the target up; a wild one (0.8) pulls it down. Damped,
-        # because chasing balance too hard means passing on real value.
+    if roster_strength is not None:
+        # Simulation-derived, not asserted. 3,000 simulated 12-team seasons
+        # per cell say the crossover sits at league average:
+        #
+        #   strength  best sd  playoff%
+        #      -15      38      24.3%     weak rosters want variance
+        #       -5      38      47.1%
+        #        0      26      60.4%     crossover
+        #       +5      18      77.1%     strong rosters want consistency
+        #      +15      18      95.1%
+        #
+        # And it is asymmetric -- at -15 volatility doubles playoff odds
+        # (11.8% -> 24.3%) while at +15 consistency buys only six points. So
+        # a trailing roster should swing harder than a leading one plays safe.
+        from fantasyedge.models.roster_strategy import recommended_volatility
+        target = 0.5 * target + 0.5 * recommended_volatility(roster_strength)
+    elif roster_risk is not None:
+        # Fallback when strength is unknown: counterbalance what you hold.
         target += ROSTER_BALANCE_WEIGHT * (0.5 - roster_risk)
 
     return min(1.0, max(0.0, target))
