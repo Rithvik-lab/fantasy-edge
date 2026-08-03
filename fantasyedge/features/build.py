@@ -84,6 +84,16 @@ def season_panel(seasons: list[int]) -> pl.DataFrame:
         ])
     )
 
+    # polars returns counts as UInt32. Any later subtraction between two of
+    # them (games - prior_games, team_games - games_played) underflows to
+    # 2**32 instead of going negative. Cast once, here, so nothing downstream
+    # has to remember.
+    panel = panel.with_columns([
+        pl.col(c).cast(pl.Int32)
+        for c in ("games", "targets", "receptions", "carries", "total_tds")
+        if c in panel.columns
+    ])
+
     return panel.with_columns([
         # Share of points from touchdowns. TDs are the lumpiest and least
         # sticky scoring event — expected to be the strongest volatility driver.
