@@ -51,7 +51,7 @@ def projections(settings: LeagueSettings) -> pl.DataFrame:
         .agg(pl.col("total_points").mean().alias("proj"))
     )
 
-    return (
+    vets = (
         m.with_columns(pl.col("pos_rank").cast(pl.UInt32).alias("pr"))
         .join(curve, on=["position", "pr"], how="left")
         .rename({"gsis_id": "player_id", "market_name": "player_name",
@@ -59,6 +59,43 @@ def projections(settings: LeagueSettings) -> pl.DataFrame:
         .filter(pl.col("projected_points").is_not_null())
         .select(["player_id", "player_name", "position",
                  "projected_points", "ecr", "sd"])
+        .with_columns(pl.lit(False).alias("rookie"))
+    )
+    return pl.concat([vets, _rookies(settings)], how="diagonal")
+
+
+def _rookies(settings: LeagueSettings) -> pl.DataFrame:
+    """Rookies, which the market board drops because they have no NFL history.
+
+    They were 61 of 447 players missing from the board -- and rookies carry
+    the widest outcomes on any draft board, so leaving them off is worse than
+    projecting them imperfectly.
+
+    Projection is the validated blend: 30% model, 70% NFL draft capital. The
+    model loses to draft order alone (corr 0.6125 vs 0.6563) but improves it
+    in combination (0.6695), exactly as the veteran model does against ADP.
+    """
+    path = Path("data/processed/rookie_projections_2026.parquet")
+    if not path.exists():
+        return pl.DataFrame()
+
+    r = pl.read_parquet(path).filter(pl.col("gsis_id").is_not_null())
+    if not r.height:
+        return pl.DataFrame()
+
+    # Rookies have no ECR on the matched board, so approximate their market
+    # price from draft capital: earlier picks go earlier in fantasy drafts.
+    return (
+        r.with_columns([
+            (pl.col("projected_points").rank("ordinal", descending=True)
+             .cast(pl.Float64) * 2.2 + 24.0).alias("ecr"),
+            pl.lit(4.5).alias("sd"),          # rookies are genuinely uncertain
+            pl.lit(True).alias("rookie"),
+        ])
+        .rename({"gsis_id": "player_id"})
+        .with_columns(pl.col("projected_points").cast(pl.Float64))
+        .select(["player_id", "player_name", "position",
+                 "projected_points", "ecr", "sd", "rookie"])
     )
 
 
@@ -120,6 +157,10 @@ def main() -> int:
         print("-" * 72)
 
     rec = recommend(state, proj, n=a.n, risk_tolerance=a.risk)
+    if rec.height:
+        # engine returns a fixed column set; bring the rookie flag back
+        rec = rec.join(proj.select(["player_id", "rookie"]), on="player_id",
+                       how="left")
     if not rec.height:
         print(" no players available")
         return 1
@@ -130,7 +171,8 @@ def main() -> int:
     for i, r in enumerate(rec.iter_rows(named=True), 1):
         surv = r["p_survive"]
         tag = "GONE" if surv < 0.25 else ("risky" if surv < 0.6 else "likely")
-        print(f"{i:<3}{r['player_name'][:23]:<24}{r['position']:<5}"
+        name = r['player_name'][:21] + (" R" if r.get('rookie') else "")
+        print(f"{i:<3}{name:<24}{r['position']:<5}"
               f"{r['ecr']:>7.1f}{r['vor']:>8.1f}{surv:>8.0%} {tag:<6}"
               f"{r['score']:>7.1f}")
 
@@ -139,6 +181,7 @@ def main() -> int:
     print(f" {gap} picks until your next turn.")
     print(" SURVIVE = chance he lasts that long. Low = take him now.")
     print(" VOR = points above the worst startable player at his position.")
+    print(" R = rookie (projected from draft capital, wider error bars).")
     print()
     print(" next: add picks to --taken, add yours to --mine, rerun")
     return 0
