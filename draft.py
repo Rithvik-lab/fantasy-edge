@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import polars as pl  # noqa: E402
 
-from fantasyedge.data import market  # noqa: E402
+from fantasyedge.data import espn, market  # noqa: E402
 from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E402
 from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
@@ -47,11 +47,21 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     if _BOARD is not None:
         return _BOARD
 
+    # ESPN ADP is the price this league actually drafts from. FantasyPros
+    # consensus is a fine ranking but describes a different draft room --
+    # it had Achane 12 picks behind Jefferson where ESPN has them level.
     try:
-        m = market.fetch()
-        market.save(m)
-    except Exception:
-        m = market.load()
+        m = espn.fetch()
+        espn.save(m)
+        print(f"  ESPN ADP: {m.height} players, "
+              f"{espn.match_report(m)['match_rate']}% matched")
+    except Exception as exc:
+        print(f"  ESPN unavailable ({type(exc).__name__}); falling back to consensus")
+        try:
+            m = espn.load()
+        except Exception:
+            m = market.fetch()
+            market.save(m)
     m = m.filter(pl.col("gsis_id").is_not_null())
 
     hist = fb.load().filter(pl.col("season") >= 2021)
@@ -74,7 +84,10 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
         .with_columns(pl.lit(False).alias("rookie"))
     )
 
-    b = pl.concat([vets, _rookies()], how="diagonal")
+    rk = _rookies()
+    if rk.height:
+        rk = rk.filter(~pl.col("player_id").is_in(vets["player_id"]))
+    b = pl.concat([vets, rk], how="diagonal") if rk.height else vets
     b = _scoring_mix(b)
     b = _season_distribution(b)
     _BOARD = add_vor(b, settings)
