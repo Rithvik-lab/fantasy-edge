@@ -81,6 +81,19 @@ def season_panel(seasons: list[int]) -> pl.DataFrame:
              + pl.col("passing_tds").sum()).alias("total_tds"),
             pl.col("receiving_yards").sum().alias("rec_yards"),
             pl.col("rushing_yards").sum().alias("rush_yards"),
+            pl.col("rushing_tds").sum().alias("rush_tds"),
+            pl.col("receiving_tds").sum().alias("rec_tds"),
+
+            # Passing. Without these a QB is projected from his carries and
+            # his (roughly zero) targets, which is why QB error and QB risk
+            # discrimination were both the worst of any position.
+            pl.col("attempts").sum().alias("pass_attempts"),
+            pl.col("completions").sum().alias("completions"),
+            pl.col("passing_yards").sum().alias("pass_yards"),
+            pl.col("passing_tds").sum().alias("pass_tds"),
+            pl.col("passing_interceptions").sum().alias("interceptions"),
+            pl.col("passing_epa").mean().alias("passing_epa"),
+            pl.col("passing_cpoe").mean().alias("passing_cpoe"),
         ])
     )
 
@@ -120,6 +133,36 @@ def season_panel(seasons: list[int]) -> pl.DataFrame:
         .then(pl.col("targets") / pl.col("games"))
         .otherwise(None)
         .alias("targets_per_game"),
+
+        # Where a player's points actually come from. A QB who runs and a QB
+        # who only throws have very different floors and ceilings even at the
+        # same total, and the same is true of a receiving back.
+        pl.when(pl.col("total_points") > 0)
+        .then((pl.col("rush_yards") * 0.1 + pl.col("rush_tds") * 6.0)
+              / pl.col("total_points"))
+        .otherwise(None)
+        .alias("rush_share_of_points"),
+
+        pl.when(pl.col("total_points") > 0)
+        .then((pl.col("pass_yards") * 0.04 + pl.col("pass_tds") * 4.0)
+              / pl.col("total_points"))
+        .otherwise(None)
+        .alias("pass_share_of_points"),
+
+        pl.when(pl.col("games") > 0)
+        .then(pl.col("pass_attempts") / pl.col("games"))
+        .otherwise(None)
+        .alias("attempts_per_game"),
+
+        pl.when(pl.col("games") > 0)
+        .then(pl.col("carries") / pl.col("games"))
+        .otherwise(None)
+        .alias("carries_per_game"),
+
+        pl.when(pl.col("pass_attempts") > 0)
+        .then(pl.col("completions") / pl.col("pass_attempts"))
+        .otherwise(None)
+        .alias("completion_pct"),
     ])
 
 
@@ -215,12 +258,20 @@ def bio_features() -> pl.DataFrame:
 # --------------------------------------------------------------------------
 
 FEATURE_COLUMNS = [
+    # volume and role
     "games", "total_points", "ppg", "weekly_sd",
     "targets", "receptions", "carries", "target_share", "air_yards_share",
     "air_yards", "target_share_sd", "total_tds", "rec_yards", "rush_yards",
-    "td_share_of_points", "reception_share_of_points", "adot",
-    "targets_per_game", "snap_pct", "snap_pct_sd", "snaps",
+    "adot", "targets_per_game", "snap_pct", "snap_pct_sd", "snaps",
     "expected_points", "points_over_expected", "team_pass_rate",
+    # block A: passing
+    "pass_attempts", "completions", "pass_yards", "pass_tds",
+    "interceptions", "passing_epa", "passing_cpoe",
+    "attempts_per_game", "completion_pct",
+    # block A: scoring mix
+    "td_share_of_points", "reception_share_of_points",
+    "rush_share_of_points", "pass_share_of_points",
+    "rush_tds", "rec_tds", "carries_per_game",
 ]
 
 LABEL_COLUMNS = [

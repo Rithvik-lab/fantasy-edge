@@ -26,20 +26,31 @@ REPORTS = ROOT / "reports"
 # year to leave room for multi-year rolling windows.
 # --------------------------------------------------------------------------
 
-RAW_SEASON_START = 2010
+RAW_SEASON_START = 2002
 RAW_SEASON_END = 2025  # 2026 hasn't been played yet
 
-TRAIN_SEASONS = list(range(2014, 2023))  # 2014-2022, label years
+# Chosen empirically, not assumed. Sweeping the window start against
+# validation MAE gives a clear optimum:
+#
+#     from 2004  7,224 rows  2.8513
+#     from 2006  6,522 rows  2.8442   <- best
+#     from 2008  5,833 rows  2.8543
+#     from 2010  5,144 rows  2.8792
+#     from 2014  3,768 rows  2.9365
+#
+# More data wins until roughly 2006, then pre-2006 football is different
+# enough that distribution shift outweighs the extra rows. Sample size was
+# the binding constraint all along -- adding 14 features moved MAE 0.4%,
+# widening the window moved it 3.5%.
+TRAIN_WINDOW_START = 2006
+
+TRAIN_SEASONS = list(range(TRAIN_WINDOW_START, 2023))
 
 # Walk-forward validation. Training window always expands and always precedes
 # the validation season; no fold sees its own future.
 VALIDATION_FOLDS: list[tuple[list[int], int]] = [
-    (list(range(2014, 2018)), 2018),
-    (list(range(2014, 2019)), 2019),
-    (list(range(2014, 2020)), 2020),  # COVID season — expect an outlier fold
-    (list(range(2014, 2021)), 2021),
-    (list(range(2014, 2022)), 2022),
-    (list(range(2014, 2023)), 2023),
+    (list(range(TRAIN_WINDOW_START, v)), v)
+    for v in (2018, 2019, 2020, 2021, 2022, 2023)  # 2020 = COVID, expect an outlier
 ]
 
 # Sealed. Run once each, after the config is locked. Do not tune against these.

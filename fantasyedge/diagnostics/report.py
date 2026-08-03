@@ -165,6 +165,77 @@ def quantile_calibration(
     return pl.DataFrame(rows)
 
 
+def discrimination(
+    preds: pl.DataFrame,
+    actual_spread: str = "weekly_sd",
+    lo: str = "q20",
+    hi: str = "q80",
+    by: str = "position",
+    n_buckets: int = 5,
+) -> dict:
+    """Does the risk model identify WHICH players are volatile?
+
+    Calibration and discrimination are different properties and calibration
+    is the weaker one. A model that assigns every player the same spread can
+    be perfectly calibrated -- 20% of weeks really do fall below q20 -- while
+    being useless for picking, because it never says anyone is riskier than
+    anyone else.
+
+    This asks the sharper question: rank players by predicted spread, then
+    check whether the actual spread rises across those buckets. Flat buckets
+    mean no discrimination regardless of how good the calibration looks.
+
+    Correlation is computed within position, since a TE and a QB differ in
+    scale for reasons that have nothing to do with volatility.
+    """
+    d = preds.with_columns((pl.col(hi) - pl.col(lo)).alias("_pred_spread"))
+    d = d.filter(
+        pl.col("_pred_spread").is_not_null() & pl.col(actual_spread).is_not_null()
+    )
+    if d.height < 50:
+        return {"error": "not enough rows"}
+
+    overall_r = d.select(pl.corr("_pred_spread", actual_spread)).item()
+
+    within = {}
+    if by in d.columns:
+        for (pos,), grp in d.group_by([by]):
+            if grp.height >= 30:
+                r = grp.select(pl.corr("_pred_spread", actual_spread)).item()
+                within[pos] = round(r, 4) if r is not None else None
+
+    buckets = (
+        d.with_columns(
+            ((pl.col("_pred_spread").rank("ordinal") - 1)
+             * n_buckets // pl.len()).alias("_b")
+        )
+        .group_by("_b")
+        .agg([
+            pl.len().alias("n"),
+            pl.col("_pred_spread").mean().round(2).alias("mean_predicted_spread"),
+            pl.col(actual_spread).mean().round(2).alias("mean_actual_spread"),
+        ])
+        .sort("_b")
+    )
+
+    lo_b = float(buckets["mean_actual_spread"][0])
+    hi_b = float(buckets["mean_actual_spread"][-1])
+
+    return {
+        "n": d.height,
+        "spread_corr_overall": round(overall_r, 4) if overall_r else None,
+        "spread_corr_within_position": within,
+        "buckets": buckets,
+        "lowest_bucket_actual": round(lo_b, 2),
+        "highest_bucket_actual": round(hi_b, 2),
+        "separation": round(hi_b - lo_b, 2),
+        "reading": (
+            "corr near 0 or flat buckets = no discrimination; the model is "
+            "calibrated but cannot tell you who is boom-or-bust"
+        ),
+    }
+
+
 def interval_width(
     df: pl.DataFrame, lo: str = "q20", hi: str = "q80", by: str = "position"
 ) -> pl.DataFrame:
