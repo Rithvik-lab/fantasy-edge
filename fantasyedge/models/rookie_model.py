@@ -21,7 +21,26 @@ import xgboost as xgb
 from fantasyedge import config
 from fantasyedge.features import rookies as R
 
-LABEL = "rookie_points"
+# Season totals conflate how good a rookie was with how available he was, and
+# for a first-year player those are very different questions. Omarion Hampton
+# scored 15.08 per game in 2025 -- second among rookie backs, ahead of Jeanty
+# -- and finished 5th by total because he played nine games. Ranking him on
+# the total says "bust"; ranking him on the rate says "the best back in the
+# class, hurt".
+#
+# So the rookie model decomposes exactly as the veteran model does:
+#
+#     season points  =  points per game  x  games played
+#
+# Rate is the talent estimate and carries forward to year two. Games is
+# mostly luck for a rookie and should not contaminate the talent signal.
+LABEL = "rookie_ppg"
+LABEL_TOTAL = "rookie_points"
+LABEL_GAMES = "rookie_games"
+
+# A rookie who played twice tells you almost nothing per-game; the rate is
+# noise at that sample size.
+MIN_GAMES_FOR_RATE = 4
 
 PARAMS = {
     "max_depth": 3,          # ~1,600 rows; shallower than the weekly model
@@ -42,11 +61,11 @@ def feature_list(df: pl.DataFrame) -> list[str]:
     return [f for f in R.FEATURES if f in df.columns]
 
 
-def baseline_table(train: pl.DataFrame) -> pl.DataFrame:
+def baseline_table(train: pl.DataFrame, label: str = LABEL) -> pl.DataFrame:
     """Historical mean by position and round -- the bar to clear."""
     return (
         train.group_by(["position", "round"])
-        .agg(pl.col(LABEL).mean().alias("baseline_pred"))
+        .agg(pl.col(label).mean().alias("baseline_pred"))
     )
 
 
@@ -54,9 +73,12 @@ def walk_forward(
     df: pl.DataFrame,
     val_seasons: list[int] | None = None,
     min_train: int = 300,
+    label: str = LABEL,
 ) -> tuple[pl.DataFrame, dict]:
     """Project each draft class using only earlier classes."""
     hist = df.filter(pl.col("season") <= config.RAW_SEASON_END)
+    if label == LABEL:   # rate needs a minimum sample to be meaningful
+        hist = hist.filter(pl.col(LABEL_GAMES) >= MIN_GAMES_FOR_RATE)
     if val_seasons is None:
         val_seasons = list(range(2014, config.RAW_SEASON_END + 1))
 
@@ -70,17 +92,17 @@ def walk_forward(
             continue
 
         model = xgb.XGBRegressor(**PARAMS)
-        model.fit(_matrix(tr, feats), tr[LABEL].to_numpy(), verbose=False)
+        model.fit(_matrix(tr, feats), tr[label].to_numpy(), verbose=False)
 
-        base = baseline_table(tr)
+        base = baseline_table(tr, label)
         va = va.join(base, on=["position", "round"], how="left").with_columns(
-            pl.col("baseline_pred").fill_null(tr[LABEL].mean())
+            pl.col("baseline_pred").fill_null(tr[label].mean())
         )
 
         oof.append(va.select([
             "gsis_id", "player_name", "position", "season", "round", "pick",
-            "pos_draft_rank", "baseline_pred",
-            pl.col(LABEL).alias("actual"),
+            "pos_draft_rank", "baseline_pred", LABEL_GAMES,
+            pl.col(label).alias("actual"),
         ]).with_columns(
             pl.Series("pred", model.predict(_matrix(va, feats)))
         ))
@@ -114,20 +136,46 @@ def fit_production(df: pl.DataFrame) -> tuple[xgb.XGBRegressor, list[str]]:
 
 
 def project(df: pl.DataFrame, season: int) -> pl.DataFrame:
-    """Project an incoming draft class."""
-    model, feats = fit_production(df)
+    """Project an incoming draft class as rate x availability.
+
+    Two models rather than one. `projected_ppg` is the talent estimate and is
+    the number to read when comparing prospects; `projected_points` is what a
+    fantasy season is actually worth and folds in expected availability.
+
+    Ranking on the total alone is what makes an injured standout look like a
+    bust -- it is the same conflation the veteran model avoids.
+    """
+    hist = df.filter(pl.col("season") <= config.RAW_SEASON_END)
+    feats = feature_list(hist)
+
+    rate_train = hist.filter(pl.col(LABEL_GAMES) >= MIN_GAMES_FOR_RATE)
+    rate = xgb.XGBRegressor(**PARAMS)
+    rate.fit(_matrix(rate_train, feats), rate_train[LABEL].to_numpy(), verbose=False)
+
+    games = xgb.XGBRegressor(**PARAMS)
+    games.fit(_matrix(hist, feats), hist[LABEL_GAMES].to_numpy(), verbose=False)
+
     cls = df.filter(pl.col("season") == season)
     if not cls.height:
         return pl.DataFrame()
 
-    pred = model.predict(_matrix(cls, feats))
+    X = _matrix(cls, feats)
+    ppg = rate.predict(X)
+    gms = np.clip(games.predict(X), 0, 17)
+
     return (
         cls.select(["gsis_id", "player_name", "position", "team", "round",
                     "pick", "pos_draft_rank", "college"])
-        .with_columns(pl.Series("projected_points", pred))
-        .with_columns(
+        .with_columns([
+            pl.Series("projected_ppg", ppg),
+            pl.Series("projected_games", gms),
+            pl.Series("projected_points", ppg * gms),
+        ])
+        .with_columns([
             pl.col("projected_points").rank("ordinal", descending=True)
-            .over("position").cast(pl.Int32).alias("proj_pos_rank")
-        )
+            .over("position").cast(pl.Int32).alias("proj_pos_rank"),
+            pl.col("projected_ppg").rank("ordinal", descending=True)
+            .over("position").cast(pl.Int32).alias("talent_pos_rank"),
+        ])
         .sort("projected_points", descending=True)
     )
