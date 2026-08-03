@@ -140,6 +140,40 @@ def build(seasons: list[int] | None = None) -> pl.DataFrame:
         (pl.col("week") - 1).alias("weeks_played_prior"),
     ])
 
+    # Multi-season history. Every other feature here looks back six weeks or
+    # one season; these look back one to two years and across seasons.
+    #
+    # This is a *structural* change rather than a new feature family, and that
+    # distinction turned out to be the whole story of this project: widening
+    # the grain and widening the window both produced large gains, while
+    # eleven attempts to add football knowledge produced nothing. Longer
+    # lookback is the same class of change, and it was the only one of the
+    # three feature-side experiments to pay.
+    df = df.with_columns([
+        pl.col(LABEL).shift(1).cum_sum().over("player_id").alias("_csum"),
+        pl.int_range(pl.len()).over("player_id").alias("_cidx"),
+    ]).with_columns([
+        pl.when(pl.col("_cidx") > 0)
+        .then(pl.col("_csum") / pl.col("_cidx"))
+        .otherwise(None)
+        .alias("career_ppg"),
+        pl.col("_cidx").alias("career_weeks"),
+        # ~12 weeks is most of a season, ~24 is a season and a half. Both
+        # cross season boundaries, unlike everything else in the table.
+        pl.col(LABEL).shift(1).rolling_mean(window_size=12, min_samples=4)
+          .over("player_id").alias("pts_l12"),
+        pl.col(LABEL).shift(1).rolling_std(window_size=12, min_samples=4)
+          .over("player_id").alias("pts_sd_l12"),
+        pl.col(LABEL).shift(1).rolling_mean(window_size=24, min_samples=8)
+          .over("player_id").alias("pts_l24"),
+        pl.col(LABEL).shift(1).rolling_std(window_size=24, min_samples=8)
+          .over("player_id").alias("pts_sd_l24"),
+    ]).with_columns(
+        # Hot or cold relative to his own long-run level, which is different
+        # information from either number alone.
+        (pl.col("pts_l6") - pl.col("pts_l24")).alias("form_vs_career")
+    ).drop(["_csum", "_cidx"])
+
     # Consistency framed the way a manager actually experiences it.
     df = df.with_columns([
         pl.when(pl.col("pts_l6") > 0)
