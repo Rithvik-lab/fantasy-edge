@@ -241,7 +241,17 @@ def roster_risk_profile(
     if not owned.height:
         return None
 
-    for col in ("season_range", "_spread", "vol_pct"):
+    if {"season_range", "season_p50"}.issubset(projections.columns):
+        ranked = projections.with_columns(
+            pl.when(pl.col("season_p50") > 0)
+            .then(pl.col("season_range") / pl.col("season_p50"))
+            .otherwise(None).alias("_cv")
+        ).with_columns((pl.col("_cv").rank("average") / pl.len()).alias("_pct"))
+        vals = ranked.filter(pl.col("player_id").is_in(my_roster))["_pct"].drop_nulls()
+        if vals.len():
+            return float(vals.mean())
+
+    for col in ("_spread", "vol_pct"):
         if col in projections.columns:
             ranked = projections.with_columns(
                 (pl.col(col).rank("average") / pl.len()).alias("_pct")
@@ -298,8 +308,18 @@ def recommend(
     # Volatility percentile within position, so a "high variance" TE is
     # judged against TEs rather than against QBs.
     if "season_range" in avail.columns:
+        # Normalise by the median season before ranking. Raw range makes any
+        # high scorer look volatile -- McCaffrey's 291-372 band is wider in
+        # absolute points than a late-round flier's 50-120 while being far
+        # tighter relative to what he produces. Coefficient of variation is
+        # the honest comparison.
         avail = avail.with_columns(
-            (pl.col("season_range").rank("average").over("position")
+            pl.when(pl.col("season_p50") > 0)
+            .then(pl.col("season_range") / pl.col("season_p50"))
+            .otherwise(None)
+            .alias("_cv")
+        ).with_columns(
+            (pl.col("_cv").rank("average").over("position")
              / pl.len().over("position")).alias("vol_pct")
         )
     elif "ceiling" in avail.columns and "floor" in avail.columns:

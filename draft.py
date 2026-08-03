@@ -1,12 +1,19 @@
 #!/usr/bin/env python
-"""Live draft assistant. Run it from a terminal while you draft.
+"""Interactive draft assistant.
 
-    python draft.py --slot 7                       # who to take now
-    python draft.py --slot 7 --taken "Chase,Gibbs" # after picks come off
-    python draft.py --slot 7 --mine "Bijan"        # your roster so far
+Configure once, then work pick by pick. State persists between commands, so a
+closed terminal costs nothing.
 
-Everything is name-matched loosely, so partial names work: "Jeff" finds
-Justin Jefferson. Add each pick to --taken as the draft moves.
+    python draft.py start --teams 12 --slot 7 --ppr 1.0
+    python draft.py suggest              # 3 best options right now
+    python draft.py take "McCaffrey"     # you drafted him
+    python draft.py pick "Chase"         # someone else did
+    python draft.py roster               # your team and its grade
+    python draft.py board --pos RB       # best available
+    python draft.py undo
+    python draft.py status
+
+Names match loosely: "Jeff" finds Justin Jefferson.
 """
 
 from __future__ import annotations
@@ -20,36 +27,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import polars as pl  # noqa: E402
 
 from fantasyedge.data import market  # noqa: E402
-from fantasyedge.draft.engine import DraftState, recommend  # noqa: E402
+from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E402
+from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
 from fantasyedge.league import LeagueSettings, picks_for_slot  # noqa: E402
 from fantasyedge.models import season_sim  # noqa: E402
 
-# Blend weight validated on 976 player-seasons: 35% model / 65% market beat
-# market alone by 1.45 rank spots. Model alone was worse than market.
-MODEL_WEIGHT = 0.35
+W = 78
+_BOARD: pl.DataFrame | None = None
 
 
-def projections(settings: LeagueSettings) -> pl.DataFrame:
-    """Market board with a points projection attached."""
+# ---------------------------------------------------------------------------
+# Board
+# ---------------------------------------------------------------------------
+
+def board(settings: LeagueSettings) -> pl.DataFrame:
+    """Full projection board: veterans, rookies, and season distributions."""
+    global _BOARD
+    if _BOARD is not None:
+        return _BOARD
+
     try:
         m = market.fetch()
         market.save(m)
     except Exception:
         m = market.load()
-
     m = m.filter(pl.col("gsis_id").is_not_null())
 
-    # Historical mean points by positional finish -- converts a rank into
-    # points so replacement level and VOR are computable.
     hist = fb.load().filter(pl.col("season") >= 2021)
     curve = (
         hist.with_columns(
             pl.col("total_points").rank("ordinal", descending=True)
             .over(["season", "position"]).alias("pr")
         )
-        .group_by(["position", "pr"])
-        .agg(pl.col("total_points").mean().alias("proj"))
+        .group_by(["position", "pr"]).agg(pl.col("total_points").mean().alias("proj"))
     )
 
     vets = (
@@ -58,182 +69,314 @@ def projections(settings: LeagueSettings) -> pl.DataFrame:
         .rename({"gsis_id": "player_id", "market_name": "player_name",
                  "proj": "projected_points"})
         .filter(pl.col("projected_points").is_not_null())
-        .select(["player_id", "player_name", "position",
-                 "projected_points", "ecr", "sd"])
+        .select(["player_id", "player_name", "position", "projected_points",
+                 "ecr", "sd"])
         .with_columns(pl.lit(False).alias("rookie"))
     )
-    board = pl.concat([vets, _rookies(settings)], how="diagonal")
-    return _add_season_distribution(board)
+
+    b = pl.concat([vets, _rookies()], how="diagonal")
+    b = _season_distribution(b)
+    _BOARD = add_vor(b, settings)
+    return _BOARD
 
 
-def _add_season_distribution(board: pl.DataFrame) -> pl.DataFrame:
-    """Attach a simulated season floor and ceiling.
+def _rookies() -> pl.DataFrame:
+    """Rookies, absent from the market board because they have no NFL history."""
+    p = Path("data/processed/rookie_projections_2026.parquet")
+    if not p.exists():
+        return pl.DataFrame()
+    r = pl.read_parquet(p).filter(pl.col("gsis_id").is_not_null())
+    if not r.height:
+        return pl.DataFrame()
+    return (
+        r.with_columns([
+            (pl.col("projected_points").rank("ordinal", descending=True)
+             .cast(pl.Float64) * 2.2 + 24.0).alias("ecr"),
+            pl.lit(4.5).alias("sd"),
+            pl.lit(True).alias("rookie"),
+            pl.col("projected_points").cast(pl.Float64),
+        ])
+        .rename({"gsis_id": "player_id"})
+        .select(["player_id", "player_name", "position", "projected_points",
+                 "ecr", "sd", "rookie"])
+    )
 
-    Joins the historical per-game quantile curve by positional finish, then
-    simulates games played and per-game scoring together. This is what turns
-    a single projected total into a range -- the difference between "Jeanty
-    projects 223" and "Jeanty projects 199 to 248 with a narrow band, while
-    this other guy projects 90 to 250".
-    """
-    curve_path = Path("data/processed/pergame_curve.parquet")
-    if not curve_path.exists():
-        return board
 
-    curve = pl.read_parquet(curve_path)
-    ranked = board.with_columns(
-        pl.col("projected_points").rank("ordinal", descending=True)
-        .over("position").cast(pl.Int32).alias("pr")
-    ).join(curve, left_on=["position", "pr"], right_on=["position", "pr"],
-           how="left")
-
-    ranked = ranked.filter(pl.col("c_q50").is_not_null())
+def _season_distribution(b: pl.DataFrame) -> pl.DataFrame:
+    """Simulated season floor and ceiling, folding in availability."""
+    cp = Path("data/processed/pergame_curve.parquet")
+    if not cp.exists():
+        return b
+    curve = pl.read_parquet(cp)
+    ranked = (
+        b.with_columns(
+            pl.col("projected_points").rank("ordinal", descending=True)
+            .over("position").cast(pl.Int32).alias("pr")
+        )
+        .join(curve, on=["position", "pr"], how="left")
+        .filter(pl.col("c_q50").is_not_null())
+    )
     if not ranked.height:
-        return board
-
+        return b
     sim = season_sim.simulate_frame(
         ranked.rename({"c_q20": "q20", "c_q50": "q50", "c_q80": "q80",
                        "c_games": "expected_games"}),
         n_sims=2000,
     )
     if not sim.height:
-        return board
-
-    return board.join(
+        return b
+    return b.join(
         sim.select(["player_id", "season_p20", "season_p50", "season_p80",
                     "season_range"]),
-        on="player_id", how="left",
-    )
+        on="player_id", how="left")
 
 
-def _rookies(settings: LeagueSettings) -> pl.DataFrame:
-    """Rookies, which the market board drops because they have no NFL history.
-
-    They were 61 of 447 players missing from the board -- and rookies carry
-    the widest outcomes on any draft board, so leaving them off is worse than
-    projecting them imperfectly.
-
-    Projection is the validated blend: 30% model, 70% NFL draft capital. The
-    model loses to draft order alone (corr 0.6125 vs 0.6563) but improves it
-    in combination (0.6695), exactly as the veteran model does against ADP.
-    """
-    path = Path("data/processed/rookie_projections_2026.parquet")
-    if not path.exists():
-        return pl.DataFrame()
-
-    r = pl.read_parquet(path).filter(pl.col("gsis_id").is_not_null())
-    if not r.height:
-        return pl.DataFrame()
-
-    # Rookies have no ECR on the matched board, so approximate their market
-    # price from draft capital: earlier picks go earlier in fantasy drafts.
-    return (
-        r.with_columns([
-            (pl.col("projected_points").rank("ordinal", descending=True)
-             .cast(pl.Float64) * 2.2 + 24.0).alias("ecr"),
-            pl.lit(4.5).alias("sd"),          # rookies are genuinely uncertain
-            pl.lit(True).alias("rookie"),
-        ])
-        .rename({"gsis_id": "player_id"})
-        .with_columns(pl.col("projected_points").cast(pl.Float64))
-        .select(["player_id", "player_name", "position",
-                 "projected_points", "ecr", "sd", "rookie"])
-    )
+def find(b: pl.DataFrame, name: str, taken: list[str]) -> dict | None:
+    """Loose name lookup, preferring undrafted players."""
+    q = name.strip().lower()
+    hits = b.filter(pl.col("player_name").str.to_lowercase().str.contains(q))
+    if not hits.height:
+        return None
+    free = hits.filter(~pl.col("player_id").is_in(taken))
+    pool = free if free.height else hits
+    if pool.height > 1:
+        print(f"  '{name}' matched {pool.height}; using "
+              f"{pool.sort('ecr')['player_name'][0]}")
+    return pool.sort("ecr").head(1).to_dicts()[0]
 
 
-def match(proj: pl.DataFrame, names: list[str]) -> list[str]:
-    """Loose name matching so you can type fast under pressure."""
-    ids, misses = [], []
-    for raw in names:
-        q = raw.strip().lower()
-        if not q:
-            continue
-        hit = proj.filter(pl.col("player_name").str.to_lowercase().str.contains(q))
-        if hit.height:
-            ids.append(hit["player_id"][0])
-            if hit.height > 1:
-                print(f"  note: '{raw}' matched {hit.height}, using "
-                      f"{hit['player_name'][0]}")
-        else:
-            misses.append(raw)
-    if misses:
-        print(f"  WARNING: no match for {misses} — check spelling")
-    return ids
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
+
+def header(s: Session) -> None:
+    rnd, pick, overall = s.on_the_clock()
+    turn = "  <<< YOUR PICK" if s.is_my_turn() else ""
+    print("=" * W)
+    print(f" ROUND {rnd}  PICK {pick}  (overall {overall}){turn}")
+    print(f" {s.n_teams}-team | {s.points_per_reception} PPR | slot {s.my_slot}"
+          f" | {len(s.picks)} drafted")
+    print("=" * W)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--slot", type=int, required=True, help="your draft position")
-    ap.add_argument("--teams", type=int, default=12)
-    ap.add_argument("--taken", default="", help="comma-separated, everyone drafted")
-    ap.add_argument("--mine", default="", help="comma-separated, your picks")
-    ap.add_argument("--n", type=int, default=5)
-    ap.add_argument("--risk", default="balanced",
-                    choices=["conservative", "balanced", "aggressive"])
-    a = ap.parse_args()
-
-    s = LeagueSettings(n_teams=a.teams)
-    proj = projections(s)
-
-    taken = match(proj, a.taken.split(",")) if a.taken else []
-    mine = match(proj, a.mine.split(",")) if a.mine else []
-    taken = list(dict.fromkeys(taken + mine))
-
-    state = DraftState(settings=s, my_slot=a.slot, drafted=taken, my_roster=mine)
-    rnd, pick = state.on_the_clock()
-
-    print()
-    print("=" * 72)
-    print(f" ROUND {rnd}  PICK {pick}   |   slot {a.slot} of {a.teams}   |   "
-          f"{len(taken)} off the board")
-    my_picks = picks_for_slot(a.slot, a.teams, s.n_rounds)
-    nxt = [p for p in my_picks if p > len(taken)][:3]
-    print(f" your next picks (overall): {nxt}")
-    print("=" * 72)
-
-    if state.my_roster:
-        roster = proj.filter(pl.col("player_id").is_in(state.my_roster))
-        print(" YOUR ROSTER: " + ", ".join(
-            f"{r['player_name']}({r['position']})"
-            for r in roster.iter_rows(named=True)))
-        print("-" * 72)
-
-    rec = recommend(state, proj, n=a.n, risk_tolerance=a.risk)
-    if rec.height:
-        # engine returns a fixed column set; bring the rookie flag back
-        rec = rec.join(proj.select(["player_id", "rookie"]), on="player_id",
-                       how="left")
-    if not rec.height:
-        print(" no players available")
-        return 1
-
-    print(f"{'#':<3}{'PLAYER':<22}{'POS':<4}{'ECR':>6}{'VOR':>7}"
-          f"{'FLOOR':>7}{'CEIL':>7}{'SURVIVE':>9}{'SCORE':>8}")
-    print("-" * 78)
+def show_suggestions(rec: pl.DataFrame) -> None:
+    print(f"{'#':<3}{'PLAYER':<21}{'POS':<4}{'ECR':>6}{'VOR':>7}"
+          f"{'FLOOR':>7}{'CEIL':>7}{'SURVIVE':>9}{'SCORE':>7}")
+    print("-" * W)
     for i, r in enumerate(rec.iter_rows(named=True), 1):
         surv = r["p_survive"]
-        tag = "GONE" if surv < 0.25 else ("risky" if surv < 0.6 else "likely")
-        name = r['player_name'][:19] + (" R" if r.get('rookie') else "")
-        fl = f"{r['floor']:>7.0f}" if r.get('floor') else "      -"
-        ce = f"{r['ceiling']:>7.0f}" if r.get('ceiling') else "      -"
-        print(f"{i:<3}{name:<22}{r['position']:<4}"
-              f"{r['ecr']:>6.1f}{r['vor']:>7.1f}{fl}{ce}{surv:>8.0%} {tag:<6}"
-              f"{r['score']:>7.1f}")
+        tag = "GONE" if surv < 0.25 else ("risky" if surv < 0.6 else "safe")
+        nm = r["player_name"][:18] + (" R" if r.get("rookie") else "")
+        fl = f"{r['floor']:>7.0f}" if r.get("floor") else "      -"
+        ce = f"{r['ceiling']:>7.0f}" if r.get("ceiling") else "      -"
+        print(f"{i:<3}{nm:<21}{r['position']:<4}{r['ecr']:>6.1f}"
+              f"{r['vor']:>7.1f}{fl}{ce}{surv:>8.0%} {tag:<6}{r['score']:>6.1f}")
+    print("-" * W)
 
-    print("-" * 78)
-    gap = rec["picks_until_next"][0]
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_start(a) -> int:
+    lineup = dict(QB=a.qb, RB=a.rb, WR=a.wr, TE=a.te, FLEX=a.flex, K=a.k, DST=a.dst)
+    lineup = {k: v for k, v in lineup.items() if v > 0}
+    s = Session.start(n_teams=a.teams, my_slot=a.slot,
+                      points_per_reception=a.ppr, roster_size=a.rounds,
+                      lineup=lineup, risk_tolerance=a.risk)
+    print(f"\nstarted: {s.settings.describe()}")
+    print(f"your slot {a.slot} of {a.teams}, risk {a.risk}")
+    print(f"your picks: {picks_for_slot(a.slot, a.teams, a.rounds)[:6]} ...")
+    print("\nnext: draft.py suggest")
+    return 0
+
+
+def cmd_suggest(a) -> int:
+    s = Session.load()
+    b = board(s.settings)
+    header(s)
+    if not s.is_my_turn():
+        print(" not your pick — record picks with `pick NAME` until it is.\n")
+
+    st = DraftState(settings=s.settings, my_slot=s.my_slot,
+                    drafted=s.drafted_ids, my_roster=s.my_ids)
+    rec = recommend(st, b, n=a.n, risk_tolerance=s.risk_tolerance)
+    if not rec.height:
+        print(" nobody left")
+        return 1
+    rec = rec.join(b.select(["player_id", "rookie"]), on="player_id", how="left")
+    show_suggestions(rec)
+
     rr = rec["roster_risk"][0]
     if rr is not None:
         mood = "safe" if rr < 0.4 else ("volatile" if rr > 0.6 else "balanced")
-        print(f" your roster so far reads {mood} ({rr:.2f}) -> targeting "
-              f"{rec['target_vol_pct'][0]:.2f} volatility this pick")
-    print(f" {gap} picks until your next turn.")
-    print(" SURVIVE = chance he lasts that long. Low = take him now.")
-    print(" VOR = points above the worst startable player at his position.")
-    print(" FLOOR/CEIL = simulated 20th/80th percentile SEASON, both risks folded in.")
-    print(" R = rookie (projected from draft capital, wider error bars).")
-    print()
-    print(" next: add picks to --taken, add yours to --mine, rerun")
+        print(f" roster reads {mood} ({rr:.2f}) -> targeting "
+              f"{rec['target_vol_pct'][0]:.2f} volatility")
+    gap = rec["picks_until_next"][0]
+    if gap is not None:
+        print(f" {gap} picks until your next turn")
+    print(f"\n take one:  draft.py take \"{rec['player_name'][0]}\"")
     return 0
+
+
+def cmd_take(a) -> int:
+    return _record(a.name, mine=True)
+
+
+def cmd_pick(a) -> int:
+    return _record(a.name, mine=False)
+
+
+def _record(name: str, mine: bool) -> int:
+    s = Session.load()
+    b = board(s.settings)
+    hit = find(b, name, s.drafted_ids)
+    if not hit:
+        print(f" no match for '{name}'")
+        return 1
+    if hit["player_id"] in s.drafted_ids:
+        print(f" {hit['player_name']} already drafted")
+        return 1
+
+    p = s.add(hit["player_id"], hit["player_name"], hit["position"], mine)
+    s.save()
+    who = "YOU" if mine else "opponent"
+    print(f" pick {p.overall}: {who} -> {p.player_name} ({p.position})")
+
+    if mine:
+        _print_grade(s, b)
+    nxt = s.picks_until_mine()
+    print(f" {nxt} picks until your next turn" if nxt else " draft complete")
+    return 0
+
+
+def _print_grade(s: Session, b: pl.DataFrame) -> None:
+    roster = b.filter(pl.col("player_id").is_in(s.my_ids))
+    g = grade_roster(roster, s.settings, b)
+    if "error" in g:
+        return
+    print(f"\n TEAM: {g['players']} players | starters {g['starter_points']:.0f} pts"
+          f" | score {g['score']:.0f}  (100 = par)")
+    if g["season_floor"]:
+        print(f"       season floor {g['season_floor']:.0f} / "
+              f"ceiling {g['season_ceiling']:.0f}")
+    if g["unfilled"]:
+        print("       still need: "
+              + ", ".join(f"{v}x{k}" for k, v in g["unfilled"].items()))
+
+
+def cmd_roster(a) -> int:
+    s = Session.load()
+    b = board(s.settings)
+    roster = b.filter(pl.col("player_id").is_in(s.my_ids))
+    if not roster.height:
+        print(" no players yet")
+        return 0
+    g = grade_roster(roster, s.settings, b)
+    print("=" * W)
+    print(f" YOUR TEAM — score {g['score']:.0f} (100 = par for this league)")
+    print("=" * W)
+    print(" STARTERS")
+    for r in g["lineup"].iter_rows(named=True):
+        print(f"   {r['position']:<4}{r['player_name'][:24]:<26}"
+              f"{r['projected_points']:>7.0f} pts   VOR {r['vor']:>6.1f}")
+    if g["bench"].height:
+        print(" BENCH")
+        for r in g["bench"].iter_rows(named=True):
+            print(f"   {r['position']:<4}{r['player_name'][:24]:<26}"
+                  f"{r['projected_points']:>7.0f} pts")
+    print("-" * W)
+    print(f" starters {g['starter_points']:.0f} pts | par {g['par']:.0f}"
+          f" | VOR {g['starter_vor']:.0f}")
+    if g["season_floor"]:
+        print(f" season floor {g['season_floor']:.0f} / ceiling {g['season_ceiling']:.0f}")
+    if g["risk_profile"] is not None:
+        print(f" risk profile {g['risk_profile']:.2f}  (0 = safe, 1 = volatile)")
+    if g["unfilled"]:
+        print(" unfilled: " + ", ".join(f"{v}x{k}" for k, v in g["unfilled"].items()))
+    return 0
+
+
+def cmd_board(a) -> int:
+    s = Session.load()
+    b = board(s.settings)
+    avail = b.filter(~pl.col("player_id").is_in(s.drafted_ids))
+    if a.pos:
+        avail = avail.filter(pl.col("position") == a.pos.upper())
+    print(avail.sort("ecr").select(
+        ["player_name", "position", "ecr", "projected_points", "vor",
+         "season_p20", "season_p80"]).head(a.n))
+    return 0
+
+
+def cmd_undo(a) -> int:
+    s = Session.load()
+    p = s.undo()
+    if not p:
+        print(" nothing to undo")
+        return 1
+    s.save()
+    print(f" removed pick {p['overall']}: {p['player_name']}")
+    return 0
+
+
+def cmd_status(a) -> int:
+    s = Session.load()
+    header(s)
+    if s.picks:
+        print(" recent picks:")
+        for p in s.picks[-8:]:
+            who = "YOU" if p["mine"] else "   "
+            print(f"   {p['overall']:>3}  {who}  {p['player_name']} ({p['position']})")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    st = sub.add_parser("start", help="configure a new draft")
+    st.add_argument("--teams", type=int, default=12)
+    st.add_argument("--slot", type=int, required=True)
+    st.add_argument("--ppr", type=float, default=1.0)
+    st.add_argument("--rounds", type=int, default=16)
+    st.add_argument("--risk", default="balanced",
+                    choices=["conservative", "balanced", "aggressive"])
+    for pos, dflt in (("qb", 1), ("rb", 2), ("wr", 2), ("te", 1),
+                      ("flex", 1), ("k", 1), ("dst", 1)):
+        st.add_argument(f"--{pos}", type=int, default=dflt)
+    st.set_defaults(fn=cmd_start)
+
+    sg = sub.add_parser("suggest", help="best options right now")
+    sg.add_argument("--n", type=int, default=3)
+    sg.set_defaults(fn=cmd_suggest)
+
+    tk = sub.add_parser("take", help="you drafted this player")
+    tk.add_argument("name")
+    tk.set_defaults(fn=cmd_take)
+
+    pk = sub.add_parser("pick", help="someone else drafted this player")
+    pk.add_argument("name")
+    pk.set_defaults(fn=cmd_pick)
+
+    rs = sub.add_parser("roster", help="your team and grade")
+    rs.set_defaults(fn=cmd_roster)
+
+    bd = sub.add_parser("board", help="best available")
+    bd.add_argument("--pos", default=None)
+    bd.add_argument("--n", type=int, default=15)
+    bd.set_defaults(fn=cmd_board)
+
+    sub.add_parser("undo", help="take back the last pick").set_defaults(fn=cmd_undo)
+    sub.add_parser("status", help="where the draft is").set_defaults(fn=cmd_status)
+
+    a = ap.parse_args()
+    try:
+        return a.fn(a)
+    except FileNotFoundError as e:
+        print(f" {e}")
+        return 1
 
 
 if __name__ == "__main__":
