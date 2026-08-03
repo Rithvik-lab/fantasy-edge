@@ -38,6 +38,11 @@ from fantasyedge.league import (
 # experts deviate from each other. This widens the ECR spread into something
 # closer to observed draft-day variance.
 SD_TO_DRAFT_SIGMA = 2.5
+
+# How much positional scarcity shifts the score. At 0.4 the scarcest position
+# gets a 40% bump over the flattest, which is enough to break ties in favour
+# of a cliff position without letting scarcity override raw value.
+DROPOFF_WEIGHT = 0.4
 MIN_DRAFT_SIGMA = 2.0
 
 
@@ -275,6 +280,74 @@ def risk_fit(player_vol_pct: float | None, target: float) -> float:
 # Recommendation
 # ---------------------------------------------------------------------------
 
+def expected_best_survivor(
+    pool: pl.DataFrame, picks_ahead: int, current_overall: int
+) -> float:
+    """Expected VOR of the best player at a position who lasts until you pick again.
+
+    Not simply the best available -- he probably will not be there. The best
+    *survivor* is the first player, in value order, who happens to last:
+
+        E[best] = sum_i  VOR_i * P(i survives) * prod_{j better} (1 - P(j survives))
+
+    which is what you should actually compare against when deciding whether
+    to take a position now.
+    """
+    if not pool.height:
+        return 0.0
+
+    ranked = pool.sort("vor", descending=True, nulls_last=True)
+    expected = 0.0
+    all_better_gone = 1.0
+
+    for r in ranked.iter_rows(named=True):
+        vor = r.get("vor")
+        if vor is None:
+            continue
+        p = survival_probability(r.get("ecr"), r.get("sd"), picks_ahead,
+                                 current_overall)
+        expected += vor * p * all_better_gone
+        all_better_gone *= (1.0 - p)
+        if all_better_gone < 0.01:
+            break
+    return expected
+
+
+def positional_dropoff(
+    avail: pl.DataFrame, picks_ahead: int | None, current_overall: int,
+    positions: list[str] | None = None,
+) -> pl.DataFrame:
+    """How much value you lose at each position by waiting one turn.
+
+    This is the number that decides whether taking a tight end at 44 is smart
+    or a reach. If the next tight end goes at 50, taking one now costs you the
+    six players in between -- so it is only right when the tight end cliff is
+    steeper than the drop-off at whatever else you would have taken.
+
+    Positive `dropoff` means the position is scarce and worth acting on.
+    """
+    positions = positions or ["QB", "RB", "WR", "TE"]
+    rows = []
+    for pos in positions:
+        pool = avail.filter(pl.col("position") == pos)
+        if not pool.height:
+            continue
+        best_now = float(pool["vor"].max() or 0.0)
+        later = (
+            expected_best_survivor(pool, picks_ahead, current_overall)
+            if picks_ahead is not None else 0.0
+        )
+        rows.append({
+            "position": pos,
+            "best_now": round(best_now, 1),
+            "expected_later": round(later, 1),
+            "dropoff": round(best_now - later, 1),
+        })
+    if not rows:
+        return pl.DataFrame()
+    return pl.DataFrame(rows).sort("dropoff", descending=True)
+
+
 def recommend(
     state: DraftState,
     projections: pl.DataFrame,
@@ -338,6 +411,11 @@ def recommend(
     )
     needs = roster_needs(state, roster_pos)
     roster_risk = roster_risk_profile(projections, state.my_roster)
+
+    # Positional scarcity: what each position costs you if you wait a turn.
+    dd = positional_dropoff(avail, gap, current)
+    dropoff = dict(zip(dd["position"].to_list(), dd["dropoff"].to_list())) if dd.height else {}
+    max_drop = max(dropoff.values()) if dropoff else 1.0
     target = target_volatility(rnd, settings.n_rounds, risk_tolerance, roster_risk)
 
     rows = []
@@ -353,8 +431,14 @@ def recommend(
         rf = risk_fit(r.get("vol_pct"), target)
 
         # Value, weighted by how badly you need the position, how well the
-        # risk profile fits this round, and how likely he is to be gone.
-        score = r["vor"] * nm * rf * (1.0 + 0.6 * urgency)
+        # risk profile fits this round, and how likely he is to be gone --
+        # plus how much the position itself falls off if you wait. That last
+        # term is the opportunity cost of reaching: taking a tight end early
+        # is only right when the tight end cliff is steeper than the drop-off
+        # at whatever you would otherwise have taken.
+        drop = dropoff.get(r["position"], 0.0)
+        scarcity = 1.0 + DROPOFF_WEIGHT * (drop / max(1.0, max_drop))
+        score = r["vor"] * nm * rf * (1.0 + 0.6 * urgency) * scarcity
 
         rows.append({
             "player_name": r.get("player_name"),
@@ -367,6 +451,7 @@ def recommend(
             "risk_fit": round(rf, 3),
             "score": round(score, 1),
             "player_id": r["player_id"],
+            "dropoff": round(dropoff.get(r["position"], 0.0), 1),
             "floor": round(r["season_p20"], 0) if r.get("season_p20") else None,
             "ceiling": round(r["season_p80"], 0) if r.get("season_p80") else None,
         })
