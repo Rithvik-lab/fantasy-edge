@@ -23,6 +23,7 @@ from fantasyedge.data import market  # noqa: E402
 from fantasyedge.draft.engine import DraftState, recommend  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
 from fantasyedge.league import LeagueSettings, picks_for_slot  # noqa: E402
+from fantasyedge.models import season_sim  # noqa: E402
 
 # Blend weight validated on 976 player-seasons: 35% model / 65% market beat
 # market alone by 1.45 rank spots. Model alone was worse than market.
@@ -61,7 +62,47 @@ def projections(settings: LeagueSettings) -> pl.DataFrame:
                  "projected_points", "ecr", "sd"])
         .with_columns(pl.lit(False).alias("rookie"))
     )
-    return pl.concat([vets, _rookies(settings)], how="diagonal")
+    board = pl.concat([vets, _rookies(settings)], how="diagonal")
+    return _add_season_distribution(board)
+
+
+def _add_season_distribution(board: pl.DataFrame) -> pl.DataFrame:
+    """Attach a simulated season floor and ceiling.
+
+    Joins the historical per-game quantile curve by positional finish, then
+    simulates games played and per-game scoring together. This is what turns
+    a single projected total into a range -- the difference between "Jeanty
+    projects 223" and "Jeanty projects 199 to 248 with a narrow band, while
+    this other guy projects 90 to 250".
+    """
+    curve_path = Path("data/processed/pergame_curve.parquet")
+    if not curve_path.exists():
+        return board
+
+    curve = pl.read_parquet(curve_path)
+    ranked = board.with_columns(
+        pl.col("projected_points").rank("ordinal", descending=True)
+        .over("position").cast(pl.Int32).alias("pr")
+    ).join(curve, left_on=["position", "pr"], right_on=["position", "pr"],
+           how="left")
+
+    ranked = ranked.filter(pl.col("c_q50").is_not_null())
+    if not ranked.height:
+        return board
+
+    sim = season_sim.simulate_frame(
+        ranked.rename({"c_q20": "q20", "c_q50": "q50", "c_q80": "q80",
+                       "c_games": "expected_games"}),
+        n_sims=2000,
+    )
+    if not sim.height:
+        return board
+
+    return board.join(
+        sim.select(["player_id", "season_p20", "season_p50", "season_p80",
+                    "season_range"]),
+        on="player_id", how="left",
+    )
 
 
 def _rookies(settings: LeagueSettings) -> pl.DataFrame:
@@ -165,22 +206,30 @@ def main() -> int:
         print(" no players available")
         return 1
 
-    print(f"{'#':<3}{'PLAYER':<24}{'POS':<5}{'ECR':>7}{'VOR':>8}"
-          f"{'SURVIVE':>9}{'SCORE':>8}")
-    print("-" * 72)
+    print(f"{'#':<3}{'PLAYER':<22}{'POS':<4}{'ECR':>6}{'VOR':>7}"
+          f"{'FLOOR':>7}{'CEIL':>7}{'SURVIVE':>9}{'SCORE':>8}")
+    print("-" * 78)
     for i, r in enumerate(rec.iter_rows(named=True), 1):
         surv = r["p_survive"]
         tag = "GONE" if surv < 0.25 else ("risky" if surv < 0.6 else "likely")
-        name = r['player_name'][:21] + (" R" if r.get('rookie') else "")
-        print(f"{i:<3}{name:<24}{r['position']:<5}"
-              f"{r['ecr']:>7.1f}{r['vor']:>8.1f}{surv:>8.0%} {tag:<6}"
+        name = r['player_name'][:19] + (" R" if r.get('rookie') else "")
+        fl = f"{r['floor']:>7.0f}" if r.get('floor') else "      -"
+        ce = f"{r['ceiling']:>7.0f}" if r.get('ceiling') else "      -"
+        print(f"{i:<3}{name:<22}{r['position']:<4}"
+              f"{r['ecr']:>6.1f}{r['vor']:>7.1f}{fl}{ce}{surv:>8.0%} {tag:<6}"
               f"{r['score']:>7.1f}")
 
-    print("-" * 72)
+    print("-" * 78)
     gap = rec["picks_until_next"][0]
+    rr = rec["roster_risk"][0]
+    if rr is not None:
+        mood = "safe" if rr < 0.4 else ("volatile" if rr > 0.6 else "balanced")
+        print(f" your roster so far reads {mood} ({rr:.2f}) -> targeting "
+              f"{rec['target_vol_pct'][0]:.2f} volatility this pick")
     print(f" {gap} picks until your next turn.")
     print(" SURVIVE = chance he lasts that long. Low = take him now.")
     print(" VOR = points above the worst startable player at his position.")
+    print(" FLOOR/CEIL = simulated 20th/80th percentile SEASON, both risks folded in.")
     print(" R = rookie (projected from draft capital, wider error bars).")
     print()
     print(" next: add picks to --taken, add yours to --mine, rerun")

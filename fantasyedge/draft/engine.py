@@ -182,16 +182,76 @@ def need_multiplier(position: str, needs: dict[str, int], round_no: int) -> floa
     return 1.0 + (base - 1.0) * urgency
 
 
-def target_volatility(round_no: int, n_rounds: int, tolerance: str) -> float:
-    """Desired volatility percentile for this round, 0 = floor, 1 = upside.
+def target_volatility(
+    round_no: int,
+    n_rounds: int,
+    tolerance: str,
+    roster_risk: float | None = None,
+) -> float:
+    """Desired volatility percentile for this pick, 0 = floor, 1 = upside.
 
-    Ramps from safe to swingy across the draft. `tolerance` shifts the whole
-    curve for someone who wants a generally safer or wilder roster.
+    Two inputs, and the second is what makes this portfolio construction
+    rather than a ranked list.
+
+    ROUND. Ramps from safe to swingy across the draft. Early picks are the
+    anchors you need a floor from; a bust in round 13 costs nothing and a hit
+    wins the league.
+
+    ROSTER. What you already own changes what you should want next. Take a
+    metronome like Jeanty (season sd ~31) and you have bought certainty, so
+    you can afford to swing on the next pick. Take three boom-bust players
+    and you need a floor regardless of what round it is -- the marginal value
+    of a player depends on the portfolio he is joining, not just on him.
+
+    `roster_risk` is the mean volatility percentile of what you have drafted,
+    on the same 0-1 scale. Passing None keeps the old round-only behaviour.
     """
     progress = (round_no - 1) / max(1, n_rounds - 1)
     base = 0.25 + 0.5 * progress
     shift = {"conservative": -0.15, "balanced": 0.0, "aggressive": 0.15}
-    return min(1.0, max(0.0, base + shift.get(tolerance, 0.0)))
+    target = base + shift.get(tolerance, 0.0)
+
+    if roster_risk is not None:
+        # Pull toward the complement of what you already hold. A safe roster
+        # (0.2) nudges the target up; a wild one (0.8) pulls it down. Damped,
+        # because chasing balance too hard means passing on real value.
+        target += ROSTER_BALANCE_WEIGHT * (0.5 - roster_risk)
+
+    return min(1.0, max(0.0, target))
+
+
+# How hard to counterbalance the existing roster. At 0.5, a maximally safe
+# roster moves the target a quarter of the scale -- enough to change which
+# player wins a close call, not enough to override value.
+ROSTER_BALANCE_WEIGHT = 0.5
+
+
+def roster_risk_profile(
+    projections: pl.DataFrame, my_roster: list[str]
+) -> float | None:
+    """Mean volatility percentile of what you have already drafted.
+
+    Uses season-level spread where the simulation has run, falling back to
+    per-game spread. None when the roster is empty or unmeasurable.
+    """
+    if not my_roster:
+        return None
+
+    owned = projections.filter(pl.col("player_id").is_in(my_roster))
+    if not owned.height:
+        return None
+
+    for col in ("season_range", "_spread", "vol_pct"):
+        if col in projections.columns:
+            ranked = projections.with_columns(
+                (pl.col(col).rank("average") / pl.len()).alias("_pct")
+            )
+            vals = ranked.filter(
+                pl.col("player_id").is_in(my_roster)
+            )["_pct"].drop_nulls()
+            if vals.len():
+                return float(vals.mean())
+    return None
 
 
 def risk_fit(player_vol_pct: float | None, target: float) -> float:
@@ -237,7 +297,12 @@ def recommend(
 
     # Volatility percentile within position, so a "high variance" TE is
     # judged against TEs rather than against QBs.
-    if "ceiling" in avail.columns and "floor" in avail.columns:
+    if "season_range" in avail.columns:
+        avail = avail.with_columns(
+            (pl.col("season_range").rank("average").over("position")
+             / pl.len().over("position")).alias("vol_pct")
+        )
+    elif "ceiling" in avail.columns and "floor" in avail.columns:
         avail = avail.with_columns(
             (pl.col("ceiling") - pl.col("floor")).alias("_spread")
         ).with_columns(
@@ -252,7 +317,8 @@ def recommend(
         .to_list()
     )
     needs = roster_needs(state, roster_pos)
-    target = target_volatility(rnd, settings.n_rounds, risk_tolerance)
+    roster_risk = roster_risk_profile(projections, state.my_roster)
+    target = target_volatility(rnd, settings.n_rounds, risk_tolerance, roster_risk)
 
     rows = []
     for r in avail.iter_rows(named=True):
@@ -281,6 +347,8 @@ def recommend(
             "risk_fit": round(rf, 3),
             "score": round(score, 1),
             "player_id": r["player_id"],
+            "floor": round(r["season_p20"], 0) if r.get("season_p20") else None,
+            "ceiling": round(r["season_p80"], 0) if r.get("season_p80") else None,
         })
 
     if not rows:
@@ -293,4 +361,6 @@ def recommend(
         pl.lit(current).alias("overall"),
         pl.lit(gap).alias("picks_until_next"),
         pl.lit(round(target, 2)).alias("target_vol_pct"),
+        pl.lit(round(roster_risk, 3) if roster_risk is not None else None)
+          .alias("roster_risk"),
     ])
