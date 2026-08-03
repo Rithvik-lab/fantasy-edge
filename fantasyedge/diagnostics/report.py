@@ -207,6 +207,51 @@ def fold_stability(fold_results: dict[int, dict]) -> pl.DataFrame:
 # Does it find value the market missed?
 # --------------------------------------------------------------------------
 
+def rank_head_to_head(
+    df: pl.DataFrame,
+    model_rank: str = "model_rank",
+    market_rank: str = "market_rank",
+    actual_rank: str = "actual_finish",
+) -> dict:
+    """Whose ranking lands closer to the real finish — model or market?
+
+    This is the decisive test, and it is stricter than `value_gap_hit_rate`
+    below. That one asks "did players the model liked finish better than the
+    market said?", which mostly measures how often the *market* was wrong and
+    can read well above 50% even when the model adds nothing. This asks the
+    direct question instead: put both rankings next to the truth and see which
+    is nearer.
+
+    Ranks arrive from `rank()` as UInt32 and subtracting two of them
+    underflows to 2**32, so cast before differencing.
+    """
+    d = df.with_columns([
+        pl.col(model_rank).cast(pl.Int32),
+        pl.col(market_rank).cast(pl.Int32),
+        pl.col(actual_rank).cast(pl.Int32),
+    ])
+    model_err = float((d[model_rank] - d[actual_rank]).abs().mean())
+    market_err = float((d[market_rank] - d[actual_rank]).abs().mean())
+    beat = float(
+        d.with_columns(
+            ((pl.col(model_rank) - pl.col(actual_rank)).abs()
+             < (pl.col(market_rank) - pl.col(actual_rank)).abs()).alias("_w")
+        )["_w"].mean()
+    )
+    return {
+        "n": d.height,
+        "model_mean_rank_error": round(model_err, 2),
+        "market_mean_rank_error": round(market_err, 2),
+        "closer": "model" if model_err < market_err else "market",
+        "pct_players_model_closer": round(100 * beat, 1),
+        "model_rank_corr": round(
+            d.select(pl.corr(model_rank, actual_rank)).item(), 4),
+        "market_rank_corr": round(
+            d.select(pl.corr(market_rank, actual_rank)).item(), 4),
+        "reading": "50% and equal errors means no edge over the market",
+    }
+
+
 def value_gap_hit_rate(
     df: pl.DataFrame,
     gap_col: str = "value_gap",

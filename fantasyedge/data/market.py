@@ -99,6 +99,71 @@ def fetch(
     ]).sort("ecr")
 
 
+def historical(
+    seasons: list[int],
+    page_type: str = "redraft-overall",
+    month: int = 8,
+) -> pl.DataFrame:
+    """Preseason consensus for past seasons — the market price at draft time.
+
+    Needed to ask the only question that matters: when the model disagreed
+    with the market, who was right? Without a *contemporaneous* price that
+    comparison is meaningless, so this pulls the August snapshot for each
+    season rather than anything computed after the fact.
+
+    The archive begins late 2019, so seasons before 2020 have no price.
+    """
+    raw = nfl.load_ff_rankings(type="all")
+
+    dated = raw.with_columns(
+        pl.col("scrape_date").cast(pl.Date, strict=False).alias("_d")
+    ).filter(pl.col("_d").is_not_null())
+
+    dated = dated.with_columns([
+        pl.col("_d").dt.year().alias("_yr"),
+        pl.col("_d").dt.month().alias("_mo"),
+    ]).filter(
+        pl.col("_yr").is_in(seasons)
+        & (pl.col("_mo") == month)
+        & (pl.col("page_type") == page_type)
+        & pl.col("pos").is_in(list(config.MODELED_POSITIONS))
+        & pl.col("ecr").is_not_null()
+    )
+
+    # Several scrapes per month; keep the latest before the season starts.
+    latest = (
+        dated.group_by("_yr").agg(pl.col("_d").max().alias("_d"))
+    )
+    snap = dated.join(latest, on=["_yr", "_d"], how="inner")
+
+    x = (
+        cw.load()
+        .select(["gsis_id", "fantasypros_id"])
+        .filter(pl.col("fantasypros_id").is_not_null())
+    )
+
+    return (
+        snap.select([
+            pl.col("_yr").alias("season"),
+            # The archive types `id` as String; the current-season pull types
+            # it Int64. Same column, same meaning, different dtype.
+            pl.col("id").cast(pl.Int64, strict=False).alias("fantasypros_id"),
+            pl.col("player").alias("market_name"),
+            pl.col("pos").alias("position"),
+            "ecr", "sd",
+            pl.col("_d").alias("priced_on"),
+        ])
+        .sort("ecr")
+        .unique(subset=["season", "fantasypros_id"], keep="first")
+        .join(x, on="fantasypros_id", how="inner")
+        .rename({"gsis_id": "player_id"})
+        .with_columns(
+            pl.col("ecr").rank("ordinal").over(["season", "position"])
+            .alias("market_pos_rank")
+        )
+    )
+
+
 def unmatched(df: pl.DataFrame) -> pl.DataFrame:
     """Ranked players we could not map to a gsis_id.
 
