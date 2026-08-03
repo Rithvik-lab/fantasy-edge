@@ -43,6 +43,9 @@ SD_TO_DRAFT_SIGMA = 2.5
 # gets a 40% bump over the flattest, which is enough to break ties in favour
 # of a cliff position without letting scarcity override raw value.
 DROPOFF_WEIGHT = 0.4
+
+# Extra volatility tolerated on bench picks, for the convexity reason above.
+BENCH_VARIANCE_BONUS = 0.20
 MIN_DRAFT_SIGMA = 2.0
 
 
@@ -193,6 +196,7 @@ def target_volatility(
     tolerance: str,
     roster_risk: float | None = None,
     roster_strength: float | None = None,
+    filling_starter: bool = True,
 ) -> float:
     """Desired volatility percentile for this pick, 0 = floor, 1 = upside.
 
@@ -214,8 +218,17 @@ def target_volatility(
     """
     progress = (round_no - 1) / max(1, n_rounds - 1)
     base = 0.25 + 0.5 * progress
-    shift = {"conservative": -0.15, "balanced": 0.0, "aggressive": 0.15}
+    shift = {"safe": -0.20, "conservative": -0.20, "combined": 0.0,
+             "balanced": 0.0, "aggressive": 0.20}
     target = base + shift.get(tolerance, 0.0)
+
+    # A bench player's downside is capped -- you simply do not start a bust --
+    # while his upside is not, because a hit becomes a starter. That payoff is
+    # convex, so variance is worth more on the bench than in the lineup, and
+    # the same nominal risk setting should mean something more aggressive
+    # there.
+    if not filling_starter:
+        target += BENCH_VARIANCE_BONUS
 
     if roster_strength is not None:
         # Simulation-derived, not asserted. 3,000 simulated 12-team seasons
@@ -369,6 +382,8 @@ def recommend(
     n: int = 3,
     exclude: list[str] | None = None,
     risk_tolerance: str = "balanced",
+    bench_tolerance: str | None = None,
+    roster_strength: float | None = None,
 ) -> pl.DataFrame:
     """Top `n` picks for whoever is on the clock.
 
@@ -431,7 +446,12 @@ def recommend(
     dd = positional_dropoff(avail, gap, current)
     dropoff = dict(zip(dd["position"].to_list(), dd["dropoff"].to_list())) if dd.height else {}
     max_drop = max(dropoff.values()) if dropoff else 1.0
-    target = target_volatility(rnd, settings.n_rounds, risk_tolerance, roster_risk)
+    # A pick fills a starting slot if any dedicated slot is still open;
+    # otherwise it is bench depth and gets the bench risk setting.
+    starters_open = any(v > 0 for k, v in needs.items() if k != "FLEX")
+    tol = risk_tolerance if starters_open else (bench_tolerance or risk_tolerance)
+    target = target_volatility(rnd, settings.n_rounds, tol, roster_risk,
+                               roster_strength, filling_starter=starters_open)
 
     rows = []
     for r in avail.iter_rows(named=True):

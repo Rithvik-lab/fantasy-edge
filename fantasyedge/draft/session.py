@@ -51,7 +51,10 @@ class Session:
     roster_size: int = 16
     lineup: dict[str, int] = field(default_factory=lambda: {
         "QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1})
-    risk_tolerance: str = "balanced"
+    # Starters and bench get separate risk settings. Both accept
+    # safe / combined / aggressive.
+    risk_tolerance: str = "combined"        # starters
+    bench_tolerance: str = "aggressive"     # bench: convex payoff, see engine
     picks: list[dict] = field(default_factory=list)
     created: str = ""
 

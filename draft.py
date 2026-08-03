@@ -233,9 +233,11 @@ def cmd_start(a) -> int:
     lineup = {k: v for k, v in lineup.items() if v > 0}
     s = Session.start(n_teams=a.teams, my_slot=a.slot,
                       points_per_reception=a.ppr, roster_size=a.rounds,
-                      lineup=lineup, risk_tolerance=a.risk)
+                      lineup=lineup, risk_tolerance=a.risk,
+                      bench_tolerance=a.bench_risk)
     print(f"\nstarted: {s.settings.describe()}")
-    print(f"your slot {a.slot} of {a.teams}, risk {a.risk}")
+    print(f"your slot {a.slot} of {a.teams}")
+    print(f"risk: starters {a.risk} | bench {a.bench_risk}")
     print(f"your picks: {picks_for_slot(a.slot, a.teams, a.rounds)[:6]} ...")
     print("\nnext: draft.py suggest")
     return 0
@@ -250,7 +252,18 @@ def cmd_suggest(a) -> int:
 
     st = DraftState(settings=s.settings, my_slot=s.my_slot,
                     drafted=s.drafted_ids, my_roster=s.my_ids)
-    rec = recommend(st, b, n=a.n, risk_tolerance=s.risk_tolerance)
+    # Roster strength drives the simulation-derived volatility target.
+    strength = None
+    if s.my_ids:
+        g = grade_roster(b.filter(pl.col("player_id").is_in(s.my_ids)),
+                         s.settings, b)
+        if g.get("score") and g.get("par"):
+            # convert "% of par" into points-per-week vs league average
+            strength = (g["score"] - 100) / 100 * g["par"] / 14.0
+
+    rec = recommend(st, b, n=a.n, risk_tolerance=s.risk_tolerance,
+                    bench_tolerance=s.bench_tolerance,
+                    roster_strength=strength)
     if not rec.height:
         print(" nobody left")
         return 1
@@ -392,8 +405,13 @@ def main() -> int:
     st.add_argument("--slot", type=int, required=True)
     st.add_argument("--ppr", type=float, default=1.0)
     st.add_argument("--rounds", type=int, default=16)
-    st.add_argument("--risk", default="balanced",
-                    choices=["conservative", "balanced", "aggressive"])
+    st.add_argument("--risk", default="combined",
+                    choices=["safe", "combined", "aggressive"],
+                    help="risk profile for STARTING lineup picks")
+    st.add_argument("--bench-risk", default="aggressive",
+                    choices=["safe", "combined", "aggressive"],
+                    help="risk profile for BENCH picks (defaults aggressive: "
+                         "a bench bust costs nothing, a bench hit starts)")
     for pos, dflt in (("qb", 1), ("rb", 2), ("wr", 2), ("te", 1),
                       ("flex", 1), ("k", 1), ("dst", 1)):
         st.add_argument(f"--{pos}", type=int, default=dflt)
