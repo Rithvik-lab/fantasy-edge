@@ -75,6 +75,7 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     )
 
     b = pl.concat([vets, _rookies()], how="diagonal")
+    b = _scoring_mix(b)
     b = _season_distribution(b)
     _BOARD = add_vor(b, settings)
     return _BOARD
@@ -100,6 +101,40 @@ def _rookies() -> pl.DataFrame:
         .select(["player_id", "player_name", "position", "projected_points",
                  "ecr", "sd", "rookie"])
     )
+
+
+def _scoring_mix(b: pl.DataFrame) -> pl.DataFrame:
+    """Where a player's points come from, from last season.
+
+    In full PPR this is the floor mechanism. Receptions are the most stable
+    scoring event there is -- eight catches for 55 yards is 13.5 points with
+    no touchdown. Touchdowns are the least stable and the least sticky year
+    to year, so a player whose production leans on them has a lower floor at
+    the same average.
+
+    Two players with identical projections can be completely different
+    assets: McBride takes 21% of his points from touchdowns and 40% from
+    catches, while Goedert takes 36% from touchdowns and 32% from catches.
+    Same position, same rough output, opposite risk shape.
+    """
+    try:
+        f = fb.load().filter(pl.col("season") == config_last_season())
+    except Exception:
+        return b
+    cols = [c for c in ("prior_td_share_of_points",
+                        "prior_reception_share_of_points") if c in f.columns]
+    if not cols:
+        return b
+    mix = f.select(["player_id"] + cols).rename({
+        "prior_td_share_of_points": "td_share",
+        "prior_reception_share_of_points": "rec_share",
+    })
+    return b.join(mix.unique(subset=["player_id"]), on="player_id", how="left")
+
+
+def config_last_season() -> int:
+    from fantasyedge import config as _c
+    return _c.RAW_SEASON_END
 
 
 def _season_distribution(b: pl.DataFrame) -> pl.DataFrame:
@@ -160,8 +195,8 @@ def header(s: Session) -> None:
 
 
 def show_suggestions(rec: pl.DataFrame) -> None:
-    print(f"{'#':<3}{'PLAYER':<21}{'POS':<4}{'ECR':>6}{'VOR':>7}"
-          f"{'FLOOR':>7}{'CEIL':>7}{'SURVIVE':>9}{'SCORE':>7}")
+    print(f"{'#':<3}{'PLAYER':<20}{'POS':<4}{'VOR':>7}{'FLOOR':>7}{'CEIL':>7}"
+          f"{'TD%':>6}{'REC%':>6}{'SURVIVE':>9}{'SCORE':>7}")
     print("-" * W)
     for i, r in enumerate(rec.iter_rows(named=True), 1):
         surv = r["p_survive"]
@@ -169,8 +204,10 @@ def show_suggestions(rec: pl.DataFrame) -> None:
         nm = r["player_name"][:18] + (" R" if r.get("rookie") else "")
         fl = f"{r['floor']:>7.0f}" if r.get("floor") else "      -"
         ce = f"{r['ceiling']:>7.0f}" if r.get("ceiling") else "      -"
-        print(f"{i:<3}{nm:<21}{r['position']:<4}{r['ecr']:>6.1f}"
-              f"{r['vor']:>7.1f}{fl}{ce}{surv:>8.0%} {tag:<6}{r['score']:>6.1f}")
+        td = f"{100*r['td_share']:>5.0f}%" if r.get('td_share') else "     -"
+        rc = f"{100*r['rec_share']:>5.0f}%" if r.get('rec_share') else "     -"
+        print(f"{i:<3}{nm:<20}{r['position']:<4}"
+              f"{r['vor']:>7.1f}{fl}{ce}{td}{rc}{surv:>8.0%} {tag:<6}{r['score']:>6.1f}")
     print("-" * W)
 
 
@@ -204,7 +241,8 @@ def cmd_suggest(a) -> int:
     if not rec.height:
         print(" nobody left")
         return 1
-    rec = rec.join(b.select(["player_id", "rookie"]), on="player_id", how="left")
+    extra = [c for c in ("rookie", "td_share", "rec_share") if c in b.columns]
+    rec = rec.join(b.select(["player_id"] + extra), on="player_id", how="left")
     show_suggestions(rec)
 
     rr = rec["roster_risk"][0]
