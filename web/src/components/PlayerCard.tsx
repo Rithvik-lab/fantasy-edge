@@ -40,7 +40,7 @@ function RangeBar({ floor, ceiling, max }: { floor: number; ceiling: number; max
 }
 
 export function PlayerCard({
-  s, rank, max, onDraft, onSkip, busy, compact,
+  s, rank, max, onDraft, onSkip, busy,
 }: {
   s: Suggestion;
   rank: number;
@@ -48,64 +48,11 @@ export function PlayerCard({
   onDraft: () => void;
   onSkip: () => void;
   busy: boolean;
-  /** Names added past the top three. They earn a row, not a card — vertical
-   *  space at the bottom of the screen is the scarcest thing in this layout. */
-  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [imgBad, setImgBad] = useState(false);
   const surv = survival(s.p_survive);
   const initials = s.player_name.split(" ").map((w) => w[0]).slice(0, 2).join("");
-
-  if (compact) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-line bg-panel px-2 py-1.5">
-        <span className="num w-3 shrink-0 text-center text-[11px] font-bold text-muted">
-          {rank}
-        </span>
-        <div className="h-7 w-7 shrink-0 overflow-hidden rounded bg-raised ring-1 ring-line">
-          {s.headshot && !imgBad ? (
-            <img src={s.headshot} alt="" loading="lazy" onError={() => setImgBad(true)}
-                 className="h-full w-full object-cover object-top" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-[9px] font-bold text-muted">
-              {initials}
-            </div>
-          )}
-        </div>
-        <PlayerHover playerId={s.player_id} className="min-w-0 flex-1">
-          <span className="block cursor-help truncate text-xs font-medium">
-            {s.player_name}
-          </span>
-        </PlayerHover>
-        <span className="shrink-0 text-[10px] font-bold"
-              style={{ color: POS_HUE[s.position] ?? "#8CA096" }}>
-          {s.position}
-        </span>
-        <Term k="vor">
-          <span className={cn("num shrink-0 text-[10.5px]",
-            s.vor >= 0 ? "text-turf" : "text-alarm")}>
-            {s.vor > 0 ? "+" : ""}{Math.round(s.vor)}
-          </span>
-        </Term>
-        <Term k="survive">
-          <span className={cn("num shrink-0 text-[10.5px]",
-            surv.tone === "alarm" ? "text-alarm"
-              : surv.tone === "clock" ? "text-clock" : "text-muted")}>
-            {Math.round(s.p_survive * 100)}%
-          </span>
-        </Term>
-        <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-[11px]"
-                onClick={onDraft} disabled={busy}>
-          Draft
-        </Button>
-        <Button size="sm" variant="ghost" className="h-6 shrink-0 px-1.5 text-[11px]"
-                onClick={onSkip} disabled={busy} title="Show me someone else">
-          Skip
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <div

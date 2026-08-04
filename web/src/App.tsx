@@ -7,7 +7,7 @@ import { Home } from "@/components/Home";
 import { Setup } from "@/components/Setup";
 import { Roster } from "@/components/Roster";
 import { SaveLeague } from "@/components/SaveLeague";
-import { Shortlist, MIN_NAMES, MAX_NAMES } from "@/components/Shortlist";
+import { Shortlist, NAMES } from "@/components/Shortlist";
 import { Ticker, Teams } from "@/components/Ticker";
 import { Charts } from "@/components/Charts";
 import { Ladder } from "@/components/Ladder";
@@ -36,35 +36,21 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [count, setCount] = useState(MIN_NAMES);
   const skipped = useRef<string[]>([]);
   const lastPickCount = useRef(-1);
-  // Read through a ref so loadList stays a stable identity — it is a
-  // dependency of the sync poll, and rebuilding that on every count change
-  // would restart the interval mid-draft.
-  const wanted = useRef(MIN_NAMES);
 
   /* -- data ------------------------------------------------------------- */
 
+  // The whole ranking comes down in one request and the shortlist pages
+  // through it locally — an arrow press is a slide, not a round trip.
   const loadList = useCallback(async () => {
     try {
-      setList(await api.suggestions(wanted.current, skipped.current));
+      setList(await api.suggestions(NAMES, skipped.current));
       setStale(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
-
-  /** Arrow buttons on the shortlist: see further down the same ranking. */
-  const showCount = useCallback(async (n: number) => {
-    const clamped = Math.min(MAX_NAMES, Math.max(MIN_NAMES, n));
-    if (clamped === wanted.current) return;
-    wanted.current = clamped;
-    setCount(clamped);
-    setBusy(true);
-    await loadList();
-    setBusy(false);
-  }, [loadList]);
 
   const refreshAll = useCallback(async (s: Status) => {
     setStatus(s);
@@ -333,8 +319,6 @@ export default function App() {
         busy={busy}
         myTurn={myTurn}
         stale={stale}
-        count={count}
-        onCount={showCount}
         onDraft={draft}
         onSkip={skip}
       />
