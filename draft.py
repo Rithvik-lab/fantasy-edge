@@ -105,7 +105,8 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
                  "c_points": "projected_points"})
         .filter(pl.col("projected_points").is_not_null())
         .select(["player_id", "player_name", "position", "projected_points",
-                 "ecr", "sd"])
+                 "ecr", "sd"]
+                + (["draft_rank"] if "draft_rank" in m.columns else []))
         .with_columns(pl.lit(False).alias("rookie"))
     )
 

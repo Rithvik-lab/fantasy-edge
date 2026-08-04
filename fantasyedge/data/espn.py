@@ -81,11 +81,26 @@ def fetch(
         pos = POSITION.get(p.get("defaultPositionId"))
         if pos not in config.MODELED_POSITIONS:
             continue
+        # ESPN publishes TWO different orderings and they are not the same
+        # number. `averageDraftPosition` is where players actually go in real
+        # drafts; `draftRanksByRankType` is ESPN's own editorial ranking, and
+        # THAT is what the draft-room board is sorted by. They diverge -- for
+        # 2026, ESPN ranks Achane 10th while drafters take him at 12.3.
+        #
+        # The engine wants ADP, because survival probability is a question
+        # about what the room will do, not what ESPN advises. But the rank is
+        # carried through so the app can show the number you are looking at
+        # on ESPN's screen next to the one the model reasons about.
+        ranks = p.get("draftRanksByRankType") or {}
+        rank_key = {"full_ppr": "PPR", "half_ppr": "PPR",
+                    "standard": "STANDARD"}.get(scoring, "PPR")
+        draft_rank = (ranks.get(rank_key) or {}).get("rank")
         rows.append({
             "espn_id": str(p.get("id")),
             "market_name": p.get("fullName"),
             "position": pos,
             "adp": float(adp),
+            "draft_rank": float(draft_rank) if draft_rank else None,
             "adp_sd": float(own.get("auctionValueAverageChange") or 0.0),
             "percent_owned": float(own.get("percentOwned") or 0.0),
             "percent_started": float(own.get("percentStarted") or 0.0),

@@ -1,5 +1,6 @@
 import type { AdpLadder } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
+import { PlayerHover } from "@/components/PlayerHover";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,10 +50,12 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
               ) : (
                 <span className="h-6 w-6 shrink-0 rounded bg-raised" />
               )}
-              <span className={cn("flex-1 truncate text-xs",
-                p.drafted && "line-through decoration-muted/60")}>
-                {p.player_name}
-              </span>
+              <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
+                <span className={cn("block cursor-help truncate text-xs",
+                  p.drafted && "line-through decoration-muted/60")}>
+                  {p.player_name}
+                </span>
+              </PlayerHover>
               {p.rookie && (
                 <span className="rounded bg-clock/15 px-1 text-[9px] font-bold text-clock">R</span>
               )}

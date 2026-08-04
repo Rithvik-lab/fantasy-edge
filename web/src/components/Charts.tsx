@@ -1,5 +1,6 @@
 import type { Analytics } from "@/lib/api";
 import { Term } from "@/components/Explain";
+import { PlayerHover } from "@/components/PlayerHover";
 import { cn } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
@@ -77,12 +78,12 @@ function Cliff({ tiers }: { tiers: Analytics["tiers"] }) {
                 // that player is not really a decision right now.
                 const waitable = p.survives != null && p.survives > 0.55;
                 return (
-                  <div key={p.player_name} className="group flex items-center gap-2"
-                       title={`${p.player_name} — VOR ${p.vor}, ADP ${p.ecr ?? "—"}${
-                         p.survives != null ? `, ${Math.round(p.survives * 100)}% to last` : ""}`}>
-                    <span className="w-[92px] shrink-0 truncate text-[10.5px] text-muted">
-                      {p.player_name}
-                    </span>
+                  <div key={p.player_id} className="group flex items-center gap-2">
+                    <PlayerHover playerId={p.player_id} className="w-[92px] shrink-0">
+                      <span className="block cursor-help truncate text-[10.5px] text-muted transition-colors hover:text-chalk">
+                        {p.player_name}
+                      </span>
+                    </PlayerHover>
                     <div className="relative h-2 flex-1">
                       <div
                         className={cn("h-2 rounded-r-[2px] transition-[width] duration-300",

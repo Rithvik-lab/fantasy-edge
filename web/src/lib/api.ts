@@ -48,7 +48,7 @@ export interface Analytics {
   tiers: {
     position: string;
     players: {
-      player_name: string; vor: number; ecr: number | null;
+      player_id: string; player_name: string; vor: number; ecr: number | null;
       floor: number | null; median: number | null; ceiling: number | null;
       survives: number | null;
     }[];
@@ -65,8 +65,8 @@ export interface AdpLadder {
   my_next: number | null;
   players: {
     player_id: string; player_name: string; position: string;
-    ecr: number | null; vor: number | null; rookie: boolean;
-    drafted: boolean; headshot: string | null;
+    ecr: number | null; draft_rank: number | null; vor: number | null;
+    rookie: boolean; drafted: boolean; headshot: string | null;
   }[];
 }
 
@@ -90,6 +90,18 @@ export interface RosterView {
               vor: number; projected_points: number; player_id: string;
               season_p20?: number; season_p80?: number }[];
   bench: RosterView["starters"];
+}
+
+export interface PlayerProfile {
+  player_id: string; player_name: string; position: string;
+  headshot: string | null; rookie: boolean; drafted: boolean;
+  adp: number | null; draft_rank: number | null; pos_rank: number | null;
+  vor: number | null; projected_points: number | null;
+  floor: number | null; median: number | null; ceiling: number | null;
+  expected_games: number | null;
+  td_share: number | null; rec_share: number | null;
+  survives: number | null; picks_until_next: number | null;
+  platform: string;
 }
 
 export interface Status {
@@ -166,6 +178,7 @@ export const api = {
   teams: () => req<{ teams: TeamRow[] }>("/teams"),
   analytics: () => req<Analytics>("/analytics"),
   adp: (limit = 80) => req<AdpLadder>(`/adp?limit=${limit}`),
+  player: (id: string) => req<PlayerProfile>(`/player/${id}`),
   search: (q: string) => req<{ players: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
   setOwnedPicks: (picks: number[]) =>
     req<Status>("/picks/mine", { method: "POST", body: JSON.stringify({ picks }) }),

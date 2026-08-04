@@ -708,7 +708,8 @@ def board_view(pos: str | None = None, limit: int = 60) -> dict:
         b = b.filter(pl.col("position") == pos.upper())
     shots = _headshots(b)
     keep = [c for c in ("player_id", "player_name", "position", "ecr", "vor",
-                        "projected_points", "season_p20", "season_p80", "rookie")
+                        "draft_rank", "projected_points", "season_p20",
+                        "season_p80", "rookie")
             if c in b.columns]
     rows = b.sort("vor", descending=True, nulls_last=True).head(limit) \
             .select(keep).to_dicts()
@@ -752,6 +753,7 @@ def analytics(depth: int = 10) -> dict:
         tiers.append({
             "position": pos,
             "players": [{
+                "player_id": r["player_id"],
                 "player_name": r["player_name"],
                 "vor": round(r["vor"], 1) if r.get("vor") is not None else 0.0,
                 "ecr": r.get("ecr"),
@@ -805,6 +807,9 @@ def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
             "player_name": r["player_name"],
             "position": r["position"],
             "ecr": r.get("ecr"),
+            # ESPN's own board order, which is NOT its ADP. Shown so the
+            # numbers here reconcile with the screen you are drafting from.
+            "draft_rank": r.get("draft_rank"),
             "vor": round(r["vor"], 1) if r.get("vor") is not None else None,
             "rookie": bool(r.get("rookie")),
             "drafted": r["player_id"] in taken,
@@ -893,6 +898,54 @@ def delete_league(league_id: str) -> dict:
         with STATE.lock:
             STATE.league_id = None
     return {"leagues": store.listing()}
+
+
+@app.get("/api/player/{player_id}")
+def player_profile(player_id: str) -> dict:
+    """Everything known about one player, for the hover card."""
+    st = _require()
+    b = _board()
+    hit = b.filter(pl.col("player_id") == player_id)
+    if not hit.height:
+        raise HTTPException(404, "no such player")
+    r = hit.to_dicts()[0]
+
+    _, _, overall = st.on_the_clock()
+    later = [p for p in st.my_picks() if p > overall]
+    gap = later[0] - overall - 1 if later else None
+    surv = (survival_probability(r.get("ecr"), r.get("sd"), gap, overall)
+            if gap is not None else None)
+
+    # Where he sits inside his own position, on value.
+    pool = (b.filter(pl.col("position") == r["position"])
+             .sort("vor", descending=True, nulls_last=True))
+    pos_rank = next((i for i, x in enumerate(pool["player_id"].to_list(), 1)
+                     if x == player_id), None)
+
+    return {
+        "player_id": player_id,
+        "player_name": r["player_name"],
+        "position": r["position"],
+        "headshot": _headshots(b).get(player_id),
+        "rookie": bool(r.get("rookie")),
+        "drafted": player_id in set(st.drafted_ids),
+        "adp": r.get("ecr"),
+        "draft_rank": r.get("draft_rank"),
+        "pos_rank": pos_rank,
+        "vor": round(r["vor"], 1) if r.get("vor") is not None else None,
+        "projected_points": (round(r["projected_points"])
+                             if r.get("projected_points") else None),
+        "floor": round(r["season_p20"]) if r.get("season_p20") else None,
+        "median": round(r["season_p50"]) if r.get("season_p50") else None,
+        "ceiling": round(r["season_p80"]) if r.get("season_p80") else None,
+        "expected_games": (round(r["expected_games"], 1)
+                           if r.get("expected_games") else None),
+        "td_share": r.get("td_share"),
+        "rec_share": r.get("rec_share"),
+        "survives": round(surv, 3) if surv is not None else None,
+        "picks_until_next": gap,
+        "platform": st.platform,
+    }
 
 
 @app.get("/api/health")

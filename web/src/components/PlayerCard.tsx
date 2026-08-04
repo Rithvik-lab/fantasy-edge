@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Term } from "@/components/Explain";
 import { POS_HUE } from "@/components/Charts";
+import { PlayerHover } from "@/components/PlayerHover";
 import { cn } from "@/lib/utils";
 
 /** How likely he is to reach your next pick, said plainly. */
@@ -86,7 +87,11 @@ export function PlayerCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="truncate font-semibold leading-tight">{s.player_name}</span>
+            <PlayerHover playerId={s.player_id} className="min-w-0">
+              <span className="block cursor-help truncate font-semibold leading-tight">
+                {s.player_name}
+              </span>
+            </PlayerHover>
             {/* Position uses the validated categorical hue, never turf or
                 clock — those mean "good value" and "urgent" everywhere else,
                 and a colour cannot mean two things. */}
