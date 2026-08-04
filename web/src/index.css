@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Palette grounded in the subject: turf under stadium lights, chalk lines,
+   and a play clock. Not a neutral near-black -- the ink carries green in it,
+   which is what keeps this from reading as a generic dark dashboard.
+   Six values, and the boldness is spent in one place: the clock amber, which
+   appears only when a pick is actually urgent.
+--------------------------------------------------------------------------- */
+@theme {
+  --color-ink:    #0A0F0D;
+  --color-panel:  #111917;
+  --color-raised: #16211E;
+  --color-line:   #22302C;
+  --color-chalk:  #E8EFEA;
+  --color-muted:  #8CA096;
+  --color-turf:   #3FBF6F;
+  --color-clock:  #F5A524;
+  --color-alarm:  #E5484D;
+
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--color-ink);
+    color: var(--color-chalk);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Every number in this app is a price, a value, or a probability. They line
+     up in columns and get compared, so they are tabular and monospaced. */
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  /* Structural labels: small, wide, uppercase. They name a region rather than
+     decorate one. */
+  .eyebrow {
+    font-size: 0.625rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--color-muted); font-weight: 600;
+  }
+}
+
+@keyframes tick-in { from { opacity: 0; transform: translateY(-4px);} to {opacity:1;transform:none;} }
+.tick-in { animation: tick-in .18s ease-out; }

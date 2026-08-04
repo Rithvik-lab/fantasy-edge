@@ -149,7 +149,12 @@ def optimal_lineup(
             continue
         pool = remaining.filter(pl.col("position") == slot).head(count)
         if pool.height:
-            starters.append(pool)
+            # Label which slot each starter is filling. A lineup is positions,
+            # not a list -- "RB2" and "FLEX" are different jobs.
+            starters.append(pool.with_columns(
+                (pl.lit(slot) + (pl.int_range(pl.len()) + 1).cast(pl.Utf8)
+                 if count > 1 else pl.lit(slot)).alias("slot")
+            ))
             remaining = remaining.filter(~pl.col("player_id").is_in(pool["player_id"]))
 
     flex = settings.lineup.get("FLEX", 0)
@@ -158,7 +163,7 @@ def optimal_lineup(
             pl.col("position").is_in(list(settings.flex_eligible))
         ).head(flex)
         if pool.height:
-            starters.append(pool)
+            starters.append(pool.with_columns(pl.lit("FLEX").alias("slot")))
             remaining = remaining.filter(~pl.col("player_id").is_in(pool["player_id"]))
 
     start_df = pl.concat(starters) if starters else roster.head(0)

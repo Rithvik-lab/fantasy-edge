@@ -633,6 +633,8 @@ def recommend(
             "next_pick": round(later, 1),
             "score": round(now + later, 1),
             "player_id": r["player_id"],
+            "vol_pct": (round(r["vol_pct"], 3)
+                        if r.get("vol_pct") is not None else None),
             "dropoff": round(dropoff.get(r["position"], 0.0), 1),
             "floor": round(r["season_p20"], 0) if r.get("season_p20") else None,
             "ceiling": round(r["season_p80"], 0) if r.get("season_p80") else None,
