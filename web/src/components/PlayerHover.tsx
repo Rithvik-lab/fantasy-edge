@@ -1,28 +1,33 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type PlayerProfile } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
+import { Term } from "@/components/Explain";
+import { Floating, useHover } from "@/components/Floating";
 import { cn } from "@/lib/utils";
 
 /**
- * A profile, not a sentence.
+ * A profile, not a sentence — and one you can reach.
  *
  * The first version put a browser `title` on each bar, which gave you
- * "Caleb Williams — VOR 23.5, ADP 77.5, 95% to last" as one run-on line after
- * a second's delay. A player is a face and a shape, not a comma-separated
- * string, so hovering now opens a real card: photo, where he goes, what he is
- * worth, and the season band drawn rather than described.
+ * "Caleb Williams — VOR 23.5, ADP 77.5, 95% to last" as one run-on line. The
+ * second drew a real card but made it `pointer-events-none` and closed it the
+ * instant the pointer left the name, so the card was visible and untouchable:
+ * every label in it was dead, and moving toward it killed it.
  *
- * Profiles are fetched once per player and cached — the same name gets hovered
- * repeatedly while you deliberate.
+ * Now the card is live. Entering it cancels the close, and each number inside
+ * carries the same explanation it has everywhere else in the app — a profile
+ * you can read INTO, which is the whole point of putting numbers on it.
  */
 const CACHE = new Map<string, PlayerProfile>();
 
-function Stat({ label, value, tone }: {
-  label: string; value: ReactNode; tone?: "turf" | "alarm" | "muted";
+function Stat({ term, label, value, tone }: {
+  term: string; label: string; value: ReactNode; tone?: "turf" | "alarm" | "muted";
 }) {
   return (
-    <div className="flex flex-col">
-      <span className="text-[9px] uppercase tracking-wider text-muted">{label}</span>
+    <div className="flex flex-col items-start">
+      <Term k={term}>
+        <span className="text-[9px] uppercase tracking-wider text-muted">{label}</span>
+      </Term>
       <span className={cn("num text-[12px] font-semibold",
         tone === "turf" ? "text-turf" : tone === "alarm" ? "text-alarm" : "text-chalk")}>
         {value}
@@ -37,7 +42,7 @@ function Card({ p }: { p: PlayerProfile }) {
   const med = span > 0 ? (((p.median ?? 0) - (p.floor ?? 0)) / span) * 100 : 50;
 
   return (
-    <div className="w-[268px] overflow-hidden rounded-lg border border-line bg-raised shadow-2xl">
+    <div className="overflow-hidden rounded-lg border border-line bg-raised shadow-2xl">
       <div className="flex items-center gap-2.5 border-b border-line p-2.5">
         {p.headshot ? (
           <img src={p.headshot} alt="" className="h-12 w-12 shrink-0 rounded-md bg-panel object-cover object-top" />
@@ -48,12 +53,18 @@ function Card({ p }: { p: PlayerProfile }) {
           <div className="flex items-center gap-1.5">
             <span className="truncate text-sm font-semibold">{p.player_name}</span>
             {p.rookie && (
-              <span className="rounded bg-clock/15 px-1 text-[9px] font-bold text-clock">R</span>
+              <Term k="rookie">
+                <span className="rounded bg-clock/15 px-1 text-[9px] font-bold text-clock">R</span>
+              </Term>
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px]">
             <span className="font-bold" style={{ color: hue }}>{p.position}</span>
-            {p.pos_rank && <span className="num text-muted">#{p.pos_rank} at the spot</span>}
+            {p.pos_rank && (
+              <Term k="pos_rank">
+                <span className="num text-muted">#{p.pos_rank} at the spot</span>
+              </Term>
+            )}
           </div>
         </div>
         {p.drafted && (
@@ -62,10 +73,12 @@ function Card({ p }: { p: PlayerProfile }) {
       </div>
 
       <div className="grid grid-cols-3 gap-2 border-b border-line p-2.5">
-        <Stat label="Value" value={`${(p.vor ?? 0) > 0 ? "+" : ""}${Math.round(p.vor ?? 0)}`}
+        <Stat term="vor" label="Value"
+              value={`${(p.vor ?? 0) > 0 ? "+" : ""}${Math.round(p.vor ?? 0)}`}
               tone={(p.vor ?? 0) >= 0 ? "turf" : "alarm"} />
-        <Stat label={`${p.platform} adp`} value={p.adp ? Math.round(p.adp) : "—"} />
+        <Stat term="adp" label={`${p.platform} adp`} value={p.adp ? Math.round(p.adp) : "—"} />
         <Stat
+          term="survive"
           label="Lasts?"
           value={p.survives != null ? `${Math.round(p.survives * 100)}%` : "—"}
           tone={p.survives != null && p.survives < 0.25 ? "alarm" : undefined}
@@ -75,7 +88,7 @@ function Card({ p }: { p: PlayerProfile }) {
       {p.floor != null && p.ceiling != null && (
         <div className="border-b border-line p-2.5">
           <div className="mb-1 flex items-baseline justify-between text-[9px] uppercase tracking-wider text-muted">
-            <span>season range</span>
+            <Term k="range"><span>season range</span></Term>
             {p.expected_games != null && (
               <span className="num normal-case tracking-normal">
                 ~{p.expected_games} games
@@ -100,16 +113,16 @@ function Card({ p }: { p: PlayerProfile }) {
       {(p.rec_share != null || p.draft_rank != null) && (
         <div className="space-y-0.5 p-2.5 text-[10.5px] text-muted">
           {p.rec_share != null && (
-            <div className="flex justify-between">
-              <span>from catches / touchdowns</span>
+            <div className="flex items-baseline justify-between gap-2">
+              <Term k="shares"><span>from catches / touchdowns</span></Term>
               <span className="num text-chalk">
                 {Math.round((p.rec_share ?? 0) * 100)}% / {Math.round((p.td_share ?? 0) * 100)}%
               </span>
             </div>
           )}
           {p.draft_rank != null && (
-            <div className="flex justify-between">
-              <span>ESPN board rank</span>
+            <div className="flex items-baseline justify-between gap-2">
+              <Term k="board_rank"><span>ESPN board rank</span></Term>
               <span className="num text-chalk">#{Math.round(p.draft_rank)}</span>
             </div>
           )}
@@ -122,54 +135,36 @@ function Card({ p }: { p: PlayerProfile }) {
 export function PlayerHover({ playerId, children, className }: {
   playerId: string; children: ReactNode; className?: string;
 }) {
-  const [open, setOpen] = useState(false);
   const [p, setP] = useState<PlayerProfile | null>(CACHE.get(playerId) ?? null);
-  const [above, setAbove] = useState(true);
-  const ref = useRef<HTMLSpanElement>(null);
-  const timer = useRef<number | undefined>(undefined);
+  const { ref, anchor, show, hide, keep } = useHover();
+  const open = anchor != null;
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-
-  function enter() {
-    // Flip below when there is no room above, so the card never clips.
-    const r = ref.current?.getBoundingClientRect();
-    if (r) setAbove(r.top > 300);
-    timer.current = window.setTimeout(async () => {
-      setOpen(true);
-      if (!CACHE.has(playerId)) {
-        try {
-          const d = await api.player(playerId);
-          CACHE.set(playerId, d);
-          setP(d);
-        } catch { /* leave the trigger inert */ }
-      } else {
-        setP(CACHE.get(playerId)!);
-      }
-    }, 120);
-  }
-
-  function leave() {
-    window.clearTimeout(timer.current);
-    setOpen(false);
-  }
+  // Fetched once per player and cached — the same name gets hovered over and
+  // over while you deliberate, and a second request per hover would show as lag
+  // in exactly the moment the app exists to remove.
+  useEffect(() => {
+    if (!open) return;
+    const hit = CACHE.get(playerId);
+    if (hit) { setP(hit); return; }
+    let alive = true;
+    api.player(playerId)
+      .then((d) => { CACHE.set(playerId, d); if (alive) setP(d); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [open, playerId]);
 
   return (
     <span
       ref={ref}
-      className={cn("relative", className)}
-      onMouseEnter={enter}
-      onMouseLeave={leave}
+      className={cn("inline-flex min-w-0", className)}
+      onMouseEnter={show}
+      onMouseLeave={hide}
     >
       {children}
-      {open && p && (
-        <span
-          className={cn(
-            "tick-in pointer-events-none absolute left-0 z-50 block",
-            above ? "bottom-full mb-1.5" : "top-full mt-1.5"
-          )}
-        >
+      {anchor && p && (
+        <Floating anchor={anchor} width={276} interactive onEnter={keep} onLeave={hide}>
           <Card p={p} />
-        </span>
+        </Floating>
       )}
     </span>
   );

@@ -24,6 +24,11 @@
 @layer base {
   html, body, #root { height: 100%; }
   body {
+    /* Nothing in a draft tool is to the right. Every sideways scrollbar this
+       app ever grew came from a floating panel overhanging an edge, and those
+       are portals now — this is the guard, not the fix. `clip` rather than
+       `hidden` so it never becomes a scroll container of its own. */
+    overflow-x: clip;
     background: var(--color-ink);
     color: var(--color-chalk);
     font-family: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;

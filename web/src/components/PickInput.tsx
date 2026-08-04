@@ -86,8 +86,11 @@ export function PickInput({ status, onPicked, busy, setBusy }: {
           className="h-9 w-full rounded-md border border-line bg-ink px-3 text-sm placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf/50"
         />
 
+        {/* Downward. It used to open upward, and this box sits at the top of
+            the column, so the list was clipped by the scroll container above
+            it — you got a sliver of the first row and nothing else. */}
         {hits.length > 0 && (
-          <ul className="absolute bottom-full z-30 mb-1 w-full overflow-hidden rounded-md border border-line bg-raised shadow-2xl">
+          <ul className="absolute top-full z-30 mt-1 max-h-[280px] w-full overflow-y-auto overflow-x-hidden rounded-md border border-line bg-raised shadow-2xl">
             {hits.map((h, i) => (
               <li key={h.player_id}>
                 <button
