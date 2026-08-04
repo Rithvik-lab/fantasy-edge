@@ -33,6 +33,32 @@ export interface Shortlist {
   note?: string;
 }
 
+export interface SearchHit {
+  player_id: string;
+  player_name: string;
+  position: string;
+  ecr: number | null;
+  vor: number | null;
+  drafted: boolean;
+  headshot: string | null;
+}
+
+export interface Analytics {
+  picks_until_next: number | null;
+  tiers: {
+    position: string;
+    players: {
+      player_name: string; vor: number; ecr: number | null;
+      floor: number | null; median: number | null; ceiling: number | null;
+      survives: number | null;
+    }[];
+  }[];
+  scarcity: {
+    position: string; startable_left: number; league_slots: number;
+    already_drafted: number; still_needed: number;
+  }[];
+}
+
 export interface Status {
   configured: boolean;
   phase?: "pre" | "live" | "complete";
@@ -45,6 +71,10 @@ export interface Status {
   n_rounds?: number;
   lineup?: Record<string, number>;
   my_slot?: number;
+  my_picks?: number[];
+  picks_traded?: boolean;
+  draft_time?: number | null;
+  seconds_to_draft?: number | null;
   round?: number;
   pick?: number;
   overall?: number;
@@ -98,5 +128,10 @@ export const api = {
   undo: () => req<Status>("/undo", { method: "POST" }),
   setSlot: (slot: number) => req<Status>(`/slot?slot=${slot}`, { method: "POST" }),
   teams: () => req<{ teams: TeamRow[] }>("/teams"),
+  analytics: () => req<Analytics>("/analytics"),
+  search: (q: string) => req<{ players: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
+  setOwnedPicks: (picks: number[]) =>
+    req<Status>("/picks/mine", { method: "POST", body: JSON.stringify({ picks }) }),
+  resetOwnedPicks: () => req<Status>("/picks/reset", { method: "POST" }),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };

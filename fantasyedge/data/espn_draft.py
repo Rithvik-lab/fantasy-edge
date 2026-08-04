@@ -111,6 +111,7 @@ class LeagueInfo:
     teams: list[dict] = field(default_factory=list)
     in_progress: bool = False
     complete: bool = False
+    draft_time: float | None = None   # epoch seconds
 
 
 def league_info(payload: dict) -> LeagueInfo:
@@ -151,6 +152,9 @@ def league_info(payload: dict) -> LeagueInfo:
     ]
 
     detail = payload.get("draftDetail") or {}
+    # ESPN publishes the scheduled start in epoch MILLIseconds.
+    raw = (settings.get("draftSettings") or {}).get("date")
+    when = float(raw) / 1000.0 if raw else None
     starters = sum(lineup.values())
     return LeagueInfo(
         name=settings.get("name") or "ESPN league",
@@ -162,6 +166,7 @@ def league_info(payload: dict) -> LeagueInfo:
         teams=teams,
         in_progress=bool(detail.get("inProgress")),
         complete=bool(detail.get("drafted")),
+        draft_time=when,
     )
 
 

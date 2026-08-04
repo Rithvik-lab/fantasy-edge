@@ -1,17 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Shortlist as ShortlistData, type Status, type TeamRow } from "@/lib/api";
+import {
+  api, type Analytics, type Shortlist as ShortlistData, type Status, type TeamRow,
+} from "@/lib/api";
 import { Setup } from "@/components/Setup";
 import { Shortlist } from "@/components/Shortlist";
 import { Ticker, Teams } from "@/components/Ticker";
+import { Charts } from "@/components/Charts";
+import { GlossaryDrawer } from "@/components/Glossary";
+import { PickEditor } from "@/components/PickEditor";
+import { PickInput } from "@/components/PickInput";
+import { Phase, SyncDot } from "@/components/Phase";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const SYNC_MS = 2500;
+type Tab = "room" | "data";
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [list, setList] = useState<ShortlistData | null>(null);
   const [teams, setTeams] = useState<TeamRow[]>([]);
+  const [stats, setStats] = useState<Analytics | null>(null);
+  const [tab, setTab] = useState<Tab>("room");
+  const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,9 +43,8 @@ export default function App() {
   const refreshAll = useCallback(async (s: Status) => {
     setStatus(s);
     await loadList();
-    try {
-      setTeams((await api.teams()).teams);
-    } catch { /* the room view is optional */ }
+    try { setTeams((await api.teams()).teams); } catch { /* optional */ }
+    try { setStats(await api.analytics()); } catch { /* optional */ }
   }, [loadList]);
 
   useEffect(() => {
@@ -44,9 +54,9 @@ export default function App() {
   }, [refreshAll]);
 
   /* -- the poll --------------------------------------------------------- */
-  /* The reason this app exists. Picks land on their own, and the moment the
-     count changes the shortlist is recomputed against the new board, so a
-     name that just went is never still sitting on screen. */
+  /* Picks land on their own, and the moment the count changes the shortlist
+     is recomputed against the new board — so a name that just went is never
+     still sitting on screen. */
   useEffect(() => {
     if (!status?.configured || !status.espn_connected) return;
     let alive = true;
@@ -61,8 +71,9 @@ export default function App() {
           skipped.current = [];
           await loadList();
           try { setTeams((await api.teams()).teams); } catch { /* optional */ }
+          try { setStats(await api.analytics()); } catch { /* optional */ }
         }
-      } catch { /* transient network; the next tick retries */ }
+      } catch { /* transient; next tick retries */ }
     };
     tick();
     const id = setInterval(tick, SYNC_MS);
@@ -104,85 +115,100 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Where the draft is, and whether we can still see it. */}
       <header className="border-b border-line bg-panel/80 backdrop-blur">
-        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-5 gap-y-1 px-4 py-2.5">
+        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
           <span className="font-bold tracking-tight">FantasyEdge</span>
           <span className="truncate text-xs text-muted">
             {status.league_name || status.describe}
           </span>
 
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex items-center gap-3">
+            <GlossaryDrawer />
+            <button
+              onClick={() => setEditPicks(true)}
+              className="rounded border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-turf/40 hover:text-chalk"
+              title="Set which picks are yours, after trades"
+            >
+              {status.picks_traded ? "picks: traded" : `slot ${status.my_slot}`}
+            </button>
             <span className="num text-xs text-muted">
-              R{status.round} · P{status.pick} · #{status.overall}
+              R{status.round} · #{status.overall}
             </span>
-            {status.picks_until_next != null && !myTurn && (
-              <span className="num text-xs text-muted">
-                next in {status.picks_until_next}
-              </span>
-            )}
             <span
               className={cn(
-                "rounded px-2 py-0.5 text-[11px] font-semibold",
+                "rounded px-2 py-0.5 text-[11px] font-semibold transition-colors",
                 myTurn ? "bg-turf text-ink" : "bg-raised text-muted"
               )}
             >
-              {myTurn ? "ON THE CLOCK" : `slot ${status.my_slot}`}
+              {myTurn ? "ON THE CLOCK"
+                : status.picks_until_next != null
+                  ? `next in ${status.picks_until_next}` : "waiting"}
             </span>
-            <span
-              className={cn("flex items-center gap-1.5 text-[11px]",
-                status.sync_error ? "text-alarm"
-                  : status.espn_connected ? "text-turf" : "text-muted")}
-              title={status.sync_error ?? undefined}
-            >
-              <span className={cn("h-1.5 w-1.5 rounded-full",
-                status.sync_error ? "bg-alarm"
-                  : status.espn_connected ? "bg-turf animate-pulse" : "bg-muted")} />
-              {status.sync_error ? "sync failed"
-                : status.espn_connected ? "live" : "manual"}
-            </span>
+            <SyncDot status={status} />
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
+                    onClick={() => setStatus({ configured: false })}>
+              Change league
+            </Button>
           </div>
         </div>
       </header>
+
+      <Phase status={status} />
 
       {err && (
         <div className="flex items-center gap-3 border-b border-alarm/30 bg-alarm/10 px-4 py-1.5 text-xs text-alarm">
           {err}
           <Button size="sm" variant="ghost" className="ml-auto h-6"
-                  onClick={() => setErr(null)}>
-            Dismiss
-          </Button>
+                  onClick={() => setErr(null)}>Dismiss</Button>
         </div>
       )}
 
-      {/* Not dismissible. A wrong seat makes every survival probability wrong,
-          and a finished draft makes every recommendation meaningless -- both
-          are worth interrupting for. */}
       {(status.warnings ?? []).map((w) => (
         <div key={w} className="border-b border-clock/30 bg-clock/10 px-4 py-2 text-xs text-clock">
           <div className="mx-auto flex max-w-[1400px] items-center gap-3">
             <span className="flex-1">{w}</span>
             {!status.slot_confirmed && (
-              <SlotPicker
-                nTeams={status.n_teams ?? 12}
-                current={status.my_slot ?? 1}
-                onSet={async (n) => refreshAll(await api.setSlot(n))}
-              />
+              <Button size="sm" variant="outline" className="h-7"
+                      onClick={() => setEditPicks(true)}>
+                Set my picks
+              </Button>
             )}
           </div>
         </div>
       ))}
 
-      {/* The room on the left, everyone's holes on the right. */}
       <main className="mx-auto w-full max-w-[1400px] flex-1 overflow-y-auto px-4 py-4">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Ticker status={status} onUndo={undo} busy={busy} />
-          <Teams teams={teams} mySlot={status.my_slot ?? 1} />
+        <div className="mb-3 flex rounded-md border border-line p-0.5">
+          {(["room", "data"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "flex-1 rounded px-3 py-1.5 text-xs capitalize transition-colors",
+                tab === t ? "bg-raised font-medium text-chalk" : "text-muted hover:text-chalk"
+              )}
+            >
+              {t === "room" ? "The room" : "The numbers"}
+            </button>
+          ))}
         </div>
 
-        {!status.espn_connected && (
-          <ManualEntry onPicked={refreshAll} busy={busy} setBusy={setBusy} />
-        )}
+        <div key={tab} className="tick-in space-y-4">
+          {tab === "room" ? (
+            <>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Ticker status={status} onUndo={undo} busy={busy} />
+                <Teams teams={teams} mySlot={status.my_slot ?? 1} />
+              </div>
+              {!status.espn_connected && (
+                <PickInput status={status} onPicked={refreshAll}
+                           busy={busy} setBusy={setBusy} />
+              )}
+            </>
+          ) : (
+            <Charts data={stats} />
+          )}
+        </div>
       </main>
 
       <Shortlist
@@ -194,67 +220,14 @@ export default function App() {
         onSkip={skip}
         onRefresh={loadList}
       />
-    </div>
-  );
-}
 
-/** Set your seat when ESPN has not published the pick order yet. */
-function SlotPicker({ nTeams, current, onSet }: {
-  nTeams: number; current: number; onSet: (n: number) => void;
-}) {
-  return (
-    <label className="flex shrink-0 items-center gap-2">
-      <span className="text-[11px] uppercase tracking-wider">My slot</span>
-      <select
-        value={current}
-        onChange={(e) => onSet(+e.target.value)}
-        className="h-7 rounded border border-clock/40 bg-ink px-2 text-xs text-chalk"
-      >
-        {Array.from({ length: nTeams }, (_, i) => i + 1).map((n) => (
-          <option key={n} value={n}>{n}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-/** Typing picks in, for mocks and rooms the API cannot reach. */
-function ManualEntry({ onPicked, busy, setBusy }: {
-  onPicked: (s: Status) => void; busy: boolean; setBusy: (b: boolean) => void;
-}) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(mine: boolean) {
-    if (!name.trim()) return;
-    setBusy(true); setError(null);
-    try {
-      onPicked(await api.pick({ name: name.trim(), mine }));
-      setName("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <section className="mt-4 rounded-lg border border-line bg-panel p-3">
-      <span className="eyebrow">Record a pick</span>
-      <div className="mt-2 flex gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit(false)}
-          placeholder="Player name — partial is fine"
-          className="h-9 flex-1 rounded-md border border-line bg-ink px-3 text-sm placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf/50"
+      {editPicks && (
+        <PickEditor
+          status={status}
+          onChange={refreshAll}
+          onClose={() => setEditPicks(false)}
         />
-        <Button size="sm" variant="outline" onClick={() => submit(false)} disabled={busy}>
-          Someone else
-        </Button>
-        <Button size="sm" onClick={() => submit(true)} disabled={busy}>
-          That was me
-        </Button>
-      </div>
-      {error && <p className="mt-1.5 text-xs text-alarm">{error}</p>}
-    </section>
+      )}
+    </div>
   );
 }

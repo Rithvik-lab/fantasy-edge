@@ -145,8 +145,19 @@ def picks_until_next(slot: int, current_overall: int, n_teams: int,
     would still be there next time is a wasted pick, and the size of the gap
     is what decides that.
     """
-    mine = picks_for_slot(slot, n_teams, n_rounds)
-    later = [p for p in mine if p > current_overall]
+    return gap_until_next(picks_for_slot(slot, n_teams, n_rounds),
+                          current_overall)
+
+
+def gap_until_next(owned: list[int], current_overall: int) -> int | None:
+    """Same question, for a set of picks that need not follow the snake.
+
+    People trade picks. Once they do, "your picks" is just a set of overall
+    numbers and the tidy snake formula stops describing it -- trade away
+    round five and the wait from round four doubles, which changes every
+    survival probability and therefore the whole shortlist.
+    """
+    later = sorted(p for p in owned if p > current_overall)
     if not later:
         return None
     return later[0] - current_overall - 1

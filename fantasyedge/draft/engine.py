@@ -32,8 +32,9 @@ import polars as pl
 
 from fantasyedge.league import (
     LeagueSettings,
+    gap_until_next,
     overall_pick,
-    picks_until_next,
+    picks_for_slot,
     slot_for_pick,
 )
 
@@ -60,6 +61,9 @@ class DraftState:
     my_slot: int
     drafted: list[str] = field(default_factory=list)   # player_id, in order
     my_roster: list[str] = field(default_factory=list)
+    # Overall pick numbers you actually hold. None means the plain snake off
+    # `my_slot`; pass a list once picks have been traded.
+    owned_picks: list[int] | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_slot <= self.settings.n_teams:
@@ -71,6 +75,13 @@ class DraftState:
     def picks_made(self) -> int:
         return len(self.drafted)
 
+    def my_picks(self) -> list[int]:
+        """Every overall pick you hold, traded or not."""
+        if self.owned_picks is not None:
+            return sorted(self.owned_picks)
+        return picks_for_slot(self.my_slot, self.settings.n_teams,
+                              self.settings.n_rounds)
+
     def on_the_clock(self) -> tuple[int, int]:
         """(round, pick) currently up, 1-indexed."""
         nxt = self.picks_made + 1
@@ -80,6 +91,8 @@ class DraftState:
 
     def is_my_turn(self) -> bool:
         rnd, pick = self.on_the_clock()
+        if self.owned_picks is not None:
+            return overall_pick(rnd, pick, self.settings.n_teams) in self.owned_picks
         return slot_for_pick(rnd, pick, self.settings.n_teams) == self.my_slot
 
 
@@ -531,8 +544,10 @@ def recommend(
     settings = state.settings
     rnd, pick = state.on_the_clock()
     current = overall_pick(rnd, pick, settings.n_teams)
-    gap = picks_until_next(state.my_slot, current, settings.n_teams,
-                           settings.n_rounds)
+    # Gap comes from the picks you actually hold. Trade round five away and
+    # the wait from round four doubles, which changes every survival
+    # probability on the board.
+    gap = gap_until_next(state.my_picks(), current)
 
     avail = projections.filter(
         ~pl.col("player_id").is_in(state.drafted + exclude)

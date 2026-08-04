@@ -5,6 +5,8 @@ import { Input, Field } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 const RISK = ["safe", "combined", "aggressive"] as const;
+type Risk = (typeof RISK)[number];
+type Mode = null | "espn" | "manual";
 
 function Choice<T extends string>({ value, options, onChange }: {
   value: T; options: readonly T[]; onChange: (v: T) => void;
@@ -13,11 +15,9 @@ function Choice<T extends string>({ value, options, onChange }: {
     <div className="flex rounded-md border border-line p-0.5">
       {options.map((o) => (
         <button
-          key={o}
-          type="button"
-          onClick={() => onChange(o)}
+          key={o} type="button" onClick={() => onChange(o)}
           className={cn(
-            "flex-1 rounded px-2 py-1 text-xs capitalize transition-colors",
+            "flex-1 rounded px-2 py-1 text-xs capitalize transition-all duration-200",
             value === o ? "bg-turf text-ink font-semibold" : "text-muted hover:text-chalk"
           )}
         >
@@ -28,16 +28,48 @@ function Choice<T extends string>({ value, options, onChange }: {
   );
 }
 
-/**
- * Two ways in, and the ESPN one is the point.
- *
- * Connecting a real league reads its own team count, lineup and PPR off
- * ESPN, so the tool fits whatever league you actually play in instead of
- * assuming a 12-team full-PPR one. Manual setup stays for mocks, Yahoo,
- * Sleeper, or anywhere the API cannot reach.
- */
+/** The opening screen. One decision, made to look like one decision. */
+function Chooser({ onPick }: { onPick: (m: Mode) => void }) {
+  return (
+    <div className="tick-in space-y-3">
+      <button
+        onClick={() => onPick("espn")}
+        className="group w-full rounded-lg border border-line bg-panel p-4 text-left transition-all duration-200 hover:border-turf/50 hover:bg-raised"
+      >
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-turf opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-turf" />
+          </span>
+          <span className="font-semibold">Connect my ESPN league</span>
+          <span className="ml-auto text-muted transition-transform duration-200 group-hover:translate-x-0.5">›</span>
+        </div>
+        <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+          Picks arrive on their own while you draft. Reads your league's real
+          team count, lineup and scoring, so nothing is assumed.
+        </p>
+      </button>
+
+      <button
+        onClick={() => onPick("manual")}
+        className="group w-full rounded-lg border border-line bg-panel p-4 text-left transition-all duration-200 hover:border-line/80 hover:bg-raised"
+      >
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-muted" />
+          <span className="font-semibold">Set it up myself</span>
+          <span className="ml-auto text-muted transition-transform duration-200 group-hover:translate-x-0.5">›</span>
+        </div>
+        <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+          Mock drafts, Yahoo, Sleeper, or a room with no API. You type the
+          picks; everything else works the same.
+        </p>
+      </button>
+    </div>
+  );
+}
+
 export function Setup({ onReady }: { onReady: () => void }) {
-  const [mode, setMode] = useState<"espn" | "manual">("espn");
+  const [mode, setMode] = useState<Mode>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -53,12 +85,11 @@ export function Setup({ onReady }: { onReady: () => void }) {
   const [lineup, setLineup] = useState<Record<string, number>>({
     QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DST: 1,
   });
-  const [risk, setRisk] = useState<(typeof RISK)[number]>("combined");
-  const [bench, setBench] = useState<(typeof RISK)[number]>("aggressive");
+  const [risk, setRisk] = useState<Risk>("combined");
+  const [bench, setBench] = useState<Risk>("aggressive");
 
   async function go() {
-    setBusy(true);
-    setErr(null);
+    setBusy(true); setErr(null);
     try {
       if (mode === "espn") {
         await api.connectEspn({
@@ -75,137 +106,149 @@ export function Setup({ onReady }: { onReady: () => void }) {
       onReady();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   return (
     <div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-12">
-      <h1 className="text-2xl font-bold tracking-tight">FantasyEdge</h1>
-      <p className="mt-1 text-sm text-muted">
-        Three names, every pick, priced against what the board still owes you.
+      {/* Wordmark carries the thesis: players are assets with a price. */}
+      <div className="mb-1 flex items-baseline gap-2">
+        <h1 className="text-3xl font-bold tracking-tight">FantasyEdge</h1>
+        <span className="num text-[11px] text-turf">v1</span>
+      </div>
+      <p className="text-sm leading-relaxed text-muted">
+        Three names, every pick — priced against what the board still owes you
+        at your next turn.
       </p>
 
-      <div className="mt-6 flex rounded-md border border-line p-0.5">
-        {(["espn", "manual"] as const).map((m) => (
+      <div className="my-6 h-px bg-gradient-to-r from-turf/40 via-line to-transparent" />
+
+      {mode === null ? (
+        <Chooser onPick={setMode} />
+      ) : (
+        <div className="tick-in">
           <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={cn(
-              "flex-1 rounded px-3 py-1.5 text-sm transition-colors",
-              mode === m ? "bg-raised font-medium text-chalk" : "text-muted hover:text-chalk"
-            )}
+            onClick={() => { setMode(null); setErr(null); }}
+            className="mb-4 flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-chalk"
           >
-            {m === "espn" ? "Connect ESPN league" : "Set up manually"}
+            <span className="transition-transform duration-200">‹</span> Back
           </button>
-        ))}
-      </div>
 
-      <div className="mt-5 space-y-4">
-        {mode === "espn" ? (
-          <>
-            <Field label="League ID"
-                   hint="From your league URL: .../leagues/THIS_NUMBER">
-              <Input value={leagueId} onChange={(e) => setLeagueId(e.target.value)}
-                     placeholder="1234567" inputMode="numeric" />
-            </Field>
-            <Field label="Season">
-              <Input type="number" value={season}
-                     onChange={(e) => setSeason(+e.target.value)} />
-            </Field>
-            <details className="rounded-md border border-line px-3 py-2">
-              <summary className="cursor-pointer text-xs text-muted">
-                Private league? Add your cookies
-              </summary>
-              <div className="mt-3 space-y-3">
-                <p className="text-[11px] leading-relaxed text-muted">
-                  In a browser logged into ESPN, open DevTools → Application →
-                  Cookies → espn.com, and copy <code className="text-chalk">espn_s2</code> and{" "}
-                  <code className="text-chalk">SWID</code>. They stay on this machine and are
-                  only sent to ESPN. You can also put them in <code className="text-chalk">.env</code>{" "}
-                  as ESPN_S2 and SWID.
+          <h2 className="mb-4 font-semibold">
+            {mode === "espn" ? "Connect your ESPN league" : "Set up your league"}
+          </h2>
+
+          <div className="space-y-4">
+            {mode === "espn" ? (
+              <>
+                <Field label="League ID"
+                       hint="The number in your league URL: .../leagues/1234567">
+                  <Input value={leagueId} onChange={(e) => setLeagueId(e.target.value)}
+                         placeholder="1234567" inputMode="numeric" autoFocus />
+                </Field>
+                <Field label="Season">
+                  <Input type="number" value={season}
+                         onChange={(e) => setSeason(+e.target.value)} />
+                </Field>
+
+                <details className="group rounded-md border border-line px-3 py-2">
+                  <summary className="cursor-pointer list-none text-xs text-muted transition-colors hover:text-chalk">
+                    <span className="inline-block transition-transform duration-200 group-open:rotate-90">›</span>{" "}
+                    Private league? Add your cookies
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <p className="text-[11px] leading-relaxed text-muted">
+                      In a browser logged into ESPN: DevTools → Application →
+                      Cookies → espn.com. Copy <code className="text-chalk">espn_s2</code>{" "}
+                      and <code className="text-chalk">SWID</code>. They stay on this
+                      machine and are only sent to ESPN. You can also put them in{" "}
+                      <code className="text-chalk">.env</code> as ESPN_S2 and SWID.
+                    </p>
+                    <Field label="espn_s2">
+                      <Input value={s2} onChange={(e) => setS2(e.target.value)} />
+                    </Field>
+                    <Field label="SWID">
+                      <Input value={swid} onChange={(e) => setSwid(e.target.value)}
+                             placeholder="{XXXXXXXX-....}" />
+                    </Field>
+                  </div>
+                </details>
+
+                <p className="rounded-md border border-line bg-panel px-3 py-2 text-[11px] leading-relaxed text-muted">
+                  Team count, lineup and PPR come from the league itself. Traded
+                  picks and your draft seat can be adjusted once you are in.
                 </p>
-                <Field label="espn_s2">
-                  <Input value={s2} onChange={(e) => setS2(e.target.value)} />
-                </Field>
-                <Field label="SWID">
-                  <Input value={swid} onChange={(e) => setSwid(e.target.value)}
-                         placeholder="{XXXXXXXX-....}" />
-                </Field>
-              </div>
-            </details>
-            <p className="text-[11px] text-muted">
-              Team count, lineup and PPR are read from the league itself. Picks
-              then sync on their own while you draft.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Teams">
-                <Input type="number" min={2} max={20} value={teams}
-                       onChange={(e) => setTeams(+e.target.value)} />
-              </Field>
-              <Field label="Your draft slot">
-                <Input type="number" min={1} max={teams} value={slot}
-                       onChange={(e) => setSlot(+e.target.value)} />
-              </Field>
-              <Field label="Points per reception">
-                <Input type="number" step={0.5} min={0} max={2} value={ppr}
-                       onChange={(e) => setPpr(+e.target.value)} />
-              </Field>
-              <Field label="Roster size">
-                <Input type="number" min={1} max={30} value={rounds}
-                       onChange={(e) => setRounds(+e.target.value)} />
-              </Field>
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Teams">
+                    <Input type="number" min={2} max={20} value={teams}
+                           onChange={(e) => setTeams(+e.target.value)} autoFocus />
+                  </Field>
+                  <Field label="Your draft slot" hint="Trades are handled later">
+                    <Input type="number" min={1} max={teams} value={slot}
+                           onChange={(e) => setSlot(+e.target.value)} />
+                  </Field>
+                  <Field label="Points per reception">
+                    <Input type="number" step={0.5} min={0} max={2} value={ppr}
+                           onChange={(e) => setPpr(+e.target.value)} />
+                  </Field>
+                  <Field label="Roster size">
+                    <Input type="number" min={1} max={30} value={rounds}
+                           onChange={(e) => setRounds(+e.target.value)} />
+                  </Field>
+                </div>
 
-            <div>
-              <span className="eyebrow">Starting lineup</span>
-              <div className="mt-1.5 grid grid-cols-4 gap-2">
-                {Object.keys(lineup).map((pos) => (
-                  <label key={pos} className="space-y-1">
-                    <span className="block text-[11px] text-muted">{pos}</span>
-                    <Input
-                      type="number" min={0} max={4} value={lineup[pos]}
-                      onChange={(e) =>
-                        setLineup({ ...lineup, [pos]: +e.target.value })}
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
+                <div>
+                  <span className="eyebrow">Starting lineup</span>
+                  <div className="mt-1.5 grid grid-cols-4 gap-2">
+                    {Object.keys(lineup).map((pos) => (
+                      <label key={pos} className="space-y-1">
+                        <span className="block text-[11px] text-muted">{pos}</span>
+                        <Input type="number" min={0} max={4} value={lineup[pos]}
+                               onChange={(e) =>
+                                 setLineup({ ...lineup, [pos]: +e.target.value })} />
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <span className="eyebrow block">Starter risk</span>
-                <Choice value={risk} options={RISK} onChange={setRisk} />
-              </div>
-              <div className="space-y-1.5">
-                <span className="eyebrow block">Bench risk</span>
-                <Choice value={bench} options={RISK} onChange={setBench} />
-              </div>
-            </div>
-            <p className="text-[11px] leading-relaxed text-muted">
-              Bench risk runs separately because a bench bust costs nothing —
-              you never start him — while a bench hit becomes a starter. That
-              payoff is one-sided, so variance is worth more there.
-            </p>
-          </>
-        )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <span className="eyebrow block">Starter risk</span>
+                    <Choice value={risk} options={RISK} onChange={setRisk} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="eyebrow block">Bench risk</span>
+                    <Choice value={bench} options={RISK} onChange={setBench} />
+                  </div>
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted">
+                  Bench risk runs separately because a bench bust costs nothing —
+                  you never start him — while a bench hit becomes a starter. That
+                  payoff is one-sided, so variance is worth more there.
+                </p>
+              </>
+            )}
 
-        {err && (
-          <p className="rounded-md border border-alarm/30 bg-alarm/10 px-3 py-2 text-xs text-alarm">
-            {err}
-          </p>
-        )}
+            {err && (
+              <p className="tick-in rounded-md border border-alarm/30 bg-alarm/10 px-3 py-2 text-xs text-alarm">
+                {err}
+              </p>
+            )}
 
-        <Button size="lg" className="w-full" onClick={go}
-                disabled={busy || (mode === "espn" && !leagueId.trim())}>
-          {busy ? "Loading the board…" : "Start drafting"}
-        </Button>
-      </div>
+            <Button
+              size="lg"
+              className="w-full shadow-[0_0_28px_-6px] shadow-turf/45 transition-shadow hover:shadow-[0_0_34px_-4px] hover:shadow-turf/60"
+              onClick={go}
+              disabled={busy || (mode === "espn" && !leagueId.trim())}
+            >
+              {busy ? "Building the board…" : "Start drafting"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

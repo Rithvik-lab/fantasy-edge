@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field
 import draft as D
 from fantasyedge.data import espn_draft
 from fantasyedge.draft import explain
-from fantasyedge.draft.engine import DraftState, recommend, roster_needs
+from fantasyedge.draft.engine import (
+    DraftState,
+    recommend,
+    roster_needs,
+    survival_probability,
+)
 from fantasyedge.draft.session import grade_roster, optimal_lineup
 from fantasyedge.league import LeagueSettings, picks_for_slot, slot_for_pick
 
@@ -69,6 +74,11 @@ class Draft:
         self.slot_confirmed: bool = False
         self.draft_started: bool = False
         self.draft_complete: bool = False
+        self.draft_time: float | None = None    # epoch seconds, if ESPN says
+        # Overall pick numbers you hold. None = the plain snake off my_slot.
+        # People trade picks, and once they do "your picks" is a set of
+        # numbers rather than a formula.
+        self.owned_picks: list[int] | None = None
 
     # -- derived ----------------------------------------------------------
 
@@ -76,10 +86,27 @@ class Draft:
     def drafted_ids(self) -> list[str]:
         return [p["player_id"] for p in self.picks if p.get("player_id")]
 
+    def my_picks(self) -> list[int]:
+        """Overall pick numbers you hold, after any trades."""
+        if self.owned_picks is not None:
+            return sorted(self.owned_picks)
+        return picks_for_slot(self.my_slot, self.settings.n_teams,
+                              self.settings.n_rounds)
+
     @property
     def my_ids(self) -> list[str]:
+        """Players you actually own.
+
+        ESPN records which team made each pick, so once connected that is
+        authoritative and handles trades for free. Off ESPN, ownership is
+        whichever overall picks you say are yours.
+        """
+        if self.my_team_id is not None:
+            return [p["player_id"] for p in self.picks
+                    if p.get("player_id") and p.get("team_id") == self.my_team_id]
+        owned = set(self.my_picks())
         return [p["player_id"] for p in self.picks
-                if p.get("player_id") and p.get("slot") == self.my_slot]
+                if p.get("player_id") and p.get("overall") in owned]
 
     def on_the_clock(self) -> tuple[int, int, int]:
         n = len(self.picks) + 1
@@ -89,8 +116,8 @@ class Draft:
         return rnd, pick, n
 
     def is_my_turn(self) -> bool:
-        rnd, pick, _ = self.on_the_clock()
-        return slot_for_pick(rnd, pick, self.settings.n_teams) == self.my_slot
+        _, _, overall = self.on_the_clock()
+        return overall in set(self.my_picks())
 
 
 STATE = Draft()
@@ -155,6 +182,12 @@ def set_league(cfg: LeagueIn) -> dict:
         STATE.risk = cfg.risk_tolerance
         STATE.bench_risk = cfg.bench_tolerance
         STATE.picks = []
+        STATE.owned_picks = None
+        STATE.slot_confirmed = True     # you told us the seat yourself
+        STATE.espn = None
+        STATE.my_team_id = None
+        STATE.draft_started = False
+        STATE.draft_complete = False
         D._BOARD = None
     return status()
 
@@ -205,7 +238,72 @@ def set_slot(slot: int) -> dict:
     with STATE.lock:
         STATE.my_slot = slot
         STATE.slot_confirmed = True
+        STATE.owned_picks = None    # back to the plain snake off the new seat
     return status()
+
+
+class OwnedPicks(BaseModel):
+    picks: list[int]
+
+
+@app.post("/api/picks/mine")
+def set_owned_picks(body: OwnedPicks) -> dict:
+    """Say exactly which overall picks are yours, after trades.
+
+    The snake formula stops describing your picks the moment you trade one.
+    Sending round five away doubles the wait from round four, and that gap is
+    the input every survival probability is built on -- so it cannot be
+    inferred, it has to be stated.
+    """
+    st = _require()
+    total = st.settings.total_picks
+    bad = [p for p in body.picks if not 1 <= p <= total]
+    if bad:
+        raise HTTPException(400, f"picks outside 1..{total}: {bad[:5]}")
+    with STATE.lock:
+        STATE.owned_picks = sorted(set(body.picks))
+    return status()
+
+
+@app.post("/api/picks/reset")
+def reset_owned_picks() -> dict:
+    """Back to the untraded snake for your seat."""
+    _require()
+    with STATE.lock:
+        STATE.owned_picks = None
+    return status()
+
+
+@app.get("/api/search")
+def search(q: str, limit: int = 8) -> dict:
+    """Name lookup for the pick box, so nobody has to spell Smith-Njigba."""
+    st = _require()
+    term = q.strip().lower()
+    if len(term) < 2:
+        return {"players": []}
+    taken = set(st.drafted_ids)
+    b = _board()
+    hits = (
+        b.filter(pl.col("player_name").str.to_lowercase().str.contains(term,
+                                                                       literal=True))
+        .sort("ecr", nulls_last=True)
+        .head(limit * 3)
+    )
+    shots = _headshots(b)
+    out = []
+    for r in hits.iter_rows(named=True):
+        out.append({
+            "player_id": r["player_id"],
+            "player_name": r["player_name"],
+            "position": r["position"],
+            "ecr": r.get("ecr"),
+            "vor": round(r["vor"], 1) if r.get("vor") is not None else None,
+            "drafted": r["player_id"] in taken,
+            "headshot": shots.get(r["player_id"]),
+        })
+    # Undrafted first: you are almost always naming someone still available.
+    out.sort(key=lambda x: (x["drafted"], x["ecr"] or 9e9))
+    return {"players": out[:limit]}
 
 
 def _ingest(payload: dict) -> None:
@@ -218,6 +316,8 @@ def _ingest(payload: dict) -> None:
         STATE.last_sync = time.time()
         STATE.sync_error = None
         STATE.draft_started = bool(picks.height) or info.in_progress
+        if info.draft_time:
+            STATE.draft_time = info.draft_time
         STATE.draft_complete = bool(
             info.complete or (total and picks.height >= total))
 
@@ -291,8 +391,14 @@ def add_pick(p: PickIn) -> dict:
         raise HTTPException(404, f"no player matching {p.name or p.player_id!r}")
 
     rnd, pick, overall = st.on_the_clock()
-    slot = st.my_slot if p.mine else slot_for_pick(rnd, pick, st.settings.n_teams)
+    slot = slot_for_pick(rnd, pick, st.settings.n_teams)
     with STATE.lock:
+        # Marking a pick as yours records the pick NUMBER, which is what
+        # ownership means once picks get traded.
+        if p.mine and overall not in (STATE.owned_picks or st.my_picks()):
+            STATE.owned_picks = sorted(set(st.my_picks()) | {overall})
+        elif not p.mine and overall in (STATE.owned_picks or st.my_picks()):
+            STATE.owned_picks = sorted(set(st.my_picks()) - {overall})
         STATE.picks.append({
             "player_id": hit["player_id"], "name": hit["player_name"],
             "slot": slot, "overall": overall, "team_id": None,
@@ -314,8 +420,7 @@ def status() -> dict:
     if STATE.settings is None:
         return {"configured": False}
     rnd, pick, overall = STATE.on_the_clock()
-    mine = picks_for_slot(STATE.my_slot, STATE.settings.n_teams,
-                          STATE.settings.n_rounds)
+    mine = STATE.my_picks()
     upcoming = [p for p in mine if p >= overall]
     complete = STATE.draft_complete or overall > STATE.settings.total_picks
 
@@ -342,6 +447,11 @@ def status() -> dict:
         "lineup": STATE.settings.lineup,
         "points_per_reception": STATE.settings.points_per_reception,
         "my_slot": STATE.my_slot,
+        "my_picks": mine,
+        "picks_traded": STATE.owned_picks is not None,
+        "draft_time": STATE.draft_time,
+        "seconds_to_draft": (STATE.draft_time - time.time())
+                            if STATE.draft_time else None,
         "risk_tolerance": STATE.risk,
         "bench_tolerance": STATE.bench_risk,
         "round": rnd, "pick": pick, "overall": overall,
@@ -391,7 +501,8 @@ def suggestions(n: int = 3, exclude: str = "") -> dict:
     skip = [x for x in exclude.split(",") if x]
 
     state = DraftState(settings=st.settings, my_slot=st.my_slot,
-                       drafted=st.drafted_ids, my_roster=st.my_ids)
+                       drafted=st.drafted_ids, my_roster=st.my_ids,
+                       owned_picks=st.owned_picks)
 
     strength = None
     if st.my_ids:
@@ -517,6 +628,66 @@ def board_view(pos: str | None = None, limit: int = 60) -> dict:
     for r in rows:
         r["headshot"] = shots.get(r["player_id"])
     return {"players": rows}
+
+
+@app.get("/api/analytics")
+def analytics(depth: int = 10) -> dict:
+    """Numbers behind the shortlist, shaped for charts.
+
+    Two questions a ranked list cannot answer on its own: where the cliff at
+    each position is, and how long the position will keep producing startable
+    players relative to what the room still needs.
+    """
+    st = _require()
+    b = _board().filter(~pl.col("player_id").is_in(st.drafted_ids))
+    _, _, overall = st.on_the_clock()
+    gap = None
+    later = [p for p in st.my_picks() if p > overall]
+    if later:
+        gap = later[0] - overall - 1
+
+    # How many bodies the room has already taken at each position.
+    pos_by_id = dict(zip(_board()["player_id"].to_list(),
+                         _board()["position"].to_list()))
+    counts: dict[str, int] = {}
+    for p in st.picks:
+        pos = pos_by_id.get(p.get("player_id") or "")
+        if pos:
+            counts[pos] = counts.get(pos, 0) + 1
+
+    tiers, scarcity = [], []
+    for pos in ("QB", "RB", "WR", "TE"):
+        pool = (b.filter(pl.col("position") == pos)
+                 .sort("vor", descending=True, nulls_last=True))
+        if not pool.height:
+            continue
+        rows = pool.head(depth).to_dicts()
+        tiers.append({
+            "position": pos,
+            "players": [{
+                "player_name": r["player_name"],
+                "vor": round(r["vor"], 1) if r.get("vor") is not None else 0.0,
+                "ecr": r.get("ecr"),
+                "floor": round(r["season_p20"]) if r.get("season_p20") else None,
+                "median": round(r["season_p50"]) if r.get("season_p50") else None,
+                "ceiling": round(r["season_p80"]) if r.get("season_p80") else None,
+                # Will he still be there at your next turn?
+                "survives": (round(survival_probability(
+                    r.get("ecr"), r.get("sd"), gap, overall), 2)
+                    if gap is not None else None),
+            } for r in rows],
+        })
+        startable = int(pool.filter(pl.col("vor") > 0).height)
+        league_slots = st.settings.lineup.get(pos, 0) * st.settings.n_teams
+        scarcity.append({
+            "position": pos,
+            "startable_left": startable,
+            "league_slots": league_slots,
+            "already_drafted": counts.get(pos, 0),
+            "still_needed": max(0, league_slots - counts.get(pos, 0)),
+        })
+
+    return {"tiers": tiers, "scarcity": scarcity, "picks_until_next": gap}
 
 
 @app.get("/api/health")
