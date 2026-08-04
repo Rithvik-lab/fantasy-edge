@@ -6,10 +6,12 @@ Three ideas do the work.
    What matters is points above the worst player you'd be *forced* to start
    at that position, which falls out of league size and lineup.
 
-2. SURVIVAL. The question at 1.07 is not "who is best" but "who is best that
-   will not last until my next pick". At the turn in a 12-team league you
-   wait 22 picks; mid-round you wait 12. Taking someone who would still be
-   there is a wasted pick, and the gap is what decides it.
+2. THE PICK PAIR. The question at 1.07 is not "who is best" but "who is best
+   that will not last until my next pick". At the turn in a 12-team league
+   you wait 22 picks; mid-round you wait 12. Taking someone who would still
+   be there spends a pick on nothing, so a player is scored on what he is
+   worth now PLUS what the board still owes you at your next turn -- which
+   is what charges you for reaching rather than just rewarding scarcity.
 
 3. VOLATILITY BY ROUND. Early picks should skew low-variance — those are the
    anchors you need a floor from. Late picks should skew high-variance,
@@ -25,6 +27,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
 import polars as pl
 
 from fantasyedge.league import (
@@ -39,9 +42,9 @@ from fantasyedge.league import (
 # closer to observed draft-day variance.
 SD_TO_DRAFT_SIGMA = 2.5
 
-# How much positional scarcity shifts the score. At 0.4 the scarcest position
-# gets a 40% bump over the flattest, which is enough to break ties in favour
-# of a cliff position without letting scarcity override raw value.
+# Retained for `positional_dropoff` reporting only. Scarcity used to enter the
+# score as a multiplier here; it is now priced per player by
+# `next_pick_value`, which does not need a hand-set weight.
 DROPOFF_WEIGHT = 0.4
 
 # Extra volatility tolerated on bench picks, for the convexity reason above.
@@ -107,9 +110,25 @@ def add_vor(
     projections: pl.DataFrame,
     settings: LeagueSettings,
     points_col: str = "projected_points",
+    replacement: dict[str, float] | None = None,
 ) -> pl.DataFrame:
-    """Attach value over replacement. This is what makes positions comparable."""
-    repl = replacement_points(projections, settings, points_col)
+    """Attach value over replacement. This is what makes positions comparable.
+
+    Pass `replacement` when scoring a SUBSET of the board. Replacement level is
+    a property of the league -- the worst player you could be forced to start
+    all season -- so it must come from the whole player pool. Deriving it from
+    whoever happens to be undrafted lets it collapse as the board empties, and
+    every VOR inflates with it:
+
+        after picks      QB      RB      WR      TE
+                  0   267.1   147.7   178.0   138.1
+                110   125.7    41.1    79.1    88.5
+
+    Jared Goff was worth -38.8 against the real bar and +102.7 against the
+    pick-111 remnant, which is how a quarterback nobody needed kept arriving
+    at the top of round 10.
+    """
+    repl = replacement or replacement_points(projections, settings, points_col)
     expr = pl.lit(None, dtype=pl.Float64)
     for pos, pts in repl.items():
         expr = pl.when(pl.col("position") == pos).then(
@@ -304,6 +323,25 @@ def risk_fit(player_vol_pct: float | None, target: float) -> float:
     return 1.0 - 0.30 * abs(player_vol_pct - target)
 
 
+def weighted(vor: float, *multipliers: float) -> float:
+    """Apply multiplicative weights to VOR without inverting on negatives.
+
+    Late in a draft most of the board really is below replacement, so VOR
+    goes negative -- and a multiplier flips meaning there. Weighting a needed
+    position by 1.2 turns -10 into -12, ranking it BELOW a position you have
+    already filled. The weights would start recommending the worst player at
+    whatever you most need.
+
+    Only the surplus above replacement gets weighted; the deficit passes
+    through untouched. Continuous at zero and identical to plain multiplication
+    everywhere VOR is positive, which is every pick that matters.
+    """
+    surplus = max(vor, 0.0)
+    for m in multipliers:
+        surplus *= m
+    return surplus + min(vor, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Recommendation
 # ---------------------------------------------------------------------------
@@ -339,6 +377,102 @@ def expected_best_survivor(
         if all_better_gone < 0.01:
             break
     return expected
+
+
+def _consume(needs: dict[str, int], position: str,
+             flex_eligible: tuple[str, ...]) -> dict[str, int]:
+    """Roster needs after drafting one player at `position`."""
+    out = dict(needs)
+    if out.get(position, 0) > 0:
+        out[position] -= 1
+    elif position in flex_eligible and out.get("FLEX", 0) > 0:
+        out["FLEX"] -= 1
+    return out
+
+
+def next_pick_value(
+    avail: pl.DataFrame,
+    needs: dict[str, int],
+    round_no: int,
+    picks_ahead: int | None,
+    current_overall: int,
+    flex_eligible: tuple[str, ...] = ("RB", "WR", "TE"),
+) -> dict[str, float]:
+    """For each candidate, the expected value of your NEXT pick if you take him.
+
+    THE OPPORTUNITY COST OF REACHING
+
+    Scoring players one at a time cannot see a reach. A player who will still
+    be on the board in ten picks scores exactly like one who will not, so the
+    engine kept recommending players it could simply have waited for -- paying
+    a pick for something that was free.
+
+    The old fix was a bonus: multiply by how unlikely a player is to survive.
+    That ranks the scarce player higher but never charges you for the reach,
+    so with enough raw value a player who would obviously last still wins.
+
+    Pricing the PAIR does charge you. You hold this pick and your next one, so
+    the real choice is
+
+        take i now  ->  VOR_i  +  E[best available at my next pick, without i]
+
+    Take someone who would have lasted and the second term barely moves -- he
+    was going to be there anyway, so all you did was spend a pick early and
+    give up whoever you could have had now. Take someone who would NOT have
+    lasted and the second term drops by real value, which is precisely what
+    makes him worth taking now.
+
+    Computed exactly, not approximated. With the pool in value order,
+
+        E[best survivor] = sum_i  v_i p_i prod_{j<i} (1 - p_j)
+
+    and dropping one player m out of that sum is a prefix/suffix identity:
+
+        E[best | m gone] = prefix_val[m] + prefix_gone[m] * suffix[m+1]
+
+    so the whole board costs one pass per position instead of one pass per
+    candidate. Need is re-evaluated inside each scenario, because taking a
+    running back changes what the next pick is worth to you.
+    """
+    if picks_ahead is None or not avail.height:
+        return {}
+
+    ids = avail["player_id"].to_list()
+    poss = avail["position"].to_list()
+    vor = np.nan_to_num(avail["vor"].cast(pl.Float64).to_numpy(), nan=0.0)
+    surv = np.array([
+        survival_probability(e, s, picks_ahead, current_overall)
+        for e, s in zip(avail["ecr"].to_list(), avail["sd"].to_list())
+    ])
+
+    out: dict[str, float] = {}
+    for taken in set(poss):
+        after = _consume(needs, taken, flex_eligible)
+        mult = np.array([need_multiplier(q, after, round_no + 1) for q in poss])
+        v = np.maximum(vor, 0.0) * mult + np.minimum(vor, 0.0)  # see `weighted`
+
+        order = np.argsort(-v)
+        vs, ps = v[order], surv[order]
+        n = len(vs)
+
+        # suffix[k] = E[best survivor] looking only at players k onward
+        suffix = np.zeros(n + 1)
+        for k in range(n - 1, -1, -1):
+            suffix[k] = vs[k] * ps[k] + (1.0 - ps[k]) * suffix[k + 1]
+
+        # prefix_val[k] = value already accounted for by players before k,
+        # prefix_gone[k] = P(all of them are gone)
+        gone = np.ones(n + 1)
+        pref = np.zeros(n + 1)
+        for k in range(n):
+            pref[k + 1] = pref[k] + vs[k] * ps[k] * gone[k]
+            gone[k + 1] = gone[k] * (1.0 - ps[k])
+
+        without = pref[:n] + gone[:n] * suffix[1:]
+        for rank_idx, orig in enumerate(order):
+            if poss[orig] == taken:
+                out[ids[orig]] = float(without[rank_idx])
+    return out
 
 
 def positional_dropoff(
@@ -406,7 +540,9 @@ def recommend(
     if not avail.height:
         return avail
 
-    avail = add_vor(avail, settings)
+    # Replacement level from the FULL board, not from who is left. See add_vor.
+    avail = add_vor(avail, settings,
+                    replacement=replacement_points(projections, settings))
 
     # Volatility percentile within position, so a "high variance" TE is
     # judged against TEs rather than against QBs.
@@ -442,16 +578,22 @@ def recommend(
     needs = roster_needs(state, roster_pos)
     roster_risk = roster_risk_profile(projections, state.my_roster)
 
-    # Positional scarcity: what each position costs you if you wait a turn.
+    # Positional scarcity, reported for context. It no longer feeds the score
+    # -- `next_pick_value` measures the same thing per player and exactly.
     dd = positional_dropoff(avail, gap, current)
     dropoff = dict(zip(dd["position"].to_list(), dd["dropoff"].to_list())) if dd.height else {}
-    max_drop = max(dropoff.values()) if dropoff else 1.0
     # A pick fills a starting slot if any dedicated slot is still open;
     # otherwise it is bench depth and gets the bench risk setting.
     starters_open = any(v > 0 for k, v in needs.items() if k != "FLEX")
     tol = risk_tolerance if starters_open else (bench_tolerance or risk_tolerance)
     target = target_volatility(rnd, settings.n_rounds, tol, roster_risk,
                                roster_strength, filling_starter=starters_open)
+
+    # What your next pick is worth, for every possible choice here. This is
+    # the term that charges you for reaching instead of merely rewarding
+    # scarcity, so it replaces the old urgency and dropoff multipliers --
+    # keeping those alongside it would price the same effect twice.
+    nxt = next_pick_value(avail, needs, rnd, gap, current, settings.flex_eligible)
 
     rows = []
     for r in avail.iter_rows(named=True):
@@ -461,19 +603,13 @@ def recommend(
             survival_probability(r.get("ecr"), r.get("sd"), gap, current)
             if gap is not None else 0.0
         )
-        urgency = 1.0 - p_survive
         nm = need_multiplier(r["position"], needs, rnd)
         rf = risk_fit(r.get("vol_pct"), target)
 
-        # Value, weighted by how badly you need the position, how well the
-        # risk profile fits this round, and how likely he is to be gone --
-        # plus how much the position itself falls off if you wait. That last
-        # term is the opportunity cost of reaching: taking a tight end early
-        # is only right when the tight end cliff is steeper than the drop-off
-        # at whatever you would otherwise have taken.
-        drop = dropoff.get(r["position"], 0.0)
-        scarcity = 1.0 + DROPOFF_WEIGHT * (drop / max(1.0, max_drop))
-        score = r["vor"] * nm * rf * (1.0 + 0.6 * urgency) * scarcity
+        # Two picks, one number: what he is worth to you now, plus what the
+        # board still owes you afterwards.
+        now = weighted(r["vor"], nm, rf)
+        later = nxt.get(r["player_id"], 0.0)
 
         rows.append({
             "player_name": r.get("player_name"),
@@ -484,7 +620,9 @@ def recommend(
             "p_survive": round(p_survive, 3),
             "need_mult": round(nm, 3),
             "risk_fit": round(rf, 3),
-            "score": round(score, 1),
+            "now": round(now, 1),
+            "next_pick": round(later, 1),
+            "score": round(now + later, 1),
             "player_id": r["player_id"],
             "dropoff": round(dropoff.get(r["position"], 0.0), 1),
             "floor": round(r["season_p20"], 0) if r.get("season_p20") else None,

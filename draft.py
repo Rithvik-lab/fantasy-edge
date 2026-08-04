@@ -31,7 +31,7 @@ from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E40
 from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
 from fantasyedge.league import LeagueSettings, picks_for_slot  # noqa: E402
-from fantasyedge.models import season_sim  # noqa: E402
+from fantasyedge.models import rookie_risk, season_sim  # noqa: E402
 
 W = 78
 _BOARD: pl.DataFrame | None = None
@@ -84,14 +84,76 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
         .with_columns(pl.lit(False).alias("rookie"))
     )
 
-    rk = _rookies()
-    if rk.height:
-        rk = rk.filter(~pl.col("player_id").is_in(vets["player_id"]))
+    vets, rk = _merge_rookies(vets, _rookies())
     b = pl.concat([vets, rk], how="diagonal") if rk.height else vets
+
+    # Rookie draft position is the least settled on the board, so widen it.
+    b = b.with_columns(
+        pl.when(pl.col("rookie").fill_null(False))
+        .then(pl.struct(["ecr", "sd"]).map_elements(
+            lambda r: rookie_risk.draft_sigma(r["ecr"], r["sd"]),
+            return_dtype=pl.Float64))
+        .otherwise(pl.col("sd")).alias("sd")
+    )
+
     b = _scoring_mix(b)
+    b = rookie_risk.apply(b)          # discount the projection ...
     b = _season_distribution(b)
+    b = rookie_risk.apply_floor(b)    # ... and drop the floor further still
     _BOARD = add_vor(b, settings)
     return _BOARD
+
+
+def _name_key() -> pl.Expr:
+    """Normalised name, for matching a player across two ID systems."""
+    return (
+        pl.col("player_name").str.to_lowercase()
+        .str.replace_all(r"\b(jr|sr|ii|iii|iv|v)\.?$", "")
+        .str.replace_all(r"[^a-z ]", "")
+        .str.strip_chars()
+    )
+
+
+def _merge_rookies(vets: pl.DataFrame,
+                   rk: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Fold the rookie class into the market board without duplicating anyone.
+
+    `rookies.parquet` carries nflverse PLACEHOLDER ids for an unsigned class
+    ("LOV121782"), while the ESPN crosswalk carries real gsis ids. Matching on
+    id therefore never fired, and 45 players sat on the board twice -- once at
+    their real ESPN price and once at a fabricated one:
+
+        Jeremiyah Love    real ecr  16    phantom ecr  28.4
+        Ja'Kobi Lane      real ecr 178    phantom ecr  54.8
+
+    That is worse than cosmetic. The engine could recommend the phantom copy
+    as a bargain, and the extra bodies inflated every position pool -- which
+    sets replacement level, and therefore every VOR on the board.
+
+    ESPN's row wins, because it carries the price the league actually drafts
+    from. All the rookie half contributes is the flag.
+    """
+    if not rk.height:
+        return vets.with_columns(pl.col("rookie").fill_null(False)), rk
+
+    # Name only, not name+position: the two sources disagree on position for
+    # tweeners (ESPN had Max Bredeson at RB, the rookie table at TE), and a
+    # position mismatch was letting the duplicate back through. ESPN's
+    # position is the one the league scores by, so it wins.
+    key = ["_k"]
+    vets = vets.with_columns(_name_key().alias("_k"))
+    rk = rk.with_columns(_name_key().alias("_k"))
+
+    priced = rk.select(key).unique().with_columns(pl.lit(True).alias("_rk"))
+    vets = (
+        vets.join(priced, on=key, how="left")
+        .with_columns(pl.col("_rk").fill_null(False).alias("rookie"))
+        .drop("_rk", "_k")
+    )
+    # Whoever ESPN does not price stays a rookie row with a synthetic ADP.
+    rk = rk.join(vets.with_columns(_name_key().alias("_k")).select(key),
+                 on=key, how="anti").drop("_k")
+    return vets, rk
 
 
 def _rookies() -> pl.DataFrame:
@@ -102,11 +164,15 @@ def _rookies() -> pl.DataFrame:
     r = pl.read_parquet(p).filter(pl.col("gsis_id").is_not_null())
     if not r.height:
         return pl.DataFrame()
+    # A rookie ESPN does not price is, by revealed preference, a late pick --
+    # so the synthetic board starts after the rounds ESPN does cover rather
+    # than at pick 24. Anyone ESPN *does* price keeps their real ADP and never
+    # reaches this function's output (see `_merge_rookies`).
     return (
         r.with_columns([
             (pl.col("projected_points").rank("ordinal", descending=True)
-             .cast(pl.Float64) * 2.2 + 24.0).alias("ecr"),
-            pl.lit(4.5).alias("sd"),
+             .cast(pl.Float64) * 2.2 + 120.0).alias("ecr"),
+            pl.lit(None, dtype=pl.Float64).alias("sd"),
             pl.lit(True).alias("rookie"),
             pl.col("projected_points").cast(pl.Float64),
         ])
