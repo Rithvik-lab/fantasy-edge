@@ -28,6 +28,8 @@ export function Phase({ status }: { status: Status }) {
     return () => clearInterval(id);
   }, []);
 
+  // A finished draft is worth saying either way: in manual mode you can still
+  // fill a board past the last pick without noticing.
   if (status.phase === "complete") {
     return (
       <div className="border-b border-line bg-raised px-4 py-2.5">
@@ -43,7 +45,10 @@ export function Phase({ status }: { status: Status }) {
     );
   }
 
-  if (status.phase !== "pre") return null;
+  // Manual mode has no scheduled draft and nothing syncing, so "you are here
+  // early" is meaningless there — it described a live connection that does not
+  // exist. Only an attached ESPN league can be early.
+  if (status.phase !== "pre" || !status.espn_connected) return null;
 
   const left = status.draft_time ? status.draft_time - now : null;
   const soon = left != null && left <= 0;

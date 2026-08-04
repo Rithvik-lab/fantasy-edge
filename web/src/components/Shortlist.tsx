@@ -1,6 +1,7 @@
 import type { Shortlist as ShortlistData } from "@/lib/api";
 import { PlayerCard } from "@/components/PlayerCard";
 import { Button } from "@/components/ui/button";
+import { Term } from "@/components/Explain";
 import { cn } from "@/lib/utils";
 
 /**
@@ -48,9 +49,11 @@ export function Shortlist({
             Round {data.round} · Pick {data.pick} · Overall {data.overall}
           </span>
           {data.picks_until_next != null && (
-            <span className="text-[11px] text-muted num">
-              {data.picks_until_next} picks until your next turn
-            </span>
+            <Term k="survive">
+              <span className="num text-[11px] text-muted">
+                {data.picks_until_next} picks until your next turn
+              </span>
+            </Term>
           )}
           {stale && (
             <span className="text-[11px] font-medium text-clock">
@@ -78,7 +81,7 @@ export function Shortlist({
 
         {data.compare && (
           <p className="mt-2 text-[11.5px] leading-snug text-muted">
-            <span className="text-turf/80">Why this order: </span>
+            <Term k="score"><span className="text-turf/80">Why this order: </span></Term>
             {data.compare}
           </p>
         )}

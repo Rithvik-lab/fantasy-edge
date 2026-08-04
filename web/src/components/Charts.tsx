@@ -1,4 +1,5 @@
 import type { Analytics } from "@/lib/api";
+import { Term } from "@/components/Explain";
 import { cn } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
@@ -62,9 +63,11 @@ function Cliff({ tiers }: { tiers: Analytics["tiers"] }) {
               <span className="text-xs font-bold" style={{ color: hue }}>
                 {t.position}
               </span>
-              <span className="num text-[11px] text-muted">
-                falls {fall} over the next {t.players.length}
-              </span>
+              <Term k="dropoff">
+                <span className="num text-[11px] text-muted">
+                  falls {fall} over the next {t.players.length}
+                </span>
+              </Term>
             </figcaption>
 
             <div className="space-y-[3px]">

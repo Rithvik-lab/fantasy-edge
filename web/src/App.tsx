@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  api, type Analytics, type Shortlist as ShortlistData, type Status, type TeamRow,
+  api, type AdpLadder, type Analytics, type Shortlist as ShortlistData,
+  type Status, type TeamRow,
 } from "@/lib/api";
 import { Setup } from "@/components/Setup";
 import { Shortlist } from "@/components/Shortlist";
 import { Ticker, Teams } from "@/components/Ticker";
 import { Charts } from "@/components/Charts";
+import { Ladder } from "@/components/Ladder";
 import { GlossaryDrawer } from "@/components/Glossary";
 import { PickEditor } from "@/components/PickEditor";
 import { PickInput } from "@/components/PickInput";
@@ -21,7 +23,9 @@ export default function App() {
   const [list, setList] = useState<ShortlistData | null>(null);
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [stats, setStats] = useState<Analytics | null>(null);
+  const [ladder, setLadder] = useState<AdpLadder | null>(null);
   const [tab, setTab] = useState<Tab>("room");
+  const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
@@ -45,6 +49,7 @@ export default function App() {
     await loadList();
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
     try { setStats(await api.analytics()); } catch { /* optional */ }
+    try { setLadder(await api.adp(90)); } catch { /* optional */ }
   }, [loadList]);
 
   useEffect(() => {
@@ -72,6 +77,7 @@ export default function App() {
           await loadList();
           try { setTeams((await api.teams()).teams); } catch { /* optional */ }
           try { setStats(await api.analytics()); } catch { /* optional */ }
+          try { setLadder(await api.adp(90)); } catch { /* optional */ }
         }
       } catch { /* transient; next tick retries */ }
     };
@@ -134,6 +140,11 @@ export default function App() {
             <span className="num text-xs text-muted">
               R{status.round} · #{status.overall}
             </span>
+            {status.platform && !status.espn_connected && (
+              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted">
+                {status.platform} adp
+              </span>
+            )}
             <span
               className={cn(
                 "rounded px-2 py-0.5 text-[11px] font-semibold transition-colors",
@@ -195,16 +206,40 @@ export default function App() {
 
         <div key={tab} className="tick-in space-y-4">
           {tab === "room" ? (
-            <>
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Ticker status={status} onUndo={undo} busy={busy} />
-                <Teams teams={teams} mySlot={status.my_slot ?? 1} />
+            <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">
+              {/* Left: what you do. Right: the board itself, which is the
+                  thing people actually stare at during a draft. */}
+              <div className="flex flex-col gap-4">
+                {!status.espn_connected && (
+                  <PickInput status={status} onPicked={refreshAll}
+                             busy={busy} setBusy={setBusy} />
+                )}
+                <div className="flex rounded-md border border-line p-0.5">
+                  {(["feed", "room"] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setSide(v)}
+                      className={cn(
+                        "flex-1 rounded px-3 py-1 text-[11px] transition-colors",
+                        side === v ? "bg-raised font-medium text-chalk"
+                                   : "text-muted hover:text-chalk"
+                      )}
+                    >
+                      {v === "feed" ? "Off the board" : "The room"}
+                    </button>
+                  ))}
+                </div>
+                <div key={side} className="tick-in">
+                  {side === "feed"
+                    ? <Ticker status={status} onUndo={undo} busy={busy} />
+                    : <Teams teams={teams} mySlot={status.my_slot ?? 1} />}
+                </div>
               </div>
-              {!status.espn_connected && (
-                <PickInput status={status} onPicked={refreshAll}
-                           busy={busy} setBusy={setBusy} />
-              )}
-            </>
+
+              <div className="min-h-0 lg:max-h-[62vh]">
+                <Ladder data={ladder} myTurn={myTurn} />
+              </div>
+            </div>
           ) : (
             <Charts data={stats} />
           )}

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import polars as pl  # noqa: E402
 
-from fantasyedge.data import espn, market  # noqa: E402
+from fantasyedge.data import espn, market, yahoo  # noqa: E402
 from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E402
 from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge import config  # noqa: E402
@@ -36,11 +36,53 @@ from fantasyedge.models import pergame_curve, rookie_risk  # noqa: E402
 
 W = 78
 _BOARD: pl.DataFrame | None = None
+_PLATFORM = "espn"
+
+
+def set_platform(name: str) -> None:
+    """Choose whose ADP prices the board. Invalidates any cached board."""
+    global _PLATFORM, _BOARD
+    name = (name or "espn").lower()
+    if name not in ("espn", "yahoo", "consensus"):
+        raise ValueError(f"unknown platform {name!r}")
+    if name != _PLATFORM:
+        _BOARD = None
+    _PLATFORM = name
 
 
 # ---------------------------------------------------------------------------
 # Board
 # ---------------------------------------------------------------------------
+
+def _market() -> pl.DataFrame:
+    """ADP from whichever platform this league drafts on.
+
+    People draft off the board in front of them, and boards disagree. That is
+    why ESPN replaced consensus here in the first place, and the same argument
+    applies to Yahoo -- pricing a Yahoo room off ESPN's numbers would repeat
+    the mistake. Raw ADP is NOT comparable across platforms (Yahoo runs about
+    15 picks lower on average, a scale difference, not disagreement), which is
+    exactly why everything downstream uses the RANK this produces.
+    """
+    src = {"espn": espn, "yahoo": yahoo}.get(_PLATFORM)
+    if src is not None:
+        try:
+            m = src.fetch()
+            src.save(m)
+            print(f"  {_PLATFORM.upper()} ADP: {m.height} players, "
+                  f"{src.match_report(m)['match_rate']}% matched")
+            return m
+        except Exception as exc:
+            print(f"  {_PLATFORM} live fetch failed ({type(exc).__name__}); "
+                  f"trying cached snapshot")
+            try:
+                return src.load()
+            except Exception:
+                pass
+    m = market.fetch()
+    market.save(m)
+    return m
+
 
 def board(settings: LeagueSettings) -> pl.DataFrame:
     """Full projection board: veterans, rookies, and season distributions."""
@@ -48,22 +90,7 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     if _BOARD is not None:
         return _BOARD
 
-    # ESPN ADP is the price this league actually drafts from. FantasyPros
-    # consensus is a fine ranking but describes a different draft room --
-    # it had Achane 12 picks behind Jefferson where ESPN has them level.
-    try:
-        m = espn.fetch()
-        espn.save(m)
-        print(f"  ESPN ADP: {m.height} players, "
-              f"{espn.match_report(m)['match_rate']}% matched")
-    except Exception as exc:
-        print(f"  ESPN unavailable ({type(exc).__name__}); falling back to consensus")
-        try:
-            m = espn.load()
-        except Exception:
-            m = market.fetch()
-            market.save(m)
-    m = m.filter(pl.col("gsis_id").is_not_null())
+    m = _market().filter(pl.col("gsis_id").is_not_null())
 
     # Market rank -> what players ranked there have historically done. The
     # curve is keyed on PRE-season rank; keying it on where players finished

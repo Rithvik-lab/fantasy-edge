@@ -2,12 +2,9 @@ import { useState } from "react";
 import type { Suggestion } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Term } from "@/components/Explain";
+import { POS_HUE } from "@/components/Charts";
 import { cn } from "@/lib/utils";
-
-const POS_TONE: Record<string, string> = {
-  QB: "text-clock", RB: "text-turf", WR: "text-sky-400",
-  TE: "text-violet-400", K: "text-muted", DST: "text-muted",
-};
 
 /** How likely he is to reach your next pick, said plainly. */
 function survival(p: number) {
@@ -32,9 +29,9 @@ function RangeBar({ floor, ceiling, max }: { floor: number; ceiling: number; max
           style={{ left: `${left}%`, width: `${width}%` }}
         />
       </div>
-      <div className="flex justify-between text-[10px] text-muted num">
+      <div className="num flex justify-between text-[10px] text-muted">
         <span>{Math.round(floor)}</span>
-        <span className="text-muted/60">season range</span>
+        <Term k="range"><span className="text-muted/70">season range</span></Term>
         <span>{Math.round(ceiling)}</span>
       </div>
     </div>
@@ -90,18 +87,26 @@ export function PlayerCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate font-semibold leading-tight">{s.player_name}</span>
-            <span className={cn("text-xs font-bold", POS_TONE[s.position] ?? "text-muted")}>
+            {/* Position uses the validated categorical hue, never turf or
+                clock — those mean "good value" and "urgent" everywhere else,
+                and a colour cannot mean two things. */}
+            <span className="text-xs font-bold"
+                  style={{ color: POS_HUE[s.position] ?? "#8CA096" }}>
               {s.position}
             </span>
-            {s.rookie && <Badge tone="clock">R</Badge>}
+            {s.rookie && <Term k="rookie"><Badge tone="clock">R</Badge></Term>}
           </div>
 
           <div className="mt-0.5 flex items-center gap-3 text-[11px] text-muted num">
-            <span>ADP {s.ecr ? Math.round(s.ecr) : "—"}</span>
-            <span className={s.vor >= 0 ? "text-turf" : "text-alarm"}>
-              VOR {s.vor > 0 ? "+" : ""}{Math.round(s.vor)}
-            </span>
-            <Badge tone={surv.tone}>{surv.label} {Math.round(s.p_survive * 100)}%</Badge>
+            <Term k="adp"><span>ADP {s.ecr ? Math.round(s.ecr) : "—"}</span></Term>
+            <Term k="vor">
+              <span className={s.vor >= 0 ? "text-turf" : "text-alarm"}>
+                VOR {s.vor > 0 ? "+" : ""}{Math.round(s.vor)}
+              </span>
+            </Term>
+            <Term k="survive">
+              <Badge tone={surv.tone}>{surv.label} {Math.round(s.p_survive * 100)}%</Badge>
+            </Term>
           </div>
 
           <p className="mt-1.5 text-[12px] leading-snug text-chalk/85">{s.headline}</p>

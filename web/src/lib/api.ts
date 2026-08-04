@@ -59,8 +59,20 @@ export interface Analytics {
   }[];
 }
 
+export interface AdpLadder {
+  platform: string;
+  overall: number;
+  my_next: number | null;
+  players: {
+    player_id: string; player_name: string; position: string;
+    ecr: number | null; vor: number | null; rookie: boolean;
+    drafted: boolean; headshot: string | null;
+  }[];
+}
+
 export interface Status {
   configured: boolean;
+  platform?: string;
   phase?: "pre" | "live" | "complete";
   slot_confirmed?: boolean;
   draft_complete?: boolean;
@@ -129,6 +141,7 @@ export const api = {
   setSlot: (slot: number) => req<Status>(`/slot?slot=${slot}`, { method: "POST" }),
   teams: () => req<{ teams: TeamRow[] }>("/teams"),
   analytics: () => req<Analytics>("/analytics"),
+  adp: (limit = 80) => req<AdpLadder>(`/adp?limit=${limit}`),
   search: (q: string) => req<{ players: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
   setOwnedPicks: (picks: number[]) =>
     req<Status>("/picks/mine", { method: "POST", body: JSON.stringify({ picks }) }),

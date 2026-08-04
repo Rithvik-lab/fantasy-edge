@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input, Field } from "@/components/ui/input";
+import { CookieHelp } from "@/components/CookieHelp";
 import { cn } from "@/lib/utils";
 
 const RISK = ["safe", "combined", "aggressive"] as const;
@@ -87,6 +88,7 @@ export function Setup({ onReady }: { onReady: () => void }) {
   });
   const [risk, setRisk] = useState<Risk>("combined");
   const [bench, setBench] = useState<Risk>("aggressive");
+  const [platform, setPlatform] = useState<"espn" | "yahoo">("espn");
 
   async function go() {
     setBusy(true); setErr(null);
@@ -100,7 +102,7 @@ export function Setup({ onReady }: { onReady: () => void }) {
         await api.setLeague({
           n_teams: teams, my_slot: slot, points_per_reception: ppr,
           roster_size: rounds, lineup, risk_tolerance: risk,
-          bench_tolerance: bench,
+          bench_tolerance: bench, platform,
         });
       }
       onReady();
@@ -151,28 +153,7 @@ export function Setup({ onReady }: { onReady: () => void }) {
                          onChange={(e) => setSeason(+e.target.value)} />
                 </Field>
 
-                <details className="group rounded-md border border-line px-3 py-2">
-                  <summary className="cursor-pointer list-none text-xs text-muted transition-colors hover:text-chalk">
-                    <span className="inline-block transition-transform duration-200 group-open:rotate-90">›</span>{" "}
-                    Private league? Add your cookies
-                  </summary>
-                  <div className="mt-3 space-y-3">
-                    <p className="text-[11px] leading-relaxed text-muted">
-                      In a browser logged into ESPN: DevTools → Application →
-                      Cookies → espn.com. Copy <code className="text-chalk">espn_s2</code>{" "}
-                      and <code className="text-chalk">SWID</code>. They stay on this
-                      machine and are only sent to ESPN. You can also put them in{" "}
-                      <code className="text-chalk">.env</code> as ESPN_S2 and SWID.
-                    </p>
-                    <Field label="espn_s2">
-                      <Input value={s2} onChange={(e) => setS2(e.target.value)} />
-                    </Field>
-                    <Field label="SWID">
-                      <Input value={swid} onChange={(e) => setSwid(e.target.value)}
-                             placeholder="{XXXXXXXX-....}" />
-                    </Field>
-                  </div>
-                </details>
+                <CookieHelp />
 
                 <p className="rounded-md border border-line bg-panel px-3 py-2 text-[11px] leading-relaxed text-muted">
                   Team count, lineup and PPR come from the league itself. Traded
@@ -181,6 +162,17 @@ export function Setup({ onReady }: { onReady: () => void }) {
               </>
             ) : (
               <>
+                <div>
+                  <span className="eyebrow">Which platform do you draft on?</span>
+                  <p className="mb-1.5 mt-0.5 text-[11px] leading-relaxed text-muted">
+                    Sets whose average draft position prices the board. Rooms
+                    disagree, and pricing a Yahoo draft off ESPN's numbers is
+                    the exact mistake this tool already made once.
+                  </p>
+                  <Choice value={platform} options={["espn", "yahoo"] as const}
+                          onChange={setPlatform} />
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Teams">
                     <Input type="number" min={2} max={20} value={teams}

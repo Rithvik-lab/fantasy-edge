@@ -79,6 +79,7 @@ class Draft:
         # People trade picks, and once they do "your picks" is a set of
         # numbers rather than a formula.
         self.owned_picks: list[int] | None = None
+        self.platform: str = "espn"
 
     # -- derived ----------------------------------------------------------
 
@@ -138,6 +139,7 @@ def _board() -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 class LeagueIn(BaseModel):
+    platform: str = "espn"        # whose ADP prices the board
     n_teams: int = 12
     my_slot: int = 1
     points_per_reception: float = 1.0
@@ -174,6 +176,11 @@ def set_league(cfg: LeagueIn) -> dict:
     if not 1 <= cfg.my_slot <= cfg.n_teams:
         raise HTTPException(400, f"slot must be 1..{cfg.n_teams}")
     with STATE.lock:
+        try:
+            D.set_platform(cfg.platform)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        STATE.platform = cfg.platform
         STATE.settings = LeagueSettings(
             n_teams=cfg.n_teams, lineup=lineup,
             points_per_reception=cfg.points_per_reception,
@@ -210,6 +217,8 @@ def connect_espn(cfg: EspnIn) -> dict:
     with STATE.lock:
         STATE.espn = {"league_id": cfg.league_id, "season": cfg.season,
                       "espn_s2": s2, "swid": swid}
+        STATE.platform = "espn"
+        D.set_platform("espn")
         STATE.league_name = info.name
         STATE.team_names = {t["id"]: t["name"] for t in info.teams}
         if cfg.adopt_settings:
@@ -447,6 +456,7 @@ def status() -> dict:
         "lineup": STATE.settings.lineup,
         "points_per_reception": STATE.settings.points_per_reception,
         "my_slot": STATE.my_slot,
+        "platform": STATE.platform,
         "my_picks": mine,
         "picks_traded": STATE.owned_picks is not None,
         "draft_time": STATE.draft_time,
@@ -688,6 +698,47 @@ def analytics(depth: int = 10) -> dict:
         })
 
     return {"tiers": tiers, "scarcity": scarcity, "picks_until_next": gap}
+
+
+@app.get("/api/adp")
+def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
+    """The draft board in ADP order, with what has already gone struck out.
+
+    This is the ladder people actually read during a draft: who is next off
+    the board, in the order the room will take them. Everything else here is
+    analysis; this is the thing you glance at.
+    """
+    st = _require()
+    b = _board()
+    taken = set(st.drafted_ids)
+    _, _, overall = st.on_the_clock()
+    mine = set(st.my_picks())
+    shots = _headshots(b)
+
+    rows = b.sort("ecr", nulls_last=True).to_dicts()
+    if upcoming_only:
+        rows = [r for r in rows if r["player_id"] not in taken]
+
+    out = []
+    for r in rows[: limit + len(taken)]:
+        if len(out) >= limit:
+            break
+        out.append({
+            "player_id": r["player_id"],
+            "player_name": r["player_name"],
+            "position": r["position"],
+            "ecr": r.get("ecr"),
+            "vor": round(r["vor"], 1) if r.get("vor") is not None else None,
+            "rookie": bool(r.get("rookie")),
+            "drafted": r["player_id"] in taken,
+            "headshot": shots.get(r["player_id"]),
+        })
+    return {
+        "platform": st.platform,
+        "overall": overall,
+        "my_next": min([p for p in mine if p >= overall], default=None),
+        "players": out,
+    }
 
 
 @app.get("/api/health")
