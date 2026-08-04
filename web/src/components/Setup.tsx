@@ -69,7 +69,10 @@ function Chooser({ onPick }: { onPick: (m: Mode) => void }) {
   );
 }
 
-export function Setup({ onReady }: { onReady: () => void }) {
+export function Setup({ onReady, onBack }: {
+  onReady: () => void;
+  onBack?: () => void;
+}) {
   const [mode, setMode] = useState<Mode>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -126,7 +129,15 @@ export function Setup({ onReady }: { onReady: () => void }) {
       <div className="my-6 h-px bg-gradient-to-r from-turf/40 via-line to-transparent" />
 
       {mode === null ? (
-        <Chooser onPick={setMode} />
+        <>
+          {onBack && (
+            <button onClick={onBack}
+                    className="mb-4 flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-chalk">
+              <span>‹</span> My leagues
+            </button>
+          )}
+          <Chooser onPick={setMode} />
+        </>
       ) : (
         <div className="tick-in">
           <button

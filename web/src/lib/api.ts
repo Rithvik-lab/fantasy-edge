@@ -70,9 +70,33 @@ export interface AdpLadder {
   }[];
 }
 
+export interface SavedLeague {
+  id: string;
+  name: string;
+  platform: string;
+  n_teams: number | null;
+  roster_size: number | null;
+  my_slot: number | null;
+  espn_league_id: string | null;
+  picks_made: number;
+  total_picks: number;
+  complete: boolean;
+  saved_at: number | null;
+}
+
+export interface RosterView {
+  grade: Record<string, unknown>;
+  starters: { slot?: string; player_name: string; position: string;
+              vor: number; projected_points: number; player_id: string;
+              season_p20?: number; season_p80?: number }[];
+  bench: RosterView["starters"];
+}
+
 export interface Status {
   configured: boolean;
   platform?: string;
+  league_id?: string | null;
+  saved_name?: string;
   phase?: "pre" | "live" | "complete";
   slot_confirmed?: boolean;
   draft_complete?: boolean;
@@ -146,5 +170,14 @@ export const api = {
   setOwnedPicks: (picks: number[]) =>
     req<Status>("/picks/mine", { method: "POST", body: JSON.stringify({ picks }) }),
   resetOwnedPicks: () => req<Status>("/picks/reset", { method: "POST" }),
+  roster: () => req<RosterView>("/roster"),
+  removePick: (player_id: string) =>
+    req<Status>("/pick/remove", { method: "POST", body: JSON.stringify({ player_id }) }),
+  leagues: () => req<{ leagues: SavedLeague[]; active: string | null }>("/leagues"),
+  saveLeague: (name: string) =>
+    req<Status>("/leagues/save", { method: "POST", body: JSON.stringify({ name }) }),
+  loadLeague: (id: string) => req<Status>(`/leagues/${id}/load`, { method: "POST" }),
+  deleteLeague: (id: string) =>
+    req<{ leagues: SavedLeague[] }>(`/leagues/${id}`, { method: "DELETE" }),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };

@@ -34,6 +34,7 @@ from fantasyedge.draft.engine import (
 )
 from fantasyedge.draft.session import grade_roster, optimal_lineup
 from fantasyedge.league import LeagueSettings, picks_for_slot, slot_for_pick
+from server import store
 
 app = FastAPI(title="FantasyEdge draft", version="1.0")
 app.add_middleware(
@@ -80,6 +81,8 @@ class Draft:
         # numbers rather than a formula.
         self.owned_picks: list[int] | None = None
         self.platform: str = "espn"
+        self.league_id: str | None = None      # set once saved
+        self.name: str = ""
 
     # -- derived ----------------------------------------------------------
 
@@ -132,6 +135,39 @@ def _require() -> Draft:
 
 def _board() -> pl.DataFrame:
     return D.board(STATE.settings)
+
+
+def _snapshot() -> dict:
+    """Everything needed to resume this draft exactly where it is."""
+    st = STATE
+    return {
+        "name": st.name,
+        "platform": st.platform,
+        "n_teams": st.settings.n_teams,
+        "roster_size": st.settings.roster_size,
+        "lineup": dict(st.settings.lineup),
+        "points_per_reception": st.settings.points_per_reception,
+        "my_slot": st.my_slot,
+        "owned_picks": st.owned_picks,
+        "risk": st.risk,
+        "bench_risk": st.bench_risk,
+        "picks": st.picks,
+        "espn": st.espn,
+        "league_name": st.league_name,
+        "team_names": {str(k): v for k, v in st.team_names.items()},
+        "my_team_id": st.my_team_id,
+        "slot_confirmed": st.slot_confirmed,
+        "draft_time": st.draft_time,
+    }
+
+
+def _autosave() -> None:
+    """Persist after every mutation, so closing the tab costs nothing."""
+    if STATE.league_id and STATE.settings is not None:
+        try:
+            store.save(STATE.league_id, _snapshot())
+        except Exception:      # a failed save must never break a draft
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +226,10 @@ def set_league(cfg: LeagueIn) -> dict:
         STATE.bench_risk = cfg.bench_tolerance
         STATE.picks = []
         STATE.owned_picks = None
+        # A new league is a new file. Without this, configuring one would
+        # autosave straight over whichever league was open before.
+        STATE.league_id = None
+        STATE.name = ""
         STATE.slot_confirmed = True     # you told us the seat yourself
         STATE.espn = None
         STATE.my_team_id = None
@@ -248,6 +288,7 @@ def set_slot(slot: int) -> dict:
         STATE.my_slot = slot
         STATE.slot_confirmed = True
         STATE.owned_picks = None    # back to the plain snake off the new seat
+    _autosave()
     return status()
 
 
@@ -271,6 +312,7 @@ def set_owned_picks(body: OwnedPicks) -> dict:
         raise HTTPException(400, f"picks outside 1..{total}: {bad[:5]}")
     with STATE.lock:
         STATE.owned_picks = sorted(set(body.picks))
+    _autosave()
     return status()
 
 
@@ -280,6 +322,7 @@ def reset_owned_picks() -> dict:
     _require()
     with STATE.lock:
         STATE.owned_picks = None
+    _autosave()
     return status()
 
 
@@ -412,15 +455,47 @@ def add_pick(p: PickIn) -> dict:
             "player_id": hit["player_id"], "name": hit["player_name"],
             "slot": slot, "overall": overall, "team_id": None,
         })
+    _autosave()
     return status()
 
 
 @app.post("/api/undo")
 def undo() -> dict:
+    """Take back the most recent pick, whoever made it."""
     _require()
     with STATE.lock:
         if STATE.picks:
             STATE.picks.pop()
+    _autosave()
+    return status()
+
+
+class RemoveIn(BaseModel):
+    player_id: str
+
+
+@app.post("/api/pick/remove")
+def remove_pick(body: RemoveIn) -> dict:
+    """Take one specific player back off the board.
+
+    Undo only reaches the last pick, and the mistake you notice is rarely the
+    last one -- you look at your roster two rounds later and find someone you
+    never meant to take. Removing him renumbers everything after, because
+    overall pick numbers are positional.
+    """
+    st = _require()
+    with STATE.lock:
+        keep = [p for p in STATE.picks if p.get("player_id") != body.player_id]
+        if len(keep) == len(STATE.picks):
+            raise HTTPException(404, "that player is not in the pick history")
+        for i, p in enumerate(keep, start=1):
+            p["overall"] = i
+            p["slot"] = slot_for_pick(
+                (i - 1) // st.settings.n_teams + 1,
+                (i - 1) % st.settings.n_teams + 1,
+                st.settings.n_teams)
+        STATE.picks = keep
+    _autosave()
     return status()
 
 
@@ -457,6 +532,8 @@ def status() -> dict:
         "points_per_reception": STATE.settings.points_per_reception,
         "my_slot": STATE.my_slot,
         "platform": STATE.platform,
+        "league_id": STATE.league_id,
+        "saved_name": STATE.name,
         "my_picks": mine,
         "picks_traded": STATE.owned_picks is not None,
         "draft_time": STATE.draft_time,
@@ -739,6 +816,83 @@ def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
         "my_next": min([p for p in mine if p >= overall], default=None),
         "players": out,
     }
+
+
+# ---------------------------------------------------------------------------
+# Saved leagues
+# ---------------------------------------------------------------------------
+
+class SaveIn(BaseModel):
+    name: str
+
+
+@app.get("/api/leagues")
+def list_leagues() -> dict:
+    """Everything you have saved, newest first. Drives the home screen."""
+    return {"leagues": store.listing(), "active": STATE.league_id}
+
+
+@app.post("/api/leagues/save")
+def save_league(body: SaveIn) -> dict:
+    """Name this draft so you can come back to it. Autosaves from here on."""
+    _require()
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "give the league a name")
+    with STATE.lock:
+        STATE.name = name
+        if not STATE.league_id:
+            STATE.league_id = store.new_id()
+    _autosave()
+    return status()
+
+
+@app.post("/api/leagues/{league_id}/load")
+def load_league(league_id: str) -> dict:
+    """Resume a saved draft exactly where it stopped."""
+    try:
+        d = store.load(league_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    with STATE.lock:
+        D.set_platform(d.get("platform") or "espn")
+        STATE.settings = LeagueSettings(
+            n_teams=d.get("n_teams", 12),
+            lineup=d.get("lineup") or {"QB": 1, "RB": 2, "WR": 2, "TE": 1,
+                                       "FLEX": 1, "K": 1, "DST": 1},
+            points_per_reception=d.get("points_per_reception", 1.0),
+            roster_size=d.get("roster_size", 16))
+        STATE.platform = d.get("platform") or "espn"
+        STATE.league_id = d.get("id") or league_id
+        STATE.name = d.get("name") or ""
+        STATE.my_slot = d.get("my_slot", 1)
+        STATE.owned_picks = d.get("owned_picks")
+        STATE.risk = d.get("risk", "combined")
+        STATE.bench_risk = d.get("bench_risk", "aggressive")
+        STATE.picks = d.get("picks") or []
+        STATE.espn = d.get("espn")
+        STATE.league_name = d.get("league_name") or ""
+        STATE.team_names = {int(k): v for k, v in (d.get("team_names") or {}).items()}
+        STATE.my_team_id = d.get("my_team_id")
+        STATE.slot_confirmed = bool(d.get("slot_confirmed", True))
+        STATE.draft_time = d.get("draft_time")
+        STATE.draft_started = bool(STATE.picks)
+        STATE.draft_complete = len(STATE.picks) >= STATE.settings.total_picks
+        D._BOARD = None
+    return status()
+
+
+@app.delete("/api/leagues/{league_id}")
+def delete_league(league_id: str) -> dict:
+    try:
+        store.delete(league_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if STATE.league_id == league_id:
+        with STATE.lock:
+            STATE.league_id = None
+    return {"leagues": store.listing()}
 
 
 @app.get("/api/health")

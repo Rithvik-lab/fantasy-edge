@@ -16,7 +16,7 @@ export function Shortlist({
 }: {
   data: ShortlistData | null;
   onDraft: (id: string) => void;
-  onSkip: (id: string) => void;
+  onSkip: (id: string, name: string) => void;
   onRefresh: () => void;
   busy: boolean;
   myTurn: boolean;
@@ -74,7 +74,7 @@ export function Shortlist({
               max={max}
               busy={busy}
               onDraft={() => onDraft(s.player_id)}
-              onSkip={() => onSkip(s.player_id)}
+              onSkip={() => onSkip(s.player_id, s.player_name)}
             />
           ))}
         </div>

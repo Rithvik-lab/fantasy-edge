@@ -23,21 +23,9 @@ const STEPS: { n: number; title: string; body: React.ReactNode }[] = [
     title: "Open your browser's developer tools",
     body: (
       <>
-        <span className="block">
-          Chrome / Edge / Brave — <kbd className="kbd">⌥</kbd>{" "}
-          <kbd className="kbd">⌘</kbd> <kbd className="kbd">I</kbd> on Mac, or{" "}
-          <kbd className="kbd">F12</kbd> on Windows.
-        </span>
-        <span className="mt-1 block">
-          Safari — enable it first: Safari → Settings → Advanced → "Show features
-          for web developers", then <kbd className="kbd">⌥</kbd>{" "}
-          <kbd className="kbd">⌘</kbd> <kbd className="kbd">I</kbd>.
-        </span>
-        <span className="mt-1 block">
-          Firefox — <kbd className="kbd">⌥</kbd> <kbd className="kbd">⌘</kbd>{" "}
-          <kbd className="kbd">I</kbd>, then the Storage tab instead of
-          Application.
-        </span>
+        Press <kbd className="kbd">⌥</kbd> <kbd className="kbd">⌘</kbd>{" "}
+        <kbd className="kbd">I</kbd> on a Mac, or <kbd className="kbd">F12</kbd>{" "}
+        on Windows. A panel opens on the side or bottom of the page.
       </>
     ),
   },
@@ -45,10 +33,10 @@ const STEPS: { n: number; title: string; body: React.ReactNode }[] = [
     n: 3,
     title: "Find the cookie list",
     body: (
-      <>In the panel that opens, click the <b className="text-chalk">Application</b> tab
-      (Firefox calls it <b className="text-chalk">Storage</b>). If you do not see it,
-      it is behind the <b className="text-chalk">»</b> overflow arrow. In the left
-      sidebar expand <b className="text-chalk">Cookies</b> and click{" "}
+      <>In that panel, click the <b className="text-chalk">Application</b> tab
+      along the top. If you do not see it, it is hidden behind the{" "}
+      <b className="text-chalk">»</b> overflow arrow. Then in the left sidebar
+      expand <b className="text-chalk">Cookies</b> and click{" "}
       <code className="text-chalk">https://fantasy.espn.com</code>.</>
     ),
   },

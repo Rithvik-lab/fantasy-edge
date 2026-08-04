@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  api, type AdpLadder, type Analytics, type Shortlist as ShortlistData,
-  type Status, type TeamRow,
+  api, type AdpLadder, type Analytics, type RosterView,
+  type Shortlist as ShortlistData, type Status, type TeamRow,
 } from "@/lib/api";
+import { Home } from "@/components/Home";
 import { Setup } from "@/components/Setup";
+import { Roster } from "@/components/Roster";
+import { SaveLeague } from "@/components/SaveLeague";
 import { Shortlist } from "@/components/Shortlist";
 import { Ticker, Teams } from "@/components/Ticker";
 import { Charts } from "@/components/Charts";
@@ -24,6 +27,9 @@ export default function App() {
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [stats, setStats] = useState<Analytics | null>(null);
   const [ladder, setLadder] = useState<AdpLadder | null>(null);
+  const [roster, setRoster] = useState<RosterView | null>(null);
+  const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
+  const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<Tab>("room");
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
@@ -50,6 +56,8 @@ export default function App() {
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
     try { setStats(await api.analytics()); } catch { /* optional */ }
     try { setLadder(await api.adp(90)); } catch { /* optional */ }
+    try { setRoster(await api.roster()); } catch { /* optional */ }
+    setScreen("draft");
   }, [loadList]);
 
   useEffect(() => {
@@ -78,6 +86,7 @@ export default function App() {
           try { setTeams((await api.teams()).teams); } catch { /* optional */ }
           try { setStats(await api.analytics()); } catch { /* optional */ }
           try { setLadder(await api.adp(90)); } catch { /* optional */ }
+          try { setRoster(await api.roster()); } catch { /* optional */ }
         }
       } catch { /* transient; next tick retries */ }
     };
@@ -98,11 +107,32 @@ export default function App() {
     } finally { setBusy(false); }
   }
 
-  async function skip(playerId: string) {
+  async function skip(playerId: string, name: string) {
     skipped.current = [...skipped.current, playerId];
+    setLastSkip({ id: playerId, name });
     setBusy(true);
     await loadList();
     setBusy(false);
+  }
+
+  /** Put back a name you skipped by accident. */
+  async function unskip() {
+    skipped.current = skipped.current.filter((id) => id !== lastSkip?.id);
+    setLastSkip(null);
+    setBusy(true);
+    await loadList();
+    setBusy(false);
+  }
+
+  /** Take one specific player back off the board, not just the last pick. */
+  async function removePlayer(playerId: string) {
+    setBusy(true);
+    try {
+      skipped.current = [];
+      await refreshAll(await api.removePick(playerId));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
   }
 
   async function undo() {
@@ -113,8 +143,21 @@ export default function App() {
     } finally { setBusy(false); }
   }
 
-  if (!status?.configured) {
-    return <Setup onReady={() => api.status().then(refreshAll)} />;
+  if (screen === "home" && !status?.configured) {
+    return (
+      <Home
+        onOpen={(s) => refreshAll(s)}
+        onNew={() => setScreen("setup")}
+      />
+    );
+  }
+  if (!status?.configured || screen === "setup") {
+    return (
+      <Setup
+        onBack={() => setScreen("home")}
+        onReady={() => api.status().then(refreshAll)}
+      />
+    );
   }
 
   const myTurn = !!status.on_the_clock;
@@ -132,10 +175,13 @@ export default function App() {
             <GlossaryDrawer />
             <button
               onClick={() => setEditPicks(true)}
-              className="rounded border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-turf/40 hover:text-chalk"
+              className="num rounded border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-turf/40 hover:text-chalk"
               title="Set which picks are yours, after trades"
             >
-              {status.picks_traded ? "picks: traded" : `slot ${status.my_slot}`}
+              {status.picks_traded
+                ? "picks: custom"
+                : `picks ${(status.my_picks ?? []).slice(0, 3).join(" · ")}${
+                    (status.my_picks?.length ?? 0) > 3 ? " …" : ""}`}
             </button>
             <span className="num text-xs text-muted">
               R{status.round} · #{status.overall}
@@ -156,9 +202,10 @@ export default function App() {
                   ? `next in ${status.picks_until_next}` : "waiting"}
             </span>
             <SyncDot status={status} />
+            <SaveLeague status={status} onSaved={setStatus} />
             <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
-                    onClick={() => setStatus({ configured: false })}>
-              Change league
+                    onClick={() => { setStatus(null); setScreen("home"); }}>
+              My leagues
             </Button>
           </div>
         </div>
@@ -234,6 +281,7 @@ export default function App() {
                     ? <Ticker status={status} onUndo={undo} busy={busy} />
                     : <Teams teams={teams} mySlot={status.my_slot ?? 1} />}
                 </div>
+                <Roster data={roster} onRemove={removePlayer} busy={busy} />
               </div>
 
               <div className="min-h-0 lg:max-h-[62vh]">
@@ -245,6 +293,21 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {lastSkip && (
+        <div className="tick-in border-t border-line bg-raised px-4 py-1.5">
+          <div className="mx-auto flex max-w-[1400px] items-center gap-3 text-[11px] text-muted">
+            <span>Skipped {lastSkip.name}.</span>
+            <button onClick={unskip}
+                    className="font-medium text-turf underline-offset-2 hover:underline">
+              Put him back
+            </button>
+            <button onClick={() => setLastSkip(null)} className="ml-auto hover:text-chalk">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <Shortlist
         data={list}
