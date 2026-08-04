@@ -584,7 +584,16 @@ def recommend(
     dropoff = dict(zip(dd["position"].to_list(), dd["dropoff"].to_list())) if dd.height else {}
     # A pick fills a starting slot if any dedicated slot is still open;
     # otherwise it is bench depth and gets the bench risk setting.
-    starters_open = any(v > 0 for k, v in needs.items() if k != "FLEX")
+    #
+    # Only count slots you could actually fill from this board. Kickers and
+    # defences are not modelled, so K and DST sat unfilled for the entire
+    # draft -- which made this always True, pinned every pick to the starter
+    # risk setting, and left `bench_tolerance` and BENCH_VARIANCE_BONUS as
+    # dead code.
+    draftable = set(avail["position"].unique().to_list())
+    starters_open = any(
+        v > 0 for k, v in needs.items() if k != "FLEX" and k in draftable
+    )
     tol = risk_tolerance if starters_open else (bench_tolerance or risk_tolerance)
     target = target_volatility(rnd, settings.n_rounds, tol, roster_risk,
                                roster_strength, filling_starter=starters_open)
