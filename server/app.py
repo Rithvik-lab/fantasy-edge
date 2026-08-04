@@ -61,6 +61,14 @@ class Draft:
         self.my_team_id: int | None = None
         self.last_sync: float = 0.0
         self.sync_error: str | None = None
+        # ESPN does not publish the pick order until it locks, and before
+        # round one there are no picks to infer it from. When neither is
+        # available the slot is a GUESS, and a wrong seat quietly poisons
+        # every survival probability -- so it gets flagged rather than
+        # defaulted silently.
+        self.slot_confirmed: bool = False
+        self.draft_started: bool = False
+        self.draft_complete: bool = False
 
     # -- derived ----------------------------------------------------------
 
@@ -183,14 +191,41 @@ def connect_espn(cfg: EspnIn) -> dict:
             slot = espn_draft.draft_slot(payload, tid)
             if slot:
                 STATE.my_slot = slot
+                STATE.slot_confirmed = True
     _ingest(payload)
+    return status()
+
+
+@app.post("/api/slot")
+def set_slot(slot: int) -> dict:
+    """Set your draft seat by hand, for when ESPN has not published it yet."""
+    st = _require()
+    if not 1 <= slot <= st.settings.n_teams:
+        raise HTTPException(400, f"slot must be 1..{st.settings.n_teams}")
+    with STATE.lock:
+        STATE.my_slot = slot
+        STATE.slot_confirmed = True
     return status()
 
 
 def _ingest(payload: dict) -> None:
     """Replace local pick history with ESPN's, which is authoritative."""
+    info = espn_draft.league_info(payload)
     picks = espn_draft.picks(payload)
+    total = STATE.settings.total_picks if STATE.settings else None
+
+    with STATE.lock:
+        STATE.last_sync = time.time()
+        STATE.sync_error = None
+        STATE.draft_started = bool(picks.height) or info.in_progress
+        STATE.draft_complete = bool(
+            info.complete or (total and picks.height >= total))
+
     if not picks.height:
+        # Connected early. Nothing to ingest, but do not leave a stale local
+        # history behind either.
+        with STATE.lock:
+            STATE.picks = []
         return
     b = _board()
     known = set(b["player_id"].to_list())
@@ -213,8 +248,12 @@ def _ingest(payload: dict) -> None:
         })
     with STATE.lock:
         STATE.picks = sorted(fresh, key=lambda p: p["overall"])
-        STATE.last_sync = time.time()
-        STATE.sync_error = None
+        # Round one is the first chance to read the seat off real picks.
+        if not STATE.slot_confirmed and STATE.my_team_id:
+            slot = espn_draft.draft_slot(payload, STATE.my_team_id)
+            if slot:
+                STATE.my_slot = slot
+                STATE.slot_confirmed = True
 
 
 @app.post("/api/espn/sync")
@@ -278,8 +317,24 @@ def status() -> dict:
     mine = picks_for_slot(STATE.my_slot, STATE.settings.n_teams,
                           STATE.settings.n_rounds)
     upcoming = [p for p in mine if p >= overall]
+    complete = STATE.draft_complete or overall > STATE.settings.total_picks
+
+    phase = "complete" if complete else ("live" if STATE.draft_started else "pre")
+    warnings = []
+    if STATE.espn and not STATE.slot_confirmed:
+        warnings.append(
+            f"ESPN has not published the pick order yet, so draft slot "
+            f"{STATE.my_slot} is a guess. Set it before you draft — a wrong "
+            f"seat makes every survival probability wrong.")
+    if complete:
+        warnings.append("This draft is finished. Nothing here is a live pick.")
+
     return {
         "configured": True,
+        "phase": phase,
+        "slot_confirmed": STATE.slot_confirmed or STATE.espn is None,
+        "draft_complete": complete,
+        "warnings": warnings,
         "league_name": STATE.league_name,
         "describe": STATE.settings.describe(),
         "n_teams": STATE.settings.n_teams,
@@ -324,6 +379,14 @@ def _headshots(b: pl.DataFrame) -> dict[str, str]:
 def suggestions(n: int = 3, exclude: str = "") -> dict:
     """The names to take right now, with the reasoning that produced them."""
     st = _require()
+    _, _, overall = st.on_the_clock()
+    if st.draft_complete or overall > st.settings.total_picks:
+        # Recommending a 17th round of a 16-round draft is not a small
+        # cosmetic problem -- it is the tool confidently answering a question
+        # nobody asked.
+        return {"suggestions": [],
+                "note": "This draft is over. Every pick has been made."}
+
     b = _board()
     skip = [x for x in exclude.split(",") if x]
 

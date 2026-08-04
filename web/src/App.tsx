@@ -155,6 +155,24 @@ export default function App() {
         </div>
       )}
 
+      {/* Not dismissible. A wrong seat makes every survival probability wrong,
+          and a finished draft makes every recommendation meaningless -- both
+          are worth interrupting for. */}
+      {(status.warnings ?? []).map((w) => (
+        <div key={w} className="border-b border-clock/30 bg-clock/10 px-4 py-2 text-xs text-clock">
+          <div className="mx-auto flex max-w-[1400px] items-center gap-3">
+            <span className="flex-1">{w}</span>
+            {!status.slot_confirmed && (
+              <SlotPicker
+                nTeams={status.n_teams ?? 12}
+                current={status.my_slot ?? 1}
+                onSet={async (n) => refreshAll(await api.setSlot(n))}
+              />
+            )}
+          </div>
+        </div>
+      ))}
+
       {/* The room on the left, everyone's holes on the right. */}
       <main className="mx-auto w-full max-w-[1400px] flex-1 overflow-y-auto px-4 py-4">
         <div className="grid gap-4 lg:grid-cols-2">
@@ -177,6 +195,26 @@ export default function App() {
         onRefresh={loadList}
       />
     </div>
+  );
+}
+
+/** Set your seat when ESPN has not published the pick order yet. */
+function SlotPicker({ nTeams, current, onSet }: {
+  nTeams: number; current: number; onSet: (n: number) => void;
+}) {
+  return (
+    <label className="flex shrink-0 items-center gap-2">
+      <span className="text-[11px] uppercase tracking-wider">My slot</span>
+      <select
+        value={current}
+        onChange={(e) => onSet(+e.target.value)}
+        className="h-7 rounded border border-clock/40 bg-ink px-2 text-xs text-chalk"
+      >
+        {Array.from({ length: nTeams }, (_, i) => i + 1).map((n) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 

@@ -35,6 +35,10 @@ export interface Shortlist {
 
 export interface Status {
   configured: boolean;
+  phase?: "pre" | "live" | "complete";
+  slot_confirmed?: boolean;
+  draft_complete?: boolean;
+  warnings?: string[];
   league_name?: string;
   describe?: string;
   n_teams?: number;
@@ -92,6 +96,7 @@ export const api = {
   pick: (body: { name?: string; player_id?: string; mine?: boolean }) =>
     req<Status>("/pick", { method: "POST", body: JSON.stringify(body) }),
   undo: () => req<Status>("/undo", { method: "POST" }),
+  setSlot: (slot: number) => req<Status>(`/slot?slot=${slot}`, { method: "POST" }),
   teams: () => req<{ teams: TeamRow[] }>("/teams"),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };
