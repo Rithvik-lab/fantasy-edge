@@ -29,9 +29,10 @@ import polars as pl  # noqa: E402
 from fantasyedge.data import espn, market  # noqa: E402
 from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E402
 from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
+from fantasyedge import config  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
 from fantasyedge.league import LeagueSettings, picks_for_slot  # noqa: E402
-from fantasyedge.models import rookie_risk, season_sim  # noqa: E402
+from fantasyedge.models import pergame_curve, rookie_risk  # noqa: E402
 
 W = 78
 _BOARD: pl.DataFrame | None = None
@@ -64,20 +65,17 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
             market.save(m)
     m = m.filter(pl.col("gsis_id").is_not_null())
 
-    hist = fb.load().filter(pl.col("season") >= 2021)
-    curve = (
-        hist.with_columns(
-            pl.col("total_points").rank("ordinal", descending=True)
-            .over(["season", "position"]).alias("pr")
-        )
-        .group_by(["position", "pr"]).agg(pl.col("total_points").mean().alias("proj"))
-    )
+    # Market rank -> what players ranked there have historically done. The
+    # curve is keyed on PRE-season rank; keying it on where players finished
+    # (as this did) conditions on the outcome and reads back an RB1 who plays
+    # 16.4 games and never busts. See models/pergame_curve.
+    curve = _curve()
 
     vets = (
-        m.with_columns(pl.col("pos_rank").cast(pl.UInt32).alias("pr"))
+        m.with_columns(pl.col("pos_rank").cast(pl.Int32).alias("pr"))
         .join(curve, on=["position", "pr"], how="left")
         .rename({"gsis_id": "player_id", "market_name": "player_name",
-                 "proj": "projected_points"})
+                 "c_points": "projected_points"})
         .filter(pl.col("projected_points").is_not_null())
         .select(["player_id", "player_name", "position", "projected_points",
                  "ecr", "sd"])
@@ -216,33 +214,46 @@ def config_last_season() -> int:
     return _c.RAW_SEASON_END
 
 
-def _season_distribution(b: pl.DataFrame) -> pl.DataFrame:
-    """Simulated season floor and ceiling, folding in availability."""
-    cp = Path("data/processed/pergame_curve.parquet")
+def _curve() -> pl.DataFrame:
+    """Pre-season rank -> historical outcomes. Built by models/pergame_curve."""
+    cp = config.PROCESSED / "pergame_curve.parquet"
     if not cp.exists():
+        pergame_curve.save(pergame_curve.build())
+    return pl.read_parquet(cp)
+
+
+def _season_distribution(b: pl.DataFrame) -> pl.DataFrame:
+    """Season floor and ceiling, measured rather than composed.
+
+    Simulating this from a rate distribution times a games distribution
+    treats the two as independent, and they are not -- a back who loses his
+    job scores less per game AND plays fewer of them, so the real season
+    spread is wider than the product implies. Leave-one-season-out, composing
+    them put only 50.6% of real seasons inside a band meant to hold 60%;
+    reading the realised quantiles off the same pre-season rank puts 61.8%
+    there, with the median beaten 51.0% of the time.
+
+    `season_sim` is still the right tool for asking what-if questions about a
+    specific rate and workload. It is the wrong tool for a board.
+    """
+    curve = _curve()
+    need = ["c_season_p20", "c_season_p50", "c_season_p80"]
+    if not set(need).issubset(curve.columns):
         return b
-    curve = pl.read_parquet(cp)
     ranked = (
         b.with_columns(
             pl.col("projected_points").rank("ordinal", descending=True)
             .over("position").cast(pl.Int32).alias("pr")
         )
-        .join(curve, on=["position", "pr"], how="left")
-        .filter(pl.col("c_q50").is_not_null())
+        .join(curve.select(["position", "pr"] + need + ["c_games"]),
+              on=["position", "pr"], how="left")
     )
-    if not ranked.height:
-        return b
-    sim = season_sim.simulate_frame(
-        ranked.rename({"c_q20": "q20", "c_q50": "q50", "c_q80": "q80",
-                       "c_games": "expected_games"}),
-        n_sims=2000,
-    )
-    if not sim.height:
-        return b
-    return b.join(
-        sim.select(["player_id", "season_p20", "season_p50", "season_p80",
-                    "season_range"]),
-        on="player_id", how="left")
+    return ranked.rename({
+        "c_season_p20": "season_p20", "c_season_p50": "season_p50",
+        "c_season_p80": "season_p80", "c_games": "expected_games",
+    }).with_columns(
+        (pl.col("season_p80") - pl.col("season_p20")).alias("season_range")
+    ).drop("pr")
 
 
 def find(b: pl.DataFrame, name: str, taken: list[str]) -> dict | None:

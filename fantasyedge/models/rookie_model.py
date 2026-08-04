@@ -42,6 +42,28 @@ LABEL_GAMES = "rookie_games"
 # noise at that sample size.
 MIN_GAMES_FOR_RATE = 4
 
+# The model LOSES to its own baseline outright. Walk-forward, position-and-
+# round lookup beats the gradient booster on both labels:
+#
+#            baseline MAE   model MAE   lift
+#     ppg        3.076         3.195    -3.6%
+#     points    39.949        41.329    -3.5%
+#
+# Which is not surprising -- there are ~1,600 rookie seasons and draft capital
+# carries most of the signal, so a booster mostly finds noise. But the model is
+# not worthless, it is overconfident, and the blend beats BOTH parts:
+#
+#     w=0.0 (baseline)  ppg 3.076 / pts 39.949
+#     w=0.3             ppg 3.041 / pts 39.593    <- best on both
+#     w=1.0 (model)     ppg 3.195 / pts 41.329
+#
+# Correlation moves the same way, 0.608 -> 0.619 and 0.637 -> 0.646. The gain
+# is about 1%, which is small but real and turns a losing model into a winning
+# one. Note this lands on the same 30% that made the veteran model beat ADP --
+# the same lesson twice: this model's job is to nudge a strong prior, not to
+# replace it.
+BLEND_WEIGHT = 0.30
+
 PARAMS = {
     "max_depth": 3,          # ~1,600 rows; shallower than the weekly model
     "learning_rate": 0.05,
@@ -67,6 +89,34 @@ def baseline_table(train: pl.DataFrame, label: str = LABEL) -> pl.DataFrame:
         train.group_by(["position", "round"])
         .agg(pl.col(label).mean().alias("baseline_pred"))
     )
+
+
+def _blend(rows: pl.DataFrame, pred: np.ndarray, base: pl.DataFrame,
+           fallback: float, weight: float = BLEND_WEIGHT) -> np.ndarray:
+    """Pull model predictions toward the position-and-round baseline."""
+    b = (
+        rows.select(["position", "round"])
+        .join(base, on=["position", "round"], how="left")
+        .with_columns(pl.col("baseline_pred").fill_null(fallback))
+        ["baseline_pred"].to_numpy()
+    )
+    return weight * pred + (1.0 - weight) * b
+
+
+def sweep_blend(df: pl.DataFrame, label: str = LABEL) -> pl.DataFrame:
+    """Walk-forward MAE and correlation across blend weights. Picks the 0.30."""
+    oof, _ = walk_forward(df, label=label)
+    if not oof.height:
+        return pl.DataFrame()
+    a = oof["actual"].to_numpy()
+    m, base = oof["pred"].to_numpy(), oof["baseline_pred"].to_numpy()
+    rows = []
+    for w in np.round(np.arange(0.0, 1.01, 0.1), 2):
+        p = w * m + (1 - w) * base
+        rows.append({"weight": float(w),
+                     "mae": round(float(np.abs(a - p).mean()), 3),
+                     "corr": round(float(np.corrcoef(p, a)[0, 1]), 4)})
+    return pl.DataFrame(rows)
 
 
 def walk_forward(
@@ -160,8 +210,12 @@ def project(df: pl.DataFrame, season: int) -> pl.DataFrame:
         return pl.DataFrame()
 
     X = _matrix(cls, feats)
-    ppg = rate.predict(X)
-    gms = np.clip(games.predict(X), 0, 17)
+    # Blend toward the position-and-round lookup, which beats the model alone.
+    ppg = _blend(cls, rate.predict(X), baseline_table(rate_train, LABEL),
+                 rate_train[LABEL].mean())
+    gms = np.clip(
+        _blend(cls, games.predict(X), baseline_table(hist, LABEL_GAMES),
+               hist[LABEL_GAMES].mean()), 0, 17)
 
     return (
         cls.select(["gsis_id", "player_name", "position", "team", "round",

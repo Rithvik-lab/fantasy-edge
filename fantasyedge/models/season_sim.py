@@ -51,6 +51,11 @@ MAX_GAMES = 17
 # historical residuals rather than assumed.
 GAMES_DISPERSION = 3.6
 
+# Week-to-week spread when the curve does not carry a measured one, as a
+# fraction of the player's own rate. Fantasy weekly scoring is roughly this
+# noisy at every level, because touchdowns arrive in lumps.
+DEFAULT_WEEKLY_CV = 0.65
+
 
 def _per_game_sampler(
     q20: float, q50: float, q80: float, rng: np.random.Generator, n: int
@@ -87,10 +92,34 @@ def simulate_player(
     q50: float,
     q80: float,
     expected_games: float,
+    weekly_sd: float | None = None,
     n_sims: int = N_SIMS,
     seed: int = config.RANDOM_SEED,
 ) -> dict:
-    """Season distribution for one player."""
+    """Season distribution for one player.
+
+    TWO VARIANCES, NOT ONE
+
+    This used to draw all seventeen weeks straight from q20/q50/q80. Those
+    quantiles are a CROSS-SECTIONAL spread -- how season-long scoring rates
+    vary across the players who share a rank -- and treating them as
+    week-to-week noise averages them away: seventeen independent draws from a
+    wide distribution sum to something very close to seventeen times its mean.
+    The season band came out far too tight, and leave-one-season-out
+    calibration showed it, with only 20.7% of real seasons landing inside a
+    band meant to hold 60%.
+
+    A season has two sources of uncertainty and they compound differently:
+
+        which player he turns out to be   drawn ONCE, from the curve.
+                                          Scales with games, so it dominates.
+        which week you are watching       drawn every week, around that rate.
+                                          Averages out across a season.
+
+    So the rate is sampled once per simulated season and the weeks vary around
+    it. That is the difference between "how good is he" and "how good was he
+    on Sunday", and only the first one decides a draft.
+    """
     rng = np.random.default_rng(seed)
 
     # Games: beta around the expectation, scaled to 0..17.
@@ -99,10 +128,15 @@ def simulate_player(
     b = (1 - mean_frac) * GAMES_DISPERSION
     games = np.rint(rng.beta(a, b, n_sims) * MAX_GAMES).astype(int)
 
-    # Draw every possible game once, then mask to the sampled game count.
-    # Cheaper than looping and statistically identical.
-    weekly = _per_game_sampler(q20, q50, q80, rng, n_sims * MAX_GAMES)
-    weekly = weekly.reshape(n_sims, MAX_GAMES)
+    # Who he turns out to be: one rate per simulated season.
+    rate = _per_game_sampler(q20, q50, q80, rng, n_sims)
+
+    # Which week you are watching: noise around that rate. Falls back to a
+    # share of the rate itself when no within-player sd is supplied.
+    sd = weekly_sd if weekly_sd and weekly_sd > 0 else max(q50, 1.0) * DEFAULT_WEEKLY_CV
+    weekly = np.clip(
+        rng.normal(rate[:, None], sd, size=(n_sims, MAX_GAMES)), 0.0, None)
+
     mask = np.arange(MAX_GAMES)[None, :] < games[:, None]
     totals = (weekly * mask).sum(axis=1)
 
@@ -124,6 +158,7 @@ def simulate_frame(
     q50: str = "q50",
     q80: str = "q80",
     games: str = "expected_games",
+    weekly_sd: str = "weekly_sd",
     replacement: dict[str, float] | None = None,
     n_sims: int = N_SIMS,
 ) -> pl.DataFrame:
@@ -138,7 +173,7 @@ def simulate_frame(
         if any(r.get(c) is None for c in (q20, q50, q80, games)):
             continue
         sim = simulate_player(
-            r[q20], r[q50], r[q80], r[games],
+            r[q20], r[q50], r[q80], r[games], r.get(weekly_sd),
             n_sims=n_sims, seed=config.RANDOM_SEED + i,
         )
         sim["player_id"] = r.get("player_id")
