@@ -384,7 +384,10 @@ def shap_summary(model, X, feature_names: list[str], top: int = 25) -> pl.DataFr
     that the direction makes football sense before keeping it.
     """
     try:
-        import shap
+        # Optional on purpose -- SHAP pulls a large tree of its own and is only
+        # ever needed when auditing why a feature helps, never at draft time.
+        # The type-ignore is what stops editors underlining it as missing.
+        import shap  # type: ignore[import-not-found]
     except ImportError:
         raise ImportError("pip install 'fantasyedge[viz]' for SHAP")
 

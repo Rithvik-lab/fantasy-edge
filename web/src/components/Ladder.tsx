@@ -44,12 +44,16 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
               <span className="num w-7 shrink-0 text-[10.5px] text-muted">
                 {p.ecr ? Math.round(p.ecr) : "—"}
               </span>
-              {p.headshot ? (
-                <img src={p.headshot} alt="" loading="lazy"
-                     className="h-6 w-6 shrink-0 rounded object-cover object-top" />
-              ) : (
-                <span className="h-6 w-6 shrink-0 rounded bg-raised" />
-              )}
+              {/* The face is the thing the eye lands on, so it triggers the
+                  profile too — not just the name beside it. */}
+              <PlayerHover playerId={p.player_id} className="shrink-0">
+                {p.headshot ? (
+                  <img src={p.headshot} alt="" loading="lazy"
+                       className="h-6 w-6 shrink-0 cursor-help rounded object-cover object-top" />
+                ) : (
+                  <span className="h-6 w-6 shrink-0 rounded bg-raised" />
+                )}
+              </PlayerHover>
               <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
                 <span className={cn("block cursor-help truncate text-xs",
                   p.drafted && "line-through decoration-muted/60")}>

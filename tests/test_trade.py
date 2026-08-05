@@ -1,0 +1,72 @@
+"""Does the trade engine price roster spots, or just add up value?
+
+The case that decides it: a stud for three mid-tier starters. Value totals say
+you win. A full bench says you do not, because two of the three never start and
+you have to cut somebody to fit them.
+"""
+import sys; sys.path.insert(0, ".")
+import polars as pl
+
+import draft as D
+from fantasyedge.league import LeagueSettings
+from fantasyedge.trade import evaluate
+
+S = LeagueSettings(n_teams=12)
+board = D.board(S)
+
+
+def team(names: list[str]) -> pl.DataFrame:
+    got = board.filter(pl.col("player_name").is_in(names))
+    missing = set(names) - set(got["player_name"].to_list())
+    if missing:
+        raise SystemExit(f"not on the board: {missing}")
+    return got
+
+
+def ids(names: list[str]) -> list[str]:
+    """The engine works in ids; the test is written in names."""
+    return board.filter(pl.col("player_name").is_in(names))["player_id"].to_list()
+
+
+def show(label, v):
+    d = v.as_dict()
+    print(f"\n{'='*68}\n{label}\n{'='*68}")
+    print(f"  give : {[r['player_name'] for r in d['give']]}")
+    print(f"  get  : {[r['player_name'] for r in d['get']]}")
+    print(f"  roster {d['roster_before']} -> {d['roster_after']}"
+          + (f"   CUT: {[r['player_name'] for r in d['dropped']]}" if d["dropped"] else ""))
+    print(f"\n  starting lineup   {d['before']['median']:.0f} -> {d['after']['median']:.0f}"
+          f"   ({d['delta_median']:+.0f})")
+    print(f"  floor             {d['before']['floor']:.0f} -> {d['after']['floor']:.0f}"
+          f"   ({d['delta_floor']:+.0f})")
+    print(f"  helps you in      {d['win_probability']:.0%} of simulated seasons")
+    print(f"\n  ON VALUE TOTALS   {d['naive_value_delta']:+.0f}   <- what every calculator says")
+    print(f"  ON YOUR LINEUP    {d['delta_median']:+.0f}   <- what you actually get")
+    print(f"  opportunity cost  {d['opportunity_gap']:.0f}")
+    if d["note"]:
+        print(f"\n  {d['note']}")
+
+
+# A realistic full roster: 16 men, starters plus a normal bench.
+MINE = ["Christian McCaffrey", "Jahmyr Gibbs", "Puka Nacua", "Ja'Marr Chase",
+        "Trey McBride", "Lamar Jackson", "Chase Brown", "Jaxon Smith-Njigba",
+        "Tetairoa McMillan", "Tucker Kraft", "Bo Nix", "Zach Charbonnet",
+        "Khalil Shakir", "Jayden Higgins", "Cam Little", "Denver Broncos"]
+mine = team([n for n in MINE if board.filter(pl.col("player_name") == n).height])
+print(f"roster: {mine.height} players")
+
+stud = "Christian McCaffrey"
+three = ["Chuba Hubbard", "Jerry Jeudy", "Dallas Goedert"]
+three = [n for n in three if board.filter(pl.col("player_name") == n).height][:3]
+
+show("ONE-FOR-THREE — the stud out, three mid pieces in (bench is full)",
+     evaluate(mine, ids([stud]), ids(three), S, board))
+
+show("ONE-FOR-ONE — same stud, one comparable back",
+     evaluate(mine, ids([stud]), ids(["Bijan Robinson"]), S, board))
+
+show("THREE-FOR-ONE — the other direction: depth out, stud in",
+     evaluate(mine, ids(three[:2] + ["Khalil Shakir"]), ids(["Bijan Robinson"]), S, board))
+
+show("PURE ADD — give nothing, take a bench arm (should be ~free, not huge)",
+     evaluate(mine, [], ids(["Jerry Jeudy"]), S, board))

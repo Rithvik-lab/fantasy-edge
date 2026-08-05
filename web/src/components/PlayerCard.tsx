@@ -68,22 +68,26 @@ export function PlayerCard({
             rank === 1 ? "text-turf" : "text-muted")}>{rank}</span>
         </div>
 
-        {/* Face. ESPN serves these by player id; fall back to initials. */}
-        <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md bg-raised ring-1 ring-line">
-          {s.headshot && !imgBad ? (
-            <img
-              src={s.headshot}
-              alt={s.player_name}
-              loading="lazy"
-              onError={() => setImgBad(true)}
-              className="h-full w-full object-cover object-top"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm font-bold text-muted">
-              {initials}
-            </div>
-          )}
-        </div>
+        {/* Face. ESPN serves these by player id; fall back to initials.
+            Hovering it opens the profile, same as the name — this is the
+            biggest target on the card and the one the eye goes to first. */}
+        <PlayerHover playerId={s.player_id} className="shrink-0">
+          <div className="relative h-14 w-14 shrink-0 cursor-help overflow-hidden rounded-md bg-raised ring-1 ring-line">
+            {s.headshot && !imgBad ? (
+              <img
+                src={s.headshot}
+                alt={s.player_name}
+                loading="lazy"
+                onError={() => setImgBad(true)}
+                className="h-full w-full object-cover object-top"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-sm font-bold text-muted">
+                {initials}
+              </div>
+            )}
+          </div>
+        </PlayerHover>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">

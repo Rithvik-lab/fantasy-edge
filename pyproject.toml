@@ -14,6 +14,11 @@ dependencies = [
     "xgboost>=2.0",
     "requests>=2.31",
     "python-dotenv>=1.0",
+    # run.sh serves the interface off these, so they are not optional -- a
+    # fresh clone that installed only the extras above got a working library
+    # and a draft app that would not start.
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
