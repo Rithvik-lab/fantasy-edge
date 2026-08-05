@@ -34,6 +34,7 @@ from fantasyedge.draft.engine import (
     survival_probability,
 )
 from fantasyedge.draft.session import grade_roster, optimal_lineup
+from fantasyedge import trade
 from fantasyedge.league import LeagueSettings, picks_for_slot, slot_for_pick
 from server import store
 
@@ -557,6 +558,104 @@ def league_rosters() -> dict:
         })
     return {"teams": sorted(out, key=lambda t: t["team_id"]),
             "as_of": time.time()}
+
+
+# ---------------------------------------------------------------------------
+# Trade
+# ---------------------------------------------------------------------------
+
+class TradeIn(BaseModel):
+    give: list[str] = Field(default_factory=list)
+    get: list[str] = Field(default_factory=list)
+
+
+def _my_roster_frame() -> pl.DataFrame:
+    """Your team, from live rosters if ESPN has them, else from the draft log."""
+    b = _board()
+    ids = STATE.my_ids
+    if STATE.espn:
+        try:
+            payload = espn_draft.fetch(**{k: v for k, v in STATE.espn.items()})
+            r = espn_draft.rosters(payload)
+            if r.height and STATE.my_team_id is not None:
+                live = r.filter(pl.col("team_id") == STATE.my_team_id)
+                if live.height:
+                    ids = live["player_id"].to_list()
+        except Exception:
+            pass          # fall back to the draft log rather than fail the call
+    return b.filter(pl.col("player_id").is_in(ids))
+
+
+@app.post("/api/trade/evaluate")
+def trade_evaluate(t: TradeIn) -> dict:
+    """Price an offer by what it does to the lineup you can field.
+
+    Returns the naive value total alongside the simulated verdict on purpose:
+    the gap between them IS the opportunity cost, and showing it is the only
+    way to make "three for one is not fair" argue for itself.
+    """
+    st = _require()
+    if not t.give and not t.get:
+        raise HTTPException(400, "nothing to evaluate")
+
+    mine = _my_roster_frame()
+    if not mine.height:
+        raise HTTPException(400, "no roster yet — draft or sync a team first")
+
+    b = _board()
+    known = set(b["player_id"].to_list())
+    unknown = [p for p in (t.give + t.get) if p not in known]
+    if unknown:
+        raise HTTPException(400, f"not on the board: {unknown}")
+
+    v = trade.evaluate(mine, t.give, t.get, st.settings, b)
+    return v.as_dict()
+
+
+@app.get("/api/trade/suggest")
+def trade_suggest(per_team: int = 1, top: int = 8) -> dict:
+    """Scan the league for deals that win for us and read as wins for them."""
+    st = _require()
+    if not STATE.espn:
+        raise HTTPException(400, "connect an ESPN league to see other rosters")
+
+    try:
+        payload = espn_draft.fetch(**{k: v for k, v in STATE.espn.items()})
+    except espn_draft.DraftUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+    r = espn_draft.rosters(payload)
+    if not r.height:
+        return {"offers": [], "note": "ESPN returned no rosters for this league"}
+
+    b = _board()
+    mine = b.filter(pl.col("player_id").is_in(
+        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
+    if not mine.height:
+        raise HTTPException(400, "could not identify your roster")
+
+    others = {}
+    for tid, grp in r.group_by("team_id"):
+        team_id = tid[0] if isinstance(tid, tuple) else tid
+        if team_id == STATE.my_team_id:
+            continue
+        sub = b.filter(pl.col("player_id").is_in(grp["player_id"].to_list()))
+        if sub.height:
+            others[team_id] = sub
+
+    stamp = refresh.read_stamp()
+    obs = refresh.observed() if stamp.got_stats else None
+    week = stamp.week or 0
+
+    offers = trade.suggest.across_league(
+        mine, others, b, st.settings, names=STATE.team_names,
+        observed=obs, through_week=week, per_team=per_team, top=top)
+
+    return {"offers": [o.as_dict() for o in offers],
+            "through_week": week,
+            "note": "" if offers else
+                    "Nothing worth offering right now — every roster is priced "
+                    "about right against yours."}
 
 
 # ---------------------------------------------------------------------------

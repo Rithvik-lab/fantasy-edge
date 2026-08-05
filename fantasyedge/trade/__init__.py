@@ -5,5 +5,6 @@ from fantasyedge.trade.evaluate import (
     evaluate,
     simulate_lineup,
 )
+from fantasyedge.trade import market, suggest
 
-__all__ = ["TradeVerdict", "evaluate", "simulate_lineup"]
+__all__ = ["TradeVerdict", "evaluate", "simulate_lineup", "market", "suggest"]
