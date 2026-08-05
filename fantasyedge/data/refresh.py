@@ -58,6 +58,13 @@ STAMP = config.PROCESSED / "refresh.json"
 # Weekly, after games settle. Tuesday is the earliest every result is final,
 # including the Monday night game.
 SEASON_MAX_AGE = 6 * 24 * 3600
+
+# A pull that came back with nothing is NOT a fresh week of data, and must not
+# buy a week of silence. Week one 2026 kicks off 9 September; a pull on the 8th
+# gets a 404, and under the weekly rule the next attempt would be the 14th --
+# so the model would sit five days behind the opening Sunday having decided it
+# was up to date. An empty result retries in hours instead.
+EMPTY_RETRY_AGE = 6 * 3600
 # A roster is one HTTP call, so "stale" here means minutes, not days.
 ROSTER_MAX_AGE = 15 * 60
 
@@ -82,8 +89,19 @@ class Stamp:
         return time.time() - self.at if self.at else float("inf")
 
     @property
+    def got_stats(self) -> bool:
+        """Did the pull actually bring back game results, or only the chart?
+
+        Depth charts publish year round, so "we got something" is not the same
+        as "the season has started" -- and treating it that way is what let an
+        empty August pull look fresh.
+        """
+        return any(r.get("ok") and r.get("name") == "player_stats"
+                   for r in self.results)
+
+    @property
     def stale(self) -> bool:
-        return self.age > SEASON_MAX_AGE
+        return self.age > (SEASON_MAX_AGE if self.got_stats else EMPTY_RETRY_AGE)
 
 
 def read_stamp() -> Stamp:
@@ -184,6 +202,24 @@ def observed(target: int | None = None, through_week: int | None = None) -> pl.D
     return inseason.observe(d, target, through_week)
 
 
+def kickoff(target: int | None = None) -> str | None:
+    """First game of the season, as a date string. Free -- schedules publish early.
+
+    Worth surfacing: before this date every stats file is a 404, and an app
+    that only says "not published" reads as broken rather than as early.
+    """
+    target = target or config.PRODUCTION_TARGET_SEASON
+    try:
+        import nflreadpy as nfl
+
+        s = nfl.load_schedules(seasons=[target])
+        if not s.height or "gameday" not in s.columns:
+            return None
+        return str(s.filter(pl.col("week") == 1)["gameday"].min())
+    except Exception:
+        return None
+
+
 def describe() -> dict:
     """What is fresh, for the status line. Distinguishes stale from never."""
     s = read_stamp()
@@ -191,7 +227,7 @@ def describe() -> dict:
         return {"synced": False, "note": "the season has never been pulled"}
     got = [r["name"] for r in s.results if r.get("ok")]
     missing = [r["name"] for r in s.results if not r.get("ok")]
-    return {
+    out = {
         "synced": True,
         "season": s.season,
         "week": s.week,
@@ -199,4 +235,12 @@ def describe() -> dict:
         "stale": s.stale,
         "have": got,
         "not_published": missing,
+        "has_results": s.got_stats,
     }
+    if not s.got_stats:
+        out["kickoff"] = kickoff(s.season)
+        out["note"] = (
+            "No games have been played yet, so there are no weekly results to "
+            "pull. Depth charts and the schedule are already live."
+        )
+    return out
