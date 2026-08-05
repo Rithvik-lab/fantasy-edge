@@ -15,6 +15,8 @@ import { GlossaryDrawer } from "@/components/Glossary";
 import { PickEditor } from "@/components/PickEditor";
 import { PickInput } from "@/components/PickInput";
 import { Phase, SyncDot } from "@/components/Phase";
+import { ModeSwitch, type Mode } from "@/components/Modes";
+import { Trade } from "@/components/Trade";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +60,7 @@ export default function App() {
   const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
   const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<Tab>("room");
+  const [mode, setMode] = useState<Mode>("draft");
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -218,6 +221,7 @@ export default function App() {
           </span>
 
           <div className="ml-auto flex items-center gap-3">
+            <ModeSwitch mode={mode} onMode={setMode} disabled={["waiver"]} />
             <GlossaryDrawer />
             <button
               onClick={() => setEditPicks(true)}
@@ -285,6 +289,12 @@ export default function App() {
           bottom; overflow-x-hidden because `overflow-y: auto` silently makes
           the other axis scrollable too. */}
       <main className="mx-auto w-full min-h-0 max-w-[1400px] flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
+        {mode === "trade" ? (
+          <div key="trade" className="tick-in">
+            <Trade />
+          </div>
+        ) : (
+        <>
         <div className="mb-3 flex rounded-md border border-line p-0.5">
           {(["room", "data"] as const).map((t) => (
             <button
@@ -341,6 +351,8 @@ export default function App() {
             <Charts data={stats} />
           )}
         </div>
+        </>
+        )}
       </main>
 
       {lastSkip && (
@@ -358,6 +370,7 @@ export default function App() {
         </div>
       )}
 
+      {mode === "draft" && (
       <Shortlist
         data={list}
         busy={busy}
@@ -366,6 +379,7 @@ export default function App() {
         onDraft={draft}
         onSkip={skip}
       />
+      )}
 
       {editPicks && (
         <PickEditor

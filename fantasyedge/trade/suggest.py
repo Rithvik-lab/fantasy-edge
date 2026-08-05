@@ -47,6 +47,20 @@ from fantasyedge.trade.evaluate import evaluate
 # How generous the offer has to look from across the table. Zero means "they
 # break even"; a real offer needs to be visibly good or it gets ignored.
 THEIR_MIN_GAIN = 5.0
+
+# The one dial the user actually turns. Every stance still requires that WE
+# gain -- what changes is how much the other side has to gain as well, which
+# is the same thing as how lopsided we are willing for the offer to look.
+#
+# Fleece is not "take more", it is "give them the least that still gets a yes".
+# It produces the biggest edge and the most rejections; conservative produces
+# the opposite. Neither one changes what the deal is actually worth to us --
+# only which deals get shown.
+STANCE: dict[str, float] = {
+    "conservative": 28.0,
+    "fair": 12.0,
+    "fleece": 3.0,
+}
 # Ours, on the honest scale. Below this it is not worth the message.
 OUR_MIN_GAIN = 6.0
 # How many survive the cheap pass and get simulated properly.
@@ -244,6 +258,104 @@ def for_team(
 
     offers.sort(key=lambda o: -o.our_gain)
     return offers[:top]
+
+
+def counter(
+    mine: pl.DataFrame,
+    theirs: pl.DataFrame,
+    board: pl.DataFrame,
+    settings: LeagueSettings,
+    give: list[str],
+    get: list[str],
+    stance: str = "fair",
+    observed: pl.DataFrame | None = None,
+    through_week: int = 0,
+    top: int = 3,
+) -> list[Offer]:
+    """Given a deal on the table, find nearby deals that are better.
+
+    NOT a rule. The obvious version of this -- "ask them for one more small
+    player" -- is usually wrong, because a small player is exactly the thing
+    that costs you a roster spot and starts for nobody. Sometimes the fix is
+    asking for one better piece instead of two; sometimes it is giving up MORE
+    so their side works; sometimes it is a straight swap of who you send.
+
+    So it searches rather than prescribes: every single-player addition,
+    removal and substitution on either side, scored the same way as the main
+    scan and simulated properly at the end. Whatever comes back is what
+    actually helps, which is what was asked for.
+    """
+    b = market.perceived(board, observed, through_week)
+    pv = dict(zip(b["player_id"].to_list(),
+                  b["perceived_value"].fill_null(0.0).to_list()))
+    threshold = STANCE.get(stance, THEIR_MIN_GAIN)
+
+    mine_rows = _as_rows(mine)
+    their_rows = _as_rows(theirs)
+    my_ids = [p for p in mine_rows if p not in give]
+    their_ids = [p for p in their_rows if p not in get]
+
+    base_ours = _fast_lineup(list(mine_rows.values()), settings)
+    base_theirs = _fast_lineup(list(their_rows.values()), settings)
+    limit = settings.roster_size
+
+    # Every deal one move away from the one on the table.
+    variants: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    g0, k0 = tuple(give), tuple(get)
+    for pid in my_ids:                       # offer one more of ours
+        variants.add((tuple(sorted(g0 + (pid,))), k0))
+    for pid in their_ids:                    # ask for one more of theirs
+        variants.add((g0, tuple(sorted(k0 + (pid,)))))
+    for pid in give:                         # stop offering one of ours
+        variants.add((tuple(x for x in g0 if x != pid), k0))
+    for pid in get:                          # stop asking for one of theirs
+        variants.add((g0, tuple(x for x in k0 if x != pid)))
+    for out in give:                         # swap who we send
+        for pid in my_ids:
+            variants.add((tuple(sorted([x for x in g0 if x != out] + [pid])), k0))
+    for out in get:                          # swap who we ask for
+        for pid in their_ids:
+            variants.add((g0, tuple(sorted([x for x in k0 if x != out] + [pid]))))
+    variants.discard((g0, k0))
+
+    scored = []
+    for g, k in variants:
+        if not g and not k:
+            continue
+        their_gain = (sum(pv.get(i, 0.0) for i in g)
+                      - sum(pv.get(i, 0.0) for i in k))
+        if their_gain < threshold:
+            continue
+        kept = [v for pid, v in mine_rows.items() if pid not in g]
+        incoming = [their_rows[i] for i in k if i in their_rows]
+        after = kept + incoming
+        if len(after) > limit:
+            after = sorted(after, key=lambda r: -r[1])[:limit]
+        cheap = _fast_lineup(after, settings) - base_ours
+        if cheap <= 0:
+            continue
+        after_theirs = ([v for pid, v in their_rows.items() if pid not in k]
+                        + [mine_rows[i] for i in g if i in mine_rows])
+        if _fast_lineup(after_theirs, settings) < base_theirs:
+            continue
+        scored.append((cheap, their_gain, g, k))
+
+    if not scored:
+        return []
+    scored.sort(key=lambda r: -r[0])
+
+    out_offers: list[Offer] = []
+    for _, their_gain, g, k in scored[:SHORTLIST]:
+        v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
+        if v.delta_median < OUR_MIN_GAIN:
+            continue
+        out_offers.append(Offer(
+            team_id=-1, team_name="counter", give=v.give, get=v.get,
+            our_gain=v.delta_median, their_gain=their_gain,
+            win_probability=v.win_probability, naive_delta=v.naive_value_delta,
+            note=v.note))
+    out_offers.sort(key=lambda o: -o.our_gain)
+    return out_offers[:top]
 
 
 def across_league(

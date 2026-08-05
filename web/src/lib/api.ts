@@ -145,6 +145,51 @@ export interface TeamRow {
   players: { name: string; position: string | null; overall: number }[];
 }
 
+
+export interface TradePlayer {
+  player_id: string; player_name: string; position: string;
+  projected_points?: number | null; vor?: number | null;
+  season_p20?: number | null; season_p50?: number | null; season_p80?: number | null;
+  expected_games?: number | null;
+}
+
+export interface TradeVerdict {
+  delta_median: number;
+  delta_floor: number;
+  delta_ceiling: number;
+  win_probability: number;
+  before: { floor: number; median: number; ceiling: number; mean: number };
+  after: { floor: number; median: number; ceiling: number; mean: number };
+  give: TradePlayer[];
+  get: TradePlayer[];
+  dropped: TradePlayer[];
+  naive_value_delta: number;
+  opportunity_gap: number;
+  roster_before: number;
+  roster_after: number;
+  note: string;
+}
+
+export interface TradeOffer {
+  team_id: number; team_name: string;
+  give: TradePlayer[]; get: TradePlayer[];
+  our_gain: number; their_gain: number;
+  win_probability: number; naive_delta: number; note: string;
+}
+
+export interface SeasonStatus {
+  synced: boolean; season?: number; week?: number | null;
+  age_hours?: number; stale?: boolean;
+  have?: string[]; not_published?: string[];
+  has_results?: boolean; kickoff?: string; note?: string;
+}
+
+export interface LeagueRoster {
+  team_id: number; name: string; mine: boolean;
+  players: (TradePlayer & { lineup_slot: string | null; starting: boolean;
+                            injury_status: string | null })[];
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -192,5 +237,13 @@ export const api = {
   loadLeague: (id: string) => req<Status>(`/leagues/${id}/load`, { method: "POST" }),
   deleteLeague: (id: string) =>
     req<{ leagues: SavedLeague[] }>(`/leagues/${id}`, { method: "DELETE" }),
+  tradeEvaluate: (give: string[], get: string[]) =>
+    req<TradeVerdict>("/trade/evaluate", {
+      method: "POST", body: JSON.stringify({ give, get }) }),
+  tradeSuggest: (perTeam = 1, top = 8) =>
+    req<{ offers: TradeOffer[]; through_week: number; note: string }>(
+      `/trade/suggest?per_team=${perTeam}&top=${top}`),
+  rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
+  season: () => req<SeasonStatus>("/season"),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };
