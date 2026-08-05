@@ -182,7 +182,10 @@ def observe(weekly: pl.DataFrame, season: int, through_week: int) -> pl.DataFram
         return pl.DataFrame()
 
     agg = [
-        pl.len().alias("games"),
+        # Float64, not the UInt32 `len` hands back. Nothing here subtracts two
+        # counts, but this project has shipped five separate underflow bugs
+        # from exactly this dtype and the cast costs nothing.
+        pl.len().cast(pl.Float64).alias("games"),
         pl.col("fantasy_points_ppr").mean().alias("ppg"),
     ]
     if "opportunity" in d.columns and "points_per_opp" in d.columns:

@@ -29,3 +29,6 @@ web/node_modules/
 web/dist/
 web/.vite/
 web/*.tsbuildinfo
+
+# Scheduler output. Local noise, and it can echo league ids.
+data/logs/

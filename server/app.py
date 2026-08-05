@@ -481,6 +481,26 @@ def sync() -> dict:
 # it runs weekly. Polling that hourly would re-read the same numbers and call
 # it an update.
 
+def _season_keeper() -> None:
+    """Background refresh, for as long as the app is running.
+
+    A laptop is asleep most of the week, so a calendar job alone will miss its
+    slot and not notice. This checks every few hours while the app is open and
+    `refresh.season` no-ops inside the weekly window, so the common case costs
+    one comparison. Between the two, the data is current whenever you actually
+    look at it -- which is the only time it matters.
+    """
+    while True:
+        try:
+            refresh.season()
+        except Exception:
+            pass          # a failed pull is never a reason to take the app down
+        time.sleep(6 * 3600)
+
+
+threading.Thread(target=_season_keeper, daemon=True, name="season-keeper").start()
+
+
 @app.get("/api/season")
 def season_status() -> dict:
     """What is fresh. Distinguishes stale from never-pulled, on purpose."""
