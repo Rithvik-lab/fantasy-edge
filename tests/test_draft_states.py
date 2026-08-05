@@ -52,7 +52,11 @@ def run(label, pl_, expect_note=""):
     print(f"\n{'='*66}\n{label}\n{'='*66}")
     A.espn_draft.fetch = lambda *a, **kw: pl_          # stub the network
     A.STATE.__init__()
-    c = TestClient(A.app)
+    # The in-process transport reports its peer as "testclient", which the
+    # loopback guard rightly does not trust. Hand it a real loopback peer
+    # rather than adding "testclient" to the allowlist -- a magic string in a
+    # security check is how a test hook turns into a bypass.
+    c = TestClient(A.app, client=("127.0.0.1", 50000))
     r = c.post("/api/espn/connect", json={"league_id": "1", "season": 2026,
                                           "swid": SWID, "espn_s2": "x"})
     if r.status_code != 200:

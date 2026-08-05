@@ -19,8 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import polars as pl
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import draft as D
@@ -45,6 +46,49 @@ app.add_middleware(
 )
 
 HEADSHOT = "https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.png"
+
+
+# ---------------------------------------------------------------------------
+# ONE PROCESS, ONE DRAFT, NO USERS.
+#
+# `STATE` below is a single module-level object. There is no login, no session,
+# and nothing about a draft is stored in the browser -- so every client that
+# can reach this port sees the same draft. That is exactly right for the way
+# this is meant to run: each person clones the repo and starts their own copy,
+# and the only reason your league is private is that the socket does not listen
+# off your machine.
+#
+# Which makes the binding a security control, not a convenience. `--host
+# 0.0.0.0` would hand every visitor the same STATE: their browser opens YOUR
+# draft, and /api/leagues lists YOUR saved leagues -- each of which can be
+# loaded, and each of which carries the espn_s2 / SWID behind it. One flag,
+# total exposure. So it is enforced here instead of being left to how the
+# server happens to get started.
+#
+# Serving real multiple users means per-session state and an owner on every
+# saved league. That is a different application; this refuses rather than
+# pretending.
+LOOPBACK = {"127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"}
+ALLOW_REMOTE = os.environ.get("FANTASYEDGE_ALLOW_REMOTE") == "1"
+
+
+@app.middleware("http")
+async def loopback_only(request: Request, call_next):
+    host = request.client.host if request.client else None
+    if not ALLOW_REMOTE and host not in LOOPBACK:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "FantasyEdge holds one draft and has no login, so it only "
+                    "answers this machine. Run your own copy. If you truly "
+                    "want everyone who can reach this port to share a single "
+                    "draft and a single set of ESPN credentials, set "
+                    "FANTASYEDGE_ALLOW_REMOTE=1."
+                )
+            },
+        )
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
