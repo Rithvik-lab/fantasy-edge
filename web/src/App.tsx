@@ -18,7 +18,34 @@ import { Phase, SyncDot } from "@/components/Phase";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const SYNC_MS = 2500;
+/**
+ * How often to ask ESPN what has happened.
+ *
+ * This used to be a flat 2.5s for as long as the app was open, which over a
+ * normal 90-second-per-pick draft is ~5,760 requests to an undocumented
+ * endpoint, and it kept going after the draft finished — forever, at full
+ * rate, for a board that could never change again.
+ *
+ * Nothing is gained by that. The only moment worth polling hard is when a pick
+ * could land that changes your answer, so the rate follows the draft:
+ */
+const POLL = {
+  near: 2000,      // your pick is close — every second counts here
+  live: 4000,      // the draft is running but you are not up soon
+  idle: 15000,     // connected before it starts; nothing can change yet
+  paused: 30000,   // nothing has moved in a long while — someone is away
+} as const;
+
+/** No pick can land in a finished draft, so stop asking. */
+function pollDelay(s: Status | null, quiet: number): number | null {
+  if (!s?.espn_connected) return null;
+  if (s.phase === "complete" || s.draft_complete) return null;
+  if (s.phase !== "live") return POLL.idle;
+  if (quiet > 20) return POLL.paused;
+  const until = s.picks_until_next;
+  return until != null && until <= 3 ? POLL.near : POLL.live;
+}
+
 type Tab = "room" | "data";
 
 export default function App() {
@@ -75,12 +102,20 @@ export default function App() {
   useEffect(() => {
     if (!status?.configured || !status.espn_connected) return;
     let alive = true;
+    let timer: number | undefined;
+    // Consecutive polls that changed nothing. Long runs mean the room is
+    // away from their keyboards, not that the draft is moving.
+    let quiet = 0;
+
     const tick = async () => {
+      let next: Status | null = null;
       try {
         const s = await api.sync();
         if (!alive) return;
+        next = s;
         setStatus(s);
         if (s.picks_made !== lastPickCount.current) {
+          quiet = 0;
           if (lastPickCount.current >= 0) setStale(true);
           lastPickCount.current = s.picks_made ?? 0;
           skipped.current = [];
@@ -89,12 +124,21 @@ export default function App() {
           try { setStats(await api.analytics()); } catch { /* optional */ }
           try { setLadder(await api.adp(90)); } catch { /* optional */ }
           try { setRoster(await api.roster()); } catch { /* optional */ }
+        } else {
+          quiet += 1;
         }
-      } catch { /* transient; next tick retries */ }
+      } catch {
+        // Transient. Count it as quiet so a flapping connection backs off
+        // rather than retrying hard.
+        quiet += 1;
+      }
+      if (!alive) return;
+      const delay = pollDelay(next, quiet);
+      if (delay != null) timer = window.setTimeout(tick, delay);
     };
+
     tick();
-    const id = setInterval(tick, SYNC_MS);
-    return () => { alive = false; clearInterval(id); };
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [status?.configured, status?.espn_connected, loadList]);
 
   /* -- actions ---------------------------------------------------------- */

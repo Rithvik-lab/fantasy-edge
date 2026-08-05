@@ -36,6 +36,7 @@ so callers can tell "no injuries reported" from "we never looked".
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,6 +44,14 @@ from pathlib import Path
 import polars as pl
 
 from fantasyedge import config
+
+# nflreadpy caches in MEMORY by default, which means nothing survives the
+# process. The scheduler runs in a fresh process every time, so every pull was
+# re-downloading roughly 2 MB it already had. Filesystem cache with a one-day
+# life makes a repeat pull free and is politer to a volunteer-run project that
+# serves this data for nothing. Set before nflreadpy is imported anywhere.
+os.environ.setdefault("NFLREADPY_CACHE", "filesystem")
+os.environ.setdefault("NFLREADPY_CACHE_DURATION", "86400")
 
 STAMP = config.PROCESSED / "refresh.json"
 
