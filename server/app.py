@@ -117,6 +117,11 @@ class Draft:
         # every survival probability -- so it gets flagged rather than
         # defaulted silently.
         self.slot_confirmed: bool = False
+        # Whether the SWID matched a team in this league. None until we tried.
+        # A mismatch fails the same way an unpublished pick order does -- seat
+        # unknown -- but for an opposite reason and with an opposite fix, so
+        # the two are kept apart rather than sharing one message.
+        self.swid_matched: bool | None = None
         self.draft_started: bool = False
         self.draft_complete: bool = False
         self.draft_time: float | None = None    # epoch seconds, if ESPN says
@@ -312,6 +317,7 @@ def connect_espn(cfg: EspnIn) -> dict:
                 roster_size=info.roster_size)
             D._BOARD = None
         tid = espn_draft.my_team_id(payload, swid)
+        STATE.swid_matched = tid is not None
         if tid:
             STATE.my_team_id = tid
             slot = espn_draft.draft_slot(payload, tid)
@@ -555,10 +561,20 @@ def status() -> dict:
     phase = "complete" if complete else ("live" if STATE.draft_started else "pre")
     warnings = []
     if STATE.espn and not STATE.slot_confirmed:
-        warnings.append(
-            f"ESPN has not published the pick order yet, so draft slot "
-            f"{STATE.my_slot} is a guess. Set it before you draft — a wrong "
-            f"seat makes every survival probability wrong.")
+        # Same symptom, opposite causes, opposite fixes. Telling someone to
+        # wait for ESPN when their cookie is actually stale is worse than
+        # saying nothing -- they wait, and the seat never resolves.
+        if STATE.swid_matched is False:
+            warnings.append(
+                f"Your SWID does not match any team in this league, so nobody "
+                f"here is you — slot {STATE.my_slot} is a guess and the roster "
+                f"below is whoever drafted there. Re-copy your cookies, or set "
+                f"your picks by hand.")
+        else:
+            warnings.append(
+                f"ESPN has not published the pick order yet, so draft slot "
+                f"{STATE.my_slot} is a guess. Set it before you draft — a wrong "
+                f"seat makes every survival probability wrong.")
     if complete:
         warnings.append("This draft is finished. Nothing here is a live pick.")
 
