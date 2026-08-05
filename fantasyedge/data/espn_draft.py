@@ -237,3 +237,64 @@ def draft_slot(payload: dict, team_id: int | None) -> int | None:
     if order and team_id in order:
         return order.index(team_id) + 1
     return None
+
+
+# ---------------------------------------------------------------------------
+# In-season rosters
+# ---------------------------------------------------------------------------
+# The payload has carried `mRoster` since the first version of this file and
+# nothing ever read it -- everything came from `draftDetail.picks`, which is
+# frozen the moment the draft ends. That is fine for draft day and useless
+# after it: waivers, drops and trades all happen against rosters that the pick
+# log cannot see. Trade mode needs who owns whom TODAY.
+
+POSITION_BY_ID = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K", 16: "DST"}
+
+
+def rosters(payload: dict) -> pl.DataFrame:
+    """Every team's CURRENT roster, as ESPN holds it right now.
+
+    Returns one row per owned player: team_id, player_id (gsis where we can
+    resolve it), name, position, and whether he is in a starting slot. Falls
+    back to the ESPN id when the crosswalk cannot place him, so a player is
+    never silently dropped from a roster -- an incomplete roster would quietly
+    understate a trade.
+    """
+    rows = []
+    for t in payload.get("teams") or []:
+        tid = t.get("id")
+        entries = ((t.get("roster") or {}).get("entries")) or []
+        for e in entries:
+            pool = e.get("playerPoolEntry") or {}
+            p = pool.get("player") or e.get("player") or {}
+            pid = p.get("id")
+            if pid is None:
+                continue
+            slot = e.get("lineupSlotId")
+            rows.append({
+                "team_id": tid,
+                "espn_id": str(pid),
+                "player_name": p.get("fullName") or "",
+                "position": POSITION_BY_ID.get(p.get("defaultPositionId"), None),
+                "lineup_slot": SLOTS.get(slot),
+                "starting": slot is not None and slot not in BENCH_SLOTS
+                            and slot in SLOTS,
+                "injury_status": p.get("injuryStatus"),
+            })
+
+    if not rows:
+        return pl.DataFrame()
+
+    df = pl.DataFrame(rows)
+    xw = cw.load().select(["gsis_id", "espn_id"]).drop_nulls()
+    if xw.height:
+        xw = xw.with_columns(pl.col("espn_id").cast(pl.Utf8)).unique(subset=["espn_id"])
+        df = df.join(xw, on="espn_id", how="left")
+    else:
+        df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("gsis_id"))
+
+    # Keep the ESPN id when the crosswalk has no gsis for him. A roster with a
+    # hole in it is worse than one with an id we cannot join on elsewhere.
+    return df.with_columns(
+        pl.coalesce([pl.col("gsis_id"), pl.col("espn_id")]).alias("player_id")
+    )

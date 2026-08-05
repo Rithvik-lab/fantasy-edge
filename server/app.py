@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import draft as D
-from fantasyedge.data import espn_draft
+from fantasyedge.data import espn_draft, refresh
 from fantasyedge.draft import explain
 from fantasyedge.draft.engine import (
     DraftState,
@@ -471,6 +471,72 @@ def sync() -> dict:
         with STATE.lock:
             STATE.sync_error = str(exc)
     return status()
+
+
+# ---------------------------------------------------------------------------
+# In-season sync
+# ---------------------------------------------------------------------------
+# Two clocks. Rosters are one cheap call and refresh on demand; the season is
+# stats and depth charts, where new evidence only exists once games settle, so
+# it runs weekly. Polling that hourly would re-read the same numbers and call
+# it an update.
+
+@app.get("/api/season")
+def season_status() -> dict:
+    """What is fresh. Distinguishes stale from never-pulled, on purpose."""
+    return refresh.describe()
+
+
+@app.post("/api/season/sync")
+def season_sync(force: bool = False) -> dict:
+    """Pull this season's stats, depth charts and injuries.
+
+    Safe to call whenever -- it no-ops inside the weekly window unless forced.
+    In August most of these are simply not published yet, which is reported
+    rather than raised.
+    """
+    refresh.season(force=force)
+    return refresh.describe()
+
+
+@app.get("/api/rosters")
+def league_rosters() -> dict:
+    """Who owns whom RIGHT NOW, not who was drafted.
+
+    The draft log freezes the moment the draft ends; waivers, drops and trades
+    all happen after it. Trade mode needs current ownership, and the ESPN
+    payload has carried it in `mRoster` all along.
+    """
+    st = _require()
+    if not st.espn:
+        raise HTTPException(400, "no ESPN league connected")
+    try:
+        payload = espn_draft.fetch(**{k: v for k, v in st.espn.items()})
+    except espn_draft.DraftUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+    r = espn_draft.rosters(payload)
+    if not r.height:
+        return {"teams": [], "note": "ESPN returned no rosters for this league"}
+
+    b = _board()
+    val = b.select(["player_id", "projected_points", "vor"])
+    r = r.join(val, on="player_id", how="left")
+
+    out = []
+    for tid, grp in r.group_by("team_id"):
+        team_id = tid[0] if isinstance(tid, tuple) else tid
+        out.append({
+            "team_id": team_id,
+            "name": STATE.team_names.get(team_id, f"Team {team_id}"),
+            "mine": team_id == STATE.my_team_id,
+            "players": grp.sort("projected_points", descending=True, nulls_last=True)
+                          .select(["player_id", "player_name", "position",
+                                   "lineup_slot", "starting", "injury_status",
+                                   "projected_points", "vor"]).to_dicts(),
+        })
+    return {"teams": sorted(out, key=lambda t: t["team_id"]),
+            "as_of": time.time()}
 
 
 # ---------------------------------------------------------------------------
