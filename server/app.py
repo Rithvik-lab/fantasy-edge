@@ -564,6 +564,19 @@ def league_rosters() -> dict:
 # Trade
 # ---------------------------------------------------------------------------
 
+def _with_faces(d: dict, board: pl.DataFrame) -> dict:
+    """Attach headshots to the players named in a verdict or an offer.
+
+    The board keys on gsis id and ESPN serves portraits by ESPN id, so the URL
+    cannot be built client-side without shipping the crosswalk to the browser.
+    """
+    shots = _headshots(board)
+    for key in ("give", "get", "dropped"):
+        for p in d.get(key) or []:
+            p["headshot"] = shots.get(p.get("player_id"))
+    return d
+
+
 class TradeIn(BaseModel):
     give: list[str] = Field(default_factory=list)
     get: list[str] = Field(default_factory=list)
@@ -609,11 +622,12 @@ def trade_evaluate(t: TradeIn) -> dict:
         raise HTTPException(400, f"not on the board: {unknown}")
 
     v = trade.evaluate(mine, t.give, t.get, st.settings, b)
-    return v.as_dict()
+    return _with_faces(v.as_dict(), b)
 
 
 @app.get("/api/trade/suggest")
-def trade_suggest(per_team: int = 1, top: int = 8) -> dict:
+def trade_suggest(per_team: int = 1, top: int = 8,
+                  stance: str = "fair") -> dict:
     """Scan the league for deals that win for us and read as wins for them."""
     st = _require()
     if not STATE.espn:
@@ -647,15 +661,63 @@ def trade_suggest(per_team: int = 1, top: int = 8) -> dict:
     obs = refresh.observed() if stamp.got_stats else None
     week = stamp.week or 0
 
-    offers = trade.suggest.across_league(
-        mine, others, b, st.settings, names=STATE.team_names,
-        observed=obs, through_week=week, per_team=per_team, top=top)
+    prev = trade.suggest.THEIR_MIN_GAIN
+    trade.suggest.THEIR_MIN_GAIN = trade.suggest.STANCE.get(stance, prev)
+    try:
+        offers = trade.suggest.across_league(
+            mine, others, b, st.settings, names=STATE.team_names,
+            observed=obs, through_week=week, per_team=per_team, top=top)
+    finally:
+        trade.suggest.THEIR_MIN_GAIN = prev
 
-    return {"offers": [o.as_dict() for o in offers],
+    return {"offers": [_with_faces(o.as_dict(), b) for o in offers],
             "through_week": week,
             "note": "" if offers else
                     "Nothing worth offering right now — every roster is priced "
                     "about right against yours."}
+
+
+class CounterIn(BaseModel):
+    give: list[str] = Field(default_factory=list)
+    get: list[str] = Field(default_factory=list)
+    team_id: int | None = None
+    stance: str = "fair"
+
+
+@app.post("/api/trade/counter")
+def trade_counter(c: CounterIn) -> dict:
+    """Better versions of the deal currently on the table.
+
+    A search, not a rule. "Ask for one more small player" is the obvious move
+    and usually the wrong one -- a small player is exactly what costs a roster
+    spot and starts for nobody.
+    """
+    st = _require()
+    if not STATE.espn:
+        raise HTTPException(400, "connect an ESPN league to build counters")
+    try:
+        payload = espn_draft.fetch(**{k: v for k, v in STATE.espn.items()})
+    except espn_draft.DraftUnavailable as exc:
+        raise HTTPException(502, str(exc))
+
+    r = espn_draft.rosters(payload)
+    b = _board()
+    mine = b.filter(pl.col("player_id").is_in(
+        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
+    tid = c.team_id
+    if tid is None:
+        raise HTTPException(400, "which team are you trading with?")
+    theirs = b.filter(pl.col("player_id").is_in(
+        r.filter(pl.col("team_id") == tid)["player_id"].to_list()))
+    if not mine.height or not theirs.height:
+        raise HTTPException(400, "could not read both rosters")
+
+    stamp = refresh.read_stamp()
+    obs = refresh.observed() if stamp.got_stats else None
+    offers = trade.suggest.counter(
+        mine, theirs, b, st.settings, c.give, c.get, stance=c.stance,
+        observed=obs, through_week=stamp.week or 0)
+    return {"offers": [_with_faces(o.as_dict(), b) for o in offers]}
 
 
 # ---------------------------------------------------------------------------

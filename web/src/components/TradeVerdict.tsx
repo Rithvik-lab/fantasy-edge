@@ -30,8 +30,17 @@ function Side({ label, players, tone }: {
       ) : (
         <ul className="space-y-1">
           {players.map((p) => (
-            <li key={p.player_id} className="flex items-baseline gap-1.5">
-              <span className="text-[10px] font-bold"
+            <li key={p.player_id} className="flex items-center gap-1.5">
+              <PlayerHover playerId={p.player_id} className="shrink-0">
+                <img
+                  src={p.headshot ?? ""}
+                  alt=""
+                  loading="lazy"
+                  onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
+                  className="h-7 w-7 shrink-0 cursor-help rounded bg-raised object-cover object-top ring-1 ring-line"
+                />
+              </PlayerHover>
+              <span className="w-6 shrink-0 text-[10px] font-bold"
                     style={{ color: POS_HUE[p.position] ?? "#8CA096" }}>
                 {p.position}
               </span>
@@ -82,6 +91,11 @@ function Band({ label, v, lo, hi, accent }: {
 
 export function TradeVerdict({ v }: { v: Verdict }) {
   const good = v.delta_median > 0;
+  // Three calls, not a number. "Take it or not" was the ask, and a middling
+  // deal is not a third verdict -- it is an instruction to counter.
+  const call: "take" | "mid" | "pass" =
+    v.delta_median >= 15 && v.win_probability >= 0.58 ? "take"
+      : v.delta_median <= 0 || v.win_probability < 0.45 ? "pass" : "mid";
   const lo = Math.min(v.before.floor, v.after.floor) * 0.98;
   const hi = Math.max(v.before.ceiling, v.after.ceiling) * 1.02;
 
@@ -110,12 +124,10 @@ export function TradeVerdict({ v }: { v: Verdict }) {
           </p>
         </div>
         <span className={cn(
-          "ml-auto rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wider",
-          v.win_probability >= 0.6 ? "bg-turf/15 text-turf"
-            : v.win_probability >= 0.45 ? "bg-clock/15 text-clock"
-            : "bg-alarm/15 text-alarm")}>
-          {v.win_probability >= 0.6 ? "accept"
-            : v.win_probability >= 0.45 ? "coin flip" : "decline"}
+          "ml-auto rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider",
+          call === "take" ? "bg-turf text-ink"
+            : call === "mid" ? "bg-clock/20 text-clock" : "bg-alarm/20 text-alarm")}>
+          {call === "take" ? "take it" : call === "mid" ? "counter it" : "turn it down"}
         </span>
       </div>
 

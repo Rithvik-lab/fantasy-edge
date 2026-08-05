@@ -147,7 +147,7 @@ export interface TeamRow {
 
 
 export interface TradePlayer {
-  player_id: string; player_name: string; position: string;
+  player_id: string; player_name: string; position: string; headshot?: string | null;
   projected_points?: number | null; vor?: number | null;
   season_p20?: number | null; season_p50?: number | null; season_p80?: number | null;
   expected_games?: number | null;
@@ -240,9 +240,12 @@ export const api = {
   tradeEvaluate: (give: string[], get: string[]) =>
     req<TradeVerdict>("/trade/evaluate", {
       method: "POST", body: JSON.stringify({ give, get }) }),
-  tradeSuggest: (perTeam = 1, top = 8) =>
+  tradeSuggest: (perTeam = 1, top = 8, stance = "fair") =>
     req<{ offers: TradeOffer[]; through_week: number; note: string }>(
-      `/trade/suggest?per_team=${perTeam}&top=${top}`),
+      `/trade/suggest?per_team=${perTeam}&top=${top}&stance=${stance}`),
+  tradeCounter: (give: string[], get: string[], team_id: number, stance = "fair") =>
+    req<{ offers: TradeOffer[] }>("/trade/counter", {
+      method: "POST", body: JSON.stringify({ give, get, team_id, stance }) }),
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
