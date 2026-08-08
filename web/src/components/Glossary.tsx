@@ -15,13 +15,16 @@ import { cn } from "@/lib/utils";
  */
 const ORDER = ["vor", "survive", "range", "score", "dropoff",
                "volatility", "rookie", "adp", "board_rank", "shares",
-               "pos_rank", "grade"] as const;
+               "pos_rank", "grade", "season_total", "curve_now",
+               "curve_after", "crossover", "overlap"] as const;
 
 const LABEL: Record<string, string> = {
   vor: "VOR", survive: "Survive %", range: "Season range", score: "Score",
   dropoff: "Falls off", volatility: "Volatility", rookie: "Rookie",
   adp: "ADP", board_rank: "Board rank", shares: "Catches / TDs",
   pos_rank: "Position rank", grade: "Roster grade",
+  season_total: "Season points", curve_now: "Grey curve",
+  curve_after: "Green curve", crossover: "Break-even", overlap: "Overlap",
 };
 
 export function Glossary() {

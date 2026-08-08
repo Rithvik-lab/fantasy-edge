@@ -56,6 +56,31 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Your starting lineup against an even share of the league's total startable value. 100 means you hold exactly one team's worth. A running score, not a prediction.",
   },
+  season_total: {
+    title: "Season points, along the bottom",
+    body:
+      "Total fantasy points your STARTING LINEUP scores across the whole season — every week, every slot added up. The left end is a bad-but-plausible year, the right end a good one. It is not per-game and not per-player: it is the number that decides your season.",
+  },
+  curve_now: {
+    title: "The grey curve — your team today",
+    body:
+      "Where your season lands if you make no trade, across four thousand simulations. Height is how often an outcome came up, so the fat middle is what usually happens and the thin tails are the seasons that need luck or bad luck.",
+  },
+  curve_after: {
+    title: "The green curve — your team after this deal",
+    body:
+      "The same four thousand seasons, replayed with the trade done. Every player draws the identical season in both runs, so the difference between the curves is the trade and not sampling noise. Shifted right is more points; narrower is safer; a fatter right tail is more upside.",
+  },
+  crossover: {
+    title: "Break-even",
+    body:
+      "Where the two curves cross. Left of it the old team was ahead, right of it the new one is — so it marks the kind of season in which this trade starts paying off. A trade that only wins to the right of a very good season is a trade that needs everything to go right.",
+  },
+  overlap: {
+    title: "How much the curves overlap",
+    body:
+      "Heavy overlap means the two teams are hard to tell apart and the trade is close to fair, whatever the headline number says. This is the honest reason a small edge is not worth chasing: most of the time you cannot tell which side you took.",
+  },
   board_rank: {
     title: "ESPN board rank",
     body:
@@ -90,7 +115,12 @@ export function Term({ k, children, className }: {
   children: ReactNode;
   className?: string;
 }) {
-  const { ref, anchor, show, hide } = useHover({ delay: 80, grace: 40 });
+  // Enterable, like the profile card. The first version was
+  // pointer-events-none with a 40ms grace, so moving the pointer toward the
+  // explanation killed it — which is exactly what you do when the text is
+  // longer than a glance, or when you want to select it. A tooltip you cannot
+  // reach is a tooltip that has to be re-read from scratch every time.
+  const { ref, anchor, show, hide, keep } = useHover({ delay: 80, grace: 180 });
   const def = DEFS[k];
   if (!def) return <>{children}</>;
 
@@ -108,7 +138,8 @@ export function Term({ k, children, className }: {
         {children}
       </span>
       {anchor && (
-        <Floating anchor={anchor} width={264} z={80}>
+        <Floating anchor={anchor} width={272} z={80}
+                  interactive onEnter={keep} onLeave={hide}>
           <div
             role="tooltip"
             className="rounded-md border border-line bg-raised p-2.5 shadow-2xl"
