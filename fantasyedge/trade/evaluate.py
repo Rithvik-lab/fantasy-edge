@@ -58,6 +58,36 @@ from fantasyedge.models.season_sim import (
 N_SIMS = 4000
 
 
+# A season is seventeen weeks. Dividing by it turns a season total into the
+# unit managers actually reason in, which is what they see on a Sunday.
+SEASON_WEEKS = 17
+
+
+def magnitudes(delta: float, before_median: float) -> tuple[float, float]:
+    """(percent change, points per week) for a season-points delta.
+
+    THE ONLY TWO PERCENTAGES HERE THAT MEAN ANYTHING, and they are deliberately
+    modest:
+
+      PERCENT CHANGE is the delta over the season total you had. It is real
+      division, not a score -- +31 on a 1,950-point season is +1.6%, and that
+      smallness is the honest reading rather than a failure to find a bigger
+      number.
+
+      PER WEEK is the same delta spread across the remaining season, because
+      "+31 points" is hard to feel and "+1.8 a week" is not. A weekly matchup
+      is usually decided by twenty or thirty, so this is the line that tells
+      you whether a trade moves a single game.
+
+    There is deliberately NO "you won 68% of this trade". That number is not
+    defined -- there is no denominator that survives contact with a package of
+    unequal size -- and inventing one would be the most quotable thing on the
+    screen and also the only made-up thing on it.
+    """
+    pct = (delta / before_median * 100.0) if before_median > 0 else 0.0
+    return pct, delta / SEASON_WEEKS
+
+
 def _seed_for(player_id: str) -> int:
     """Stable per-player seed, so a player draws the same season on both sides."""
     return abs(hash(("fantasyedge-trade", player_id))) % (2**31 - 1)
@@ -182,6 +212,10 @@ class TradeVerdict:
     # enough that it travels with the verdict rather than being inferred.
     roster_priced: bool = True
     overlap: dict = field(default_factory=dict)
+    # Size of the move, expressed three ways because one number cannot carry
+    # it. See `magnitudes` for what each is and is not.
+    pct_change: float = 0.0
+    per_week: float = 0.0
     roster_before: int = 0
     roster_after: int = 0
     slots_changed: list[dict] = field(default_factory=list)
@@ -202,6 +236,8 @@ class TradeVerdict:
             "opportunity_gap": round(self.opportunity_gap, 1),
             "roster_priced": self.roster_priced,
             "overlap": self.overlap,
+            "pct_change": round(self.pct_change, 2),
+            "per_week": round(self.per_week, 2),
             "roster_before": self.roster_before,
             "roster_after": self.roster_after,
             "slots_changed": self.slots_changed,
@@ -275,6 +311,8 @@ def evaluate(
 
     return TradeVerdict(
         overlap=distribution_overlap(before_totals, after_totals),
+        pct_change=magnitudes(real, b["median"])[0],
+        per_week=magnitudes(real, b["median"])[1],
         delta_median=real,
         delta_floor=a["floor"] - b["floor"],
         delta_ceiling=a["ceiling"] - b["ceiling"],
@@ -339,6 +377,8 @@ def compare_packages(
 
     return TradeVerdict(
         overlap=distribution_overlap(a, b),
+        pct_change=magnitudes(sb["median"] - sa["median"], sa["median"])[0],
+        per_week=magnitudes(sb["median"] - sa["median"], sa["median"])[1],
         delta_median=sb["median"] - sa["median"],
         delta_floor=sb["floor"] - sa["floor"],
         delta_ceiling=sb["ceiling"] - sa["ceiling"],

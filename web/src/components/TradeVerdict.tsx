@@ -123,8 +123,17 @@ export function TradeVerdict({ v }: { v: Verdict }) {
                                : "points, comparing the two sides only"}
             </span>
           </Term>
-          <p className="text-[11px] text-muted">
-            better in {Math.round(v.win_probability * 100)}% of simulated seasons
+          {/* The same move said three ways. A season total is hard to feel;
+              a percentage and a weekly figure are not, and both are plain
+              division rather than a score. */}
+          <p className="num text-[11px] text-muted">
+            {v.pct_change != null && (
+              <>{v.pct_change > 0 ? "+" : ""}{v.pct_change.toFixed(1)}% of your season</>
+            )}
+            {v.per_week != null && (
+              <> &middot; {v.per_week > 0 ? "+" : ""}{v.per_week.toFixed(1)} a week</>
+            )}
+            <> &middot; better in {Math.round(v.win_probability * 100)}% of seasons</>
           </p>
         </div>
         <span

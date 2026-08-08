@@ -171,21 +171,35 @@ def reasons(
 
 
 def headline(verdict: dict) -> tuple[str, str]:
-    """(call, sentence). The call is one of win / fair / loss."""
+    """(call, sentence). The call is one of win / fair / loss.
+
+    Every figure in the sentence is one the verdict already carries. Nothing is
+    rounded up into a bigger claim, and the overlap is quoted alongside the
+    gain precisely when the gain is the more flattering of the two.
+    """
     d = verdict.get("delta_median", 0.0)
     p = verdict.get("win_probability", 0.5)
+    pct = verdict.get("pct_change", 0.0)
+    wk = verdict.get("per_week", 0.0)
+    ov = (verdict.get("overlap") or {}).get("overlap")
     priced = verdict.get("roster_priced", True)
-    where = "starting lineup" if priced else "two sides"
+    where = "starting lineup" if priced else "the side you receive"
+
+    size = f"{abs(round(d))} points ({abs(pct):.1f}% of your season, " \
+           f"{abs(wk):.1f} a week)"
+    same = (f" The two seasons still overlap {round(ov * 100)}% of the time, "
+            f"so most years you would not feel it.") if ov is not None and ov > 0.8 else ""
 
     if d >= 15 and p >= 0.58:
-        return "win", (f"You win this trade. It adds {round(d)} points to your "
-                       f"{where} and comes out ahead in {round(p * 100)}% of "
-                       f"simulated seasons.")
+        return "win", (f"You win this trade. It adds {size} to your {where}, "
+                       f"and comes out ahead in {round(p * 100)}% of simulated "
+                       f"seasons.{same}")
     if d <= -15 or p < 0.42:
-        return "loss", (f"You lose this trade. It costs your {where} "
-                        f"{abs(round(d))} points and only comes out ahead in "
-                        f"{round(p * 100)}% of seasons.")
-    return "fair", (f"This is about fair. {round(d):+d} points either way is "
-                    f"inside the noise, and it lands better in "
-                    f"{round(p * 100)}% of seasons — near enough a coin flip "
-                    f"that the tiebreaker is what you need, not what it is worth.")
+        return "loss", (f"You lose this trade. It costs your {where} {size}, "
+                        f"and only comes out ahead in {round(p * 100)}% of "
+                        f"seasons.{same}")
+    return "fair", (f"This is about fair — {round(d):+d} points, "
+                    f"{pct:+.1f}% of your season, {wk:+.1f} a week. It lands "
+                    f"better in {round(p * 100)}% of seasons, near enough a "
+                    f"coin flip that the tiebreaker is what you need rather "
+                    f"than what it is worth.{same}")
