@@ -599,11 +599,19 @@ def _with_faces(d: dict, board: pl.DataFrame) -> dict:
 class TradeIn(BaseModel):
     give: list[str] = Field(default_factory=list)
     get: list[str] = Field(default_factory=list)
+    # Your roster, when the caller knows it better than we do. Manual mode has
+    # no sync and no draft log, so it supplies one; automatic mode leaves this
+    # empty and we read the live roster. Either way the verdict is a LINEUP
+    # delta, which is meaningless without a lineup to change -- so the roster
+    # is an input, not a lookup.
+    roster: list[str] = Field(default_factory=list)
 
 
-def _my_roster_frame() -> pl.DataFrame:
-    """Your team, from live rosters if ESPN has them, else from the draft log."""
+def _my_roster_frame(explicit: list[str] | None = None) -> pl.DataFrame:
+    """Your team: what the caller gave us, else live ESPN, else the draft log."""
     b = _board()
+    if explicit:
+        return b.filter(pl.col("player_id").is_in(explicit))
     ids = STATE.my_ids
     if STATE.espn:
         try:
@@ -630,9 +638,13 @@ def trade_evaluate(t: TradeIn) -> dict:
     if not t.give and not t.get:
         raise HTTPException(400, "nothing to evaluate")
 
-    mine = _my_roster_frame()
+    mine = _my_roster_frame(t.roster)
     if not mine.height:
-        raise HTTPException(400, "no roster yet — draft or sync a team first")
+        raise HTTPException(
+            400,
+            "This prices a trade by what it does to your STARTING LINEUP, so it "
+            "needs to know your roster. Add your players on the left, or "
+            "connect an ESPN league to pull them.")
 
     b = _board()
     known = set(b["player_id"].to_list())

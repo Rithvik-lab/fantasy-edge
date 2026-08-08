@@ -200,3 +200,95 @@ export function TradePile({
     </div>
   );
 }
+
+
+/**
+ * The manual-mode roster: one you type rather than one we read.
+ *
+ * Manual mode exists for leagues we cannot sync, and the verdict is a LINEUP
+ * delta -- so without a roster there is nothing to compute a delta against.
+ * The honest fix is to let you supply the lineup, not to quietly answer a
+ * different, easier question about which pile of players is bigger.
+ *
+ * It doubles as the hypothetical: type any roster and price a trade into it,
+ * whether or not that team is yours or even exists.
+ */
+export function ManualRoster({
+  title, ids, players, selected, onToggle, onRemove, onDropIn, children,
+}: {
+  title: string;
+  ids: string[];
+  players: Map<string, TradePlayer>;
+  selected: string[];
+  onToggle: (id: string) => void;
+  onRemove: (id: string) => void;
+  onDropIn?: (id: string) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section
+      onDragOver={(e) => onDropIn && e.preventDefault()}
+      onDrop={(e) => {
+        if (!onDropIn) return;
+        e.preventDefault();
+        const id = e.dataTransfer.getData("text/plain");
+        if (id) onDropIn(id);
+      }}
+      className="flex min-h-0 flex-col rounded-lg border border-line bg-panel"
+    >
+      <header className="flex items-center gap-2 border-b border-line px-2.5 py-1.5">
+        <span className="eyebrow">{title}</span>
+        <span className="num ml-auto text-[10px] text-muted">{ids.length}</span>
+      </header>
+      <div className="border-b border-line p-1.5">{children}</div>
+      {ids.length === 0 ? (
+        <p className="px-3 py-6 text-center text-[10.5px] leading-snug text-muted">
+          Type the players on this team. The ruling is what a trade does to the
+          lineup, so it needs the lineup.
+        </p>
+      ) : (
+        <ul className="min-h-0 flex-1 overflow-y-auto">
+          {ids.map((id) => {
+            const p = players.get(id);
+            if (!p) return null;
+            const on = selected.includes(id);
+            return (
+              <li
+                key={id}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData("text/plain", id)}
+                onClick={() => onToggle(id)}
+                className={cn(
+                  "group flex cursor-grab items-center gap-2 border-b border-line/40 px-2 py-1.5 last:border-0 active:cursor-grabbing",
+                  on ? "bg-turf/12" : "hover:bg-raised/60"
+                )}
+              >
+                {p.headshot ? (
+                  <PlayerHover playerId={id} className="shrink-0">
+                    <img src={p.headshot} alt="" loading="lazy"
+                         className="h-7 w-7 shrink-0 cursor-help rounded bg-raised object-cover object-top" />
+                  </PlayerHover>
+                ) : <span className="h-7 w-7 shrink-0 rounded bg-raised" />}
+                <span className="w-6 shrink-0 text-[10px] font-bold"
+                      style={{ color: POS_HUE[p.position] ?? "#8CA096" }}>
+                  {p.position}
+                </span>
+                <PlayerHover playerId={id} className="min-w-0 flex-1">
+                  <span className="block cursor-help truncate text-[11.5px]">
+                    {p.player_name}
+                  </span>
+                </PlayerHover>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemove(id); }}
+                  className="shrink-0 px-1 text-[13px] leading-none text-muted opacity-0 transition-opacity hover:text-alarm group-hover:opacity-100"
+                >
+                  &times;
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}

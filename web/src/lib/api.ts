@@ -247,9 +247,9 @@ export const api = {
   loadLeague: (id: string) => req<Status>(`/leagues/${id}/load`, { method: "POST" }),
   deleteLeague: (id: string) =>
     req<{ leagues: SavedLeague[] }>(`/leagues/${id}`, { method: "DELETE" }),
-  tradeEvaluate: (give: string[], get: string[]) =>
+  tradeEvaluate: (give: string[], get: string[], roster: string[] = []) =>
     req<TradeVerdict>("/trade/evaluate", {
-      method: "POST", body: JSON.stringify({ give, get }) }),
+      method: "POST", body: JSON.stringify({ give, get, roster }) }),
   tradeSuggest: (perTeam = 1, top = 8, stance = "fair") =>
     req<{ offers: TradeOffer[]; through_week: number; note: string }>(
       `/trade/suggest?per_team=${perTeam}&top=${top}&stance=${stance}`),

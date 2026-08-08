@@ -6,7 +6,7 @@ import {
 } from "@/lib/api";
 import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
-import { RosterPanel, TradePile } from "@/components/TradeBoard";
+import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +82,10 @@ export function Trade() {
   const [offers, setOffers] = useState<TradeOffer[] | null>(null);
   const [counters, setCounters] = useState<TradeOffer[] | null>(null);
   const [scanning, setScanning] = useState(false);
+  // Manual mode has nothing to read, so the rosters are typed. They are also
+  // the hypothetical: any roster, real or not, can be priced against.
+  const [myManual, setMyManual] = useState<string[]>([]);
+  const [theirManual, setTheirManual] = useState<string[]>([]);
 
   useEffect(() => {
     api.rosters()
@@ -104,11 +108,12 @@ export function Trade() {
     return m;
   }, [rosters, extra]);
 
-  const price = useCallback(async (g: string[], k: string[]) => {
+  const price = useCallback(async (g: string[], k: string[],
+                                  roster: string[] = []) => {
     if (!g.length && !k.length) { setV(null); setCounters(null); return; }
     setBusy(true);
     try {
-      setV(await api.tradeEvaluate(g, k));
+      setV(await api.tradeEvaluate(g, k, roster));
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -163,6 +168,15 @@ export function Trade() {
     setV(null);
   }
 
+  /** Keep a typed-in player around so we can draw him later. */
+  function remember(h: { player_id: string; player_name: string;
+                         position: string; headshot: string | null }) {
+    setExtra((m) => new Map(m).set(h.player_id, {
+      player_id: h.player_id, player_name: h.player_name,
+      position: h.position, headshot: h.headshot,
+    }));
+  }
+
   function addTyped(side: "give" | "get",
                     h: { player_id: string; player_name: string;
                          position: string; headshot: string | null }) {
@@ -214,17 +228,36 @@ export function Trade() {
           </Button>
         )}
         <Button size="sm" className="ml-auto h-8 px-6 text-[12px]"
-                onClick={() => price(give, get)} disabled={busy || empty}>
+                onClick={() => price(give, get, auto ? [] : myManual)}
+                disabled={busy || empty}>
           {busy ? "Analysing…" : "Analyse"}
         </Button>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_0.8fr_0.8fr_1fr]">
         <div className="flex max-h-[46vh] min-h-0 flex-col gap-2">
-          <AddByName placeholder="add from my team…" restrictTo={myIds}
-                     onAdd={(h) => addTyped("give", h)} />
-          <RosterPanel title="My team" roster={mine} side="mine"
-                       selected={give} onToggle={(id) => toggle("give", id)} />
+          {auto ? (
+            <>
+              <AddByName placeholder="add from my team…" restrictTo={myIds}
+                         onAdd={(h) => addTyped("give", h)} />
+              <RosterPanel title="My team" roster={mine} side="mine"
+                           selected={give} onToggle={(id) => toggle("give", id)} />
+            </>
+          ) : (
+            <ManualRoster title="My team" ids={myManual} players={known}
+                          selected={give}
+                          onToggle={(id) => toggle("give", id)}
+                          onRemove={(id) => {
+                            setMyManual((r) => r.filter((x) => x !== id));
+                            drop("give", id);
+                          }}>
+              <AddByName placeholder="type a player on my team…" restrictTo={null}
+                         onAdd={(h) => {
+                           remember(h);
+                           setMyManual((r) => r.includes(h.player_id) ? r : [...r, h.player_id]);
+                         }} />
+            </ManualRoster>
+          )}
         </div>
 
         <TradePile label="you give" tone="alarm" ids={give} players={known}
@@ -247,13 +280,26 @@ export function Trade() {
                 </option>
               ))}
             </select>
+          ) : null}
+          {auto ? (
+            <RosterPanel title={other?.name ?? "Their team"} roster={other}
+                         side="theirs" selected={get}
+                         onToggle={(id) => toggle("get", id)} />
           ) : (
-            <AddByName placeholder="add their player…" restrictTo={null}
-                       onAdd={(h) => addTyped("get", h)} />
+            <ManualRoster title="Their team" ids={theirManual} players={known}
+                          selected={get}
+                          onToggle={(id) => toggle("get", id)}
+                          onRemove={(id) => {
+                            setTheirManual((r) => r.filter((x) => x !== id));
+                            drop("get", id);
+                          }}>
+              <AddByName placeholder="type a player on their team…" restrictTo={null}
+                         onAdd={(h) => {
+                           remember(h);
+                           setTheirManual((r) => r.includes(h.player_id) ? r : [...r, h.player_id]);
+                         }} />
+            </ManualRoster>
           )}
-          <RosterPanel title={other?.name ?? "Their team"} roster={other}
-                       side="theirs" selected={get}
-                       onToggle={(id) => toggle("get", id)} />
         </div>
       </div>
 
