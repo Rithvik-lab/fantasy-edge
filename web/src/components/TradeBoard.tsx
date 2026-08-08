@@ -51,8 +51,10 @@ export function RosterPanel({
           e.dataTransfer.effectAllowed = "copy";
         }}
         onClick={() => onToggle(p.player_id)}
+        title={on ? "in the trade — click to take him out"
+                  : "click to put him in the trade"}
         className={cn(
-          "group flex cursor-grab items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0 active:cursor-grabbing",
+          "group flex cursor-pointer items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0",
           on ? "bg-turf/12" : "hover:bg-raised/60"
         )}
       >
@@ -83,6 +85,10 @@ export function RosterPanel({
         </div>
         <span className="num shrink-0 text-[10px] text-muted">
           {Math.round(p.projected_points ?? 0)}
+        </span>
+        <span className={cn("w-3 shrink-0 text-[13px] leading-none transition-opacity",
+          on ? "text-turf" : "text-muted opacity-0 group-hover:opacity-100")}>
+          {on ? "\u2713" : "+"}
         </span>
       </li>
     );
@@ -149,7 +155,7 @@ export function TradePile({
       </span>
       {ids.length === 0 ? (
         <p className="m-auto max-w-[10rem] text-center text-[10.5px] leading-snug text-muted">
-          drag a name here, or click one on the roster
+click a name on the roster beside this, or drag one in
         </p>
       ) : (
         <AnimatePresence initial={false}>
@@ -258,8 +264,10 @@ export function ManualRoster({
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("text/plain", id)}
                 onClick={() => onToggle(id)}
+                title={on ? "in the trade — click to take him out"
+                          : "click to put him in the trade"}
                 className={cn(
-                  "group flex cursor-grab items-center gap-2 border-b border-line/40 px-2 py-1.5 last:border-0 active:cursor-grabbing",
+                  "group flex cursor-pointer items-center gap-2 border-b border-line/40 px-2 py-1.5 last:border-0",
                   on ? "bg-turf/12" : "hover:bg-raised/60"
                 )}
               >
@@ -278,6 +286,11 @@ export function ManualRoster({
                     {p.player_name}
                   </span>
                 </PlayerHover>
+                <span className={cn(
+                  "shrink-0 text-[13px] leading-none transition-opacity",
+                  on ? "text-turf" : "text-muted opacity-0 group-hover:opacity-100")}>
+                  {on ? "\u2713" : "+"}
+                </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemove(id); }}
                   className="shrink-0 px-1 text-[13px] leading-none text-muted opacity-0 transition-opacity hover:text-alarm group-hover:opacity-100"

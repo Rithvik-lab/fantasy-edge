@@ -227,11 +227,25 @@ export function Trade() {
             Clear
           </Button>
         )}
-        <Button size="sm" className="ml-auto h-8 px-6 text-[12px]"
-                onClick={() => price(give, get, auto ? [] : myManual)}
-                disabled={busy || empty}>
-          {busy ? "Analysing…" : "Analyse"}
-        </Button>
+        {/* A disabled button with no reason is a dead end. The commonest
+            confusion here is putting names on a ROSTER and expecting that to
+            be the trade, so say the missing step rather than just greying
+            out. */}
+        <div className="ml-auto flex items-center gap-2">
+          {empty && (
+            <span className="text-[11px] text-clock">
+              click a player on either roster to put him in the trade
+            </span>
+          )}
+          <Button size="sm" className="h-8 px-6 text-[12px]"
+                  onClick={() => price(give, get, auto ? [] : myManual)}
+                  disabled={busy || empty}
+                  title={empty
+                    ? "Nothing is in the trade yet — click a name on a roster, or drag it into a pile"
+                    : "Price this deal"}>
+            {busy ? "Analysing…" : "Analyse"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_0.8fr_0.8fr_1fr]">
