@@ -7,6 +7,7 @@ import {
 import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
 import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
+import { Simulating } from "@/components/Simulating";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -26,47 +27,6 @@ import { cn } from "@/lib/utils";
  * seconds, so it spent simulations on half-built trades nobody meant to ask
  * about, and the answer flickered while you were still deciding.
  */
-
-const STEPS = [
-  "reading both rosters",
-  "filling your lineup, week by week",
-  "playing the season out, 4,000 times",
-  "pricing what the roster spots cost",
-];
-
-function Thinking({ label }: { label?: string }) {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setI((n) => (n + 1) % STEPS.length), 900);
-    return () => clearInterval(t);
-  }, []);
-  return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-line bg-panel py-10">
-      {/* Seventeen bars, filling. The wait IS a season being simulated four
-          thousand times, so the spinner may as well be one. */}
-      <div className="flex gap-1">
-        {Array.from({ length: 17 }).map((_, w) => (
-          <motion.span
-            key={w}
-            className="h-7 w-1.5 rounded-full bg-turf/70"
-            initial={{ scaleY: 0.2, opacity: 0.25 }}
-            animate={{ scaleY: [0.2, 1, 0.2], opacity: [0.25, 1, 0.25] }}
-            transition={{ duration: 1.4, repeat: Infinity, delay: w * 0.055,
-                          ease: "easeInOut" }}
-          />
-        ))}
-      </div>
-      <AnimatePresence mode="wait">
-        <motion.span key={i}
-          initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}
-          className="text-[11.5px] text-muted">
-          {label ?? STEPS[i]}…
-        </motion.span>
-      </AnimatePresence>
-    </div>
-  );
-}
 
 export function Trade() {
   const [rosters, setRosters] = useState<LeagueRoster[] | null>(null);
@@ -187,7 +147,7 @@ export function Trade() {
     add(side, h.player_id);
   }
 
-  if (!entry) return <Thinking label="reading your league" />;
+  if (!entry) return <Simulating label="reading your league" />;
 
   const auto = entry === "auto" && !!mine;
   const myIds = auto ? new Set(mine!.players.map((p) => p.player_id)) : null;
@@ -269,6 +229,7 @@ export function Trade() {
                          onAdd={(h) => {
                            remember(h);
                            setMyManual((r) => r.includes(h.player_id) ? r : [...r, h.player_id]);
+                           add("give", h.player_id);
                          }} />
             </ManualRoster>
           )}
@@ -296,9 +257,13 @@ export function Trade() {
             </select>
           ) : null}
           {auto ? (
-            <RosterPanel title={other?.name ?? "Their team"} roster={other}
-                         side="theirs" selected={get}
-                         onToggle={(id) => toggle("get", id)} />
+            <>
+              <AddByName placeholder="search their roster…" restrictTo={theirIds}
+                         onAdd={(h) => addTyped("get", h)} />
+              <RosterPanel title={other?.name ?? "Their team"} roster={other}
+                           side="theirs" selected={get}
+                           onToggle={(id) => toggle("get", id)} />
+            </>
           ) : (
             <ManualRoster title="Their team" ids={theirManual} players={known}
                           selected={get}
@@ -311,13 +276,14 @@ export function Trade() {
                          onAdd={(h) => {
                            remember(h);
                            setTheirManual((r) => r.includes(h.player_id) ? r : [...r, h.player_id]);
+                           add("get", h.player_id);
                          }} />
             </ManualRoster>
           )}
         </div>
       </div>
 
-      {busy && <Thinking />}
+      {busy && <Simulating />}
 
       {v && !busy && (
         <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
