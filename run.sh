@@ -11,6 +11,15 @@ fi
 cleanup() { kill 0 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
+# An already-running engine keeps the port and quietly serves whatever code it
+# started with. That is how you end up staring at "not found" on a feature you
+# just built, so say something rather than fail to bind.
+if curl -s -o /dev/null --max-time 1 http://127.0.0.1:8000/api/health 2>/dev/null; then
+  echo "  ! an engine is already listening on :8000 — it may be running old code."
+  echo "    stop it first if you have changed anything since it started."
+  echo
+fi
+
 .venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8000 --log-level warning &
 (cd web && npm run dev) &
 

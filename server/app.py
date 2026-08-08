@@ -48,6 +48,25 @@ app.add_middleware(
 
 HEADSHOT = "https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.png"
 
+# The commit this process was started from. A long-lived uvicorn silently
+# serving month-old code is not a hypothetical -- one ran here for four days
+# and answered 404 to every endpoint added in that time, which reads in the
+# browser as "not found" and tells you nothing. The front end compares this
+# against what it was built from and says so plainly.
+def _build() -> str:
+    try:
+        import subprocess
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True, timeout=2,
+                              cwd=Path(__file__).resolve().parents[1]
+                              ).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+BUILD = _build()
+STARTED = time.time()
+
 
 # ---------------------------------------------------------------------------
 # ONE PROCESS, ONE DRAFT, NO USERS.
@@ -1253,6 +1272,13 @@ def player_profile(player_id: str) -> dict:
         "picks_until_next": gap,
         "platform": st.platform,
     }
+
+
+@app.get("/api/build")
+def build() -> dict:
+    """What code this process is actually running, and for how long."""
+    return {"build": BUILD, "started": STARTED,
+            "uptime_hours": round((time.time() - STARTED) / 3600, 1)}
 
 
 @app.get("/api/health")

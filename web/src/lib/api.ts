@@ -196,6 +196,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
+    // A 404 on a route this build knows about means the engine is running
+    // OLDER CODE than the interface. It is not a missing page and saying "not
+    // found" sends you looking in the wrong place entirely -- a uvicorn here
+    // sat up for four days answering 404 to every endpoint added in that time.
+    if (res.status === 404) {
+      throw new Error(
+        "The engine is running older code than this page — restart it " +
+        "(ctrl-c, then ./run.sh) and try again."
+      );
+    }
     let detail = res.statusText;
     try {
       detail = (await res.json()).detail ?? detail;
