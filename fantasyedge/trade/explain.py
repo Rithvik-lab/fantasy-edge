@@ -55,10 +55,19 @@ def reasons(
     after: pl.DataFrame,
     settings: LeagueSettings,
     verdict: dict,
-) -> dict[str, list[str]]:
-    """Pros and cons, each one traceable to a number in the verdict."""
-    pros: list[str] = []
-    cons: list[str] = []
+) -> dict[str, list[dict]]:
+    """Pros and cons, each one traceable to a number in the verdict.
+
+    Each entry is {stat, text}. The number travels SEPARATELY from the sentence
+    so the interface can set it in its own column, in tabular figures, where
+    the eye can run down it. Buried mid-sentence, twelve reasons read as twelve
+    paragraphs and nobody reads the twelfth.
+    """
+    pros: list[dict] = []
+    cons: list[dict] = []
+
+    def pro(stat, text): pros.append({"stat": stat, "text": text})
+    def con(stat, text): cons.append({"stat": stat, "text": text})
 
     give = verdict.get("give") or []
     get = verdict.get("get") or []
@@ -76,34 +85,32 @@ def reasons(
         if abs(d) < MATERIAL:
             continue
         if d > 0:
-            pros.append(f"Your {slot} slot gets {round(d)} points better.")
+            pro(f"+{round(d)}", f"Your {slot} slot gets better.")
         else:
-            cons.append(f"Your {slot} slot drops {abs(round(d))} points.")
+            con(f"-{abs(round(d))}", f"Your {slot} slot gets worse.")
 
     # --- the shape of the season, not just its middle ---------------------
     df, dc = verdict.get("delta_floor", 0.0), verdict.get("delta_ceiling", 0.0)
     if df >= MATERIAL:
-        pros.append(f"Your floor rises {round(df)} — fewer ways this season "
-                    f"goes wrong.")
+        pro(f"+{round(df)}", "Higher floor — fewer ways the season goes wrong.")
     elif df <= -MATERIAL:
-        cons.append(f"Your floor drops {abs(round(df))}. This makes the team "
-                    f"more fragile, not just different.")
+        con(f"-{abs(round(df))}", "Lower floor. The team gets more fragile, "
+                                     "not just different.")
     if dc >= MATERIAL and df < MATERIAL:
-        pros.append(f"Your ceiling rises {round(dc)}, so the upside case gets "
-                    f"better even though the floor does not.")
+        pro(f"+{round(dc)}", "Higher ceiling. The upside case improves even "
+                              "though the floor does not.")
     if dc <= -MATERIAL and df > 0:
-        cons.append(f"You trade {abs(round(dc))} of ceiling for a safer floor. "
-                    f"Right if you are chasing a bye, wrong if you need points.")
+        con(f"-{abs(round(dc))}", "Ceiling traded for a safer floor. Right if "
+                                    "you are chasing a bye, wrong if you need points.")
 
     # --- roster spots, which is the whole reason this engine exists -------
     if dropped:
         names = ", ".join(p["player_name"] for p in dropped)
-        cons.append(f"You are over the roster limit, so this also costs you "
-                    f"{names}.")
+        con(f"-{len(dropped)}", f"Over the roster limit, so it also costs you {names}.")
     gap = verdict.get("opportunity_gap", 0.0)
     if gap >= 20:
-        cons.append(f"On raw value this looks {round(gap)} points better than "
-                    f"it is. That gap is bench players you cannot start.")
+        con(f"{round(gap)}", "Raw value flatters this by that much. The gap is "
+                              "bench players you cannot start.")
     elif gap <= -20:
         # WHY raw value understates it depends on whether the men leaving were
         # actually starting. The first version asserted they were not, and said
@@ -113,13 +120,12 @@ def reasons(
                     if before.height else [])}
         gave_starters = [p for p in give if p.get("player_id") in started]
         if gave_starters:
-            pros.append(
-                f"Raw value overstates the loss by {abs(round(gap))}. It counts "
-                f"everyone at full price; your lineup only feels the slots that "
-                f"actually changed.")
+            pro(f"{abs(round(gap))}", "Raw value overstates the loss by that "
+                "much. It prices everyone at full freight; your lineup only "
+                "feels the slots that moved.")
         else:
-            pros.append(f"Raw value undersells this by {abs(round(gap))} — the "
-                        f"men you give up were not in your lineup anyway.")
+            pro(f"{abs(round(gap))}", "Raw value undersells this. The men you "
+                "give up were not in your lineup anyway.")
 
     # --- depth left behind ------------------------------------------------
     for p in give:
@@ -129,40 +135,38 @@ def reasons(
         left = _depth_after(after, pos, settings)
         word = POS_WORD.get(pos, pos)
         if left <= 0:
-            cons.append(f"Giving up {p['player_name']} leaves you with no spare "
-                        f"{word} at all — one injury and you are starting a "
-                        f"waiver pickup.")
+            con("0 spare", f"No {word} left behind your starters. One injury "
+                              f"and you are starting a waiver pickup.")
         elif left == 1:
-            cons.append(f"You are down to one spare {word} behind your starters.")
+            con("1 spare", f"Only one {word} behind your starters.")
 
     # --- consolidation, the good version of an uneven deal ----------------
     if len(get) < len(give) and verdict.get("delta_median", 0) > 0:
-        pros.append(f"You turn {len(give)} players into {len(get)} better ones "
-                    f"and free up {len(give) - len(get)} roster spot(s).")
+        pro(f"+{len(give) - len(get)} spot", f"{len(give)} players become "
+            f"{len(get)} better ones, and the spare spots are yours.")
     if len(get) > len(give):
         best = max((p.get("projected_points") or 0) for p in get) if get else 0
         worst = min((p.get("projected_points") or 0) for p in get) if get else 0
         if best - worst > 60:
-            cons.append("The players coming back are uneven — one of them is "
-                        "the trade and the rest are filler you have to roster.")
+            con("uneven", "One of the men coming back is the trade; the rest "
+                            "are filler you still have to roster.")
 
     # --- availability -----------------------------------------------------
     for p in get:
         g = p.get("expected_games")
         if g is not None and g < 13:
-            cons.append(f"{p['player_name']} is only projected for "
-                        f"{round(float(g), 1)} games. You are buying the risk "
-                        f"as well as the player.")
+            con(f"{round(float(g), 1)} gm", f"{p['player_name']} is fragile. "
+                f"You buy the risk along with the player.")
     for p in give:
         g = p.get("expected_games")
         if g is not None and g < 13:
-            pros.append(f"You are selling {p['player_name']}'s availability "
-                        f"risk — {round(float(g), 1)} projected games.")
+            pro(f"{round(float(g), 1)} gm", f"You sell {p['player_name']}'s "
+                f"availability risk.")
 
     if not pros:
-        pros.append("Nothing here improves your starting lineup.")
+        pro(None, "Nothing here improves your starting lineup.")
     if not cons:
-        cons.append("No material downside — this is close to free.")
+        con(None, "No material downside. This is close to free.")
     return {"pros": pros[:6], "cons": cons[:6]}
 
 

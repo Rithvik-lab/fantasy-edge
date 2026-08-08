@@ -168,8 +168,12 @@ export interface TradeVerdict {
   roster_priced: boolean;
   call?: "win" | "fair" | "loss";
   summary?: string;
-  pros?: string[];
-  cons?: string[];
+  pros?: { stat: string | null; text: string }[];
+  cons?: { stat: string | null; text: string }[];
+  overlap?: {
+    overlap: number; lo: number; hi: number;
+    grid?: number[]; cdf_before?: number[]; cdf_after?: number[];
+  };
   roster_before: number;
   roster_after: number;
   note: string;

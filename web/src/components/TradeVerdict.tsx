@@ -59,6 +59,36 @@ function Side({ label, players, tone }: {
   );
 }
 
+function Ledger({ label, tone, items }: {
+  label: string;
+  tone: "turf" | "alarm";
+  items: { stat: string | null; text: string }[];
+}) {
+  if (!items.length) return null;
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline gap-2">
+        <span className={cn("h-px w-3", tone === "turf" ? "bg-turf" : "bg-alarm")} />
+        <span className="eyebrow">{label}</span>
+      </div>
+      <ul className="space-y-2">
+        {items.map((r, i) => (
+          <li key={i} className="flex gap-2.5">
+            <span className={cn(
+              "num w-[62px] shrink-0 text-right text-[12px] font-semibold tabular-nums",
+              tone === "turf" ? "text-turf" : "text-alarm")}>
+              {r.stat ?? "—"}
+            </span>
+            <span className="flex-1 text-[11.5px] leading-snug text-chalk/75">
+              {r.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function TradeVerdict({ v }: { v: Verdict }) {
   const good = v.delta_median > 0;
   // Three calls, not a number. "Take it or not" was the ask, and a middling
@@ -116,27 +146,13 @@ export function TradeVerdict({ v }: { v: Verdict }) {
       <TradeChart v={v} />
 
       {(v.pros?.length || v.cons?.length) && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-md border border-turf/25 bg-turf/[0.06] p-2.5">
-            <span className="eyebrow text-turf/80">what you gain</span>
-            <ul className="mt-1.5 space-y-1.5">
-              {(v.pros ?? []).map((t, i) => (
-                <li key={i} className="flex gap-1.5 text-[11.5px] leading-snug text-chalk/85">
-                  <span className="text-turf">+</span>{t}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="rounded-md border border-alarm/25 bg-alarm/[0.06] p-2.5">
-            <span className="eyebrow text-alarm/80">what it costs</span>
-            <ul className="mt-1.5 space-y-1.5">
-              {(v.cons ?? []).map((t, i) => (
-                <li key={i} className="flex gap-1.5 text-[11.5px] leading-snug text-chalk/85">
-                  <span className="text-alarm">&minus;</span>{t}
-                </li>
-              ))}
-            </ul>
-          </div>
+        /* Numbers in their own column, in tabular figures, so the eye can run
+           down them. Buried mid-sentence, six reasons read as six paragraphs
+           and nobody reads the sixth. No tinted panels either — the sign is
+           carried by one small mark and the figure, which is all it needs. */
+        <div className="grid gap-x-6 gap-y-4 border-y border-line py-3 sm:grid-cols-2">
+          <Ledger label="what you gain" tone="turf" items={v.pros ?? []} />
+          <Ledger label="what it costs" tone="alarm" items={v.cons ?? []} />
         </div>
       )}
 

@@ -181,6 +181,7 @@ class TradeVerdict:
     # False when there was no roster to price against. The difference matters
     # enough that it travels with the verdict rather than being inferred.
     roster_priced: bool = True
+    overlap: dict = field(default_factory=dict)
     roster_before: int = 0
     roster_after: int = 0
     slots_changed: list[dict] = field(default_factory=list)
@@ -200,6 +201,7 @@ class TradeVerdict:
             "naive_value_delta": round(self.naive_value_delta, 1),
             "opportunity_gap": round(self.opportunity_gap, 1),
             "roster_priced": self.roster_priced,
+            "overlap": self.overlap,
             "roster_before": self.roster_before,
             "roster_after": self.roster_after,
             "slots_changed": self.slots_changed,
@@ -272,6 +274,7 @@ def evaluate(
                 f"costs you {names}. That is part of the price.")
 
     return TradeVerdict(
+        overlap=distribution_overlap(before_totals, after_totals),
         delta_median=real,
         delta_floor=a["floor"] - b["floor"],
         delta_ceiling=a["ceiling"] - b["ceiling"],
@@ -335,6 +338,7 @@ def compare_packages(
              - sum(r.get("vor") or 0.0 for r in give_rows))
 
     return TradeVerdict(
+        overlap=distribution_overlap(a, b),
         delta_median=sb["median"] - sa["median"],
         delta_floor=sb["floor"] - sa["floor"],
         delta_ceiling=sb["ceiling"] - sa["ceiling"],
@@ -352,3 +356,48 @@ def compare_packages(
               "output only. It cannot price what the extra bodies cost you — "
               "add your players on the left for that."),
     )
+
+
+def distribution_overlap(before: np.ndarray, after: np.ndarray,
+                         bins: int = 120) -> dict:
+    """How much the two seasons are the SAME season.
+
+    The overlapping coefficient: the area under min(f, g) once both are
+    normalised. Integrated numerically over a shared grid, because these are
+    empirical distributions from the simulation rather than anything with a
+    closed form -- and using the real samples means skew and fat tails are
+    included instead of assumed away.
+
+        1.0   the two teams are indistinguishable
+        0.0   they never produce the same season
+
+    This is the number that should temper a headline. A trade can read "+31
+    points" and still overlap 0.86, which means that in most seasons you could
+    not tell which side you took. Reporting the gain without it is how a small
+    edge gets sold as a certainty.
+    """
+    lo = float(min(before.min(), after.min()))
+    hi = float(max(before.max(), after.max()))
+    if hi <= lo:
+        return {"overlap": 1.0, "lo": lo, "hi": hi}
+
+    edges = np.linspace(lo, hi, bins + 1)
+    width = edges[1] - edges[0]
+    fb, _ = np.histogram(before, bins=edges, density=True)
+    fa, _ = np.histogram(after, bins=edges, density=True)
+    coeff = float(np.minimum(fb, fa).sum() * width)
+
+    # Also hand back the cumulative curves, so the interface can answer "how
+    # often is the season below X" at any point the pointer lands on.
+    centres = (edges[:-1] + edges[1:]) / 2
+    cb = np.searchsorted(np.sort(before), centres) / len(before)
+    ca = np.searchsorted(np.sort(after), centres) / len(after)
+
+    return {
+        "overlap": round(min(max(coeff, 0.0), 1.0), 3),
+        "lo": round(lo, 1),
+        "hi": round(hi, 1),
+        "grid": [round(float(x), 1) for x in centres],
+        "cdf_before": [round(float(x), 4) for x in cb],
+        "cdf_after": [round(float(x), 4) for x in ca],
+    }
