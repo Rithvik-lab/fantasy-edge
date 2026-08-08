@@ -5,23 +5,26 @@ import {
   type TradeVerdict as Verdict,
 } from "@/lib/api";
 import { TradeVerdict } from "@/components/TradeVerdict";
-import {
-  AddByName, DropZone, Row, StancePicker, type Stance,
-} from "@/components/TradeDeck";
+import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
+import { RosterPanel, TradePile } from "@/components/TradeBoard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
  * Trade mode.
  *
- * AUTOMATIC is the synced path: real rosters on both sides, so the app can
- * scan all eleven opponents and put the offers worth sending at the top.
- * MANUAL is for a league we cannot read — you name both sides yourself and it
- * prices them. Both get drag AND typeahead, because the fastest way to add a
- * name depends on whether you are browsing or aiming, and that changes several
- * times inside one negotiation.
+ * Laid out the way the question is shaped: my team on the far left, theirs on
+ * the far right, and what is crossing the table in the middle where both can
+ * be read at once. Names move by drag or by click, from either roster.
  *
- * The verdict recomputes as you build. A trade is something you feel out.
+ * AUTOMATIC is the synced path — real rosters, so the app can scan eleven
+ * opponents and put the offers worth sending at the top. MANUAL is for a
+ * league we cannot read; you name both sides. Both get drag and typeahead.
+ *
+ * ANALYSE IS EXPLICIT. An earlier version repriced on every change, which
+ * sounds responsive and is not: a four-player deal is assembled over several
+ * seconds, so it spent simulations on half-built trades nobody meant to ask
+ * about, and the answer flickered while you were still deciding.
  */
 
 const STEPS = [
@@ -39,8 +42,8 @@ function Thinking({ label }: { label?: string }) {
   }, []);
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-line bg-panel py-10">
-      {/* Seventeen bars, filling. The wait IS a season being simulated, so the
-          spinner may as well be one. */}
+      {/* Seventeen bars, filling. The wait IS a season being simulated four
+          thousand times, so the spinner may as well be one. */}
       <div className="flex gap-1">
         {Array.from({ length: 17 }).map((_, w) => (
           <motion.span
@@ -94,7 +97,7 @@ export function Trade() {
   const mine = rosters?.find((t) => t.mine) ?? null;
   const other = rosters?.find((t) => t.team_id === them) ?? null;
 
-  /** Every player we might need to draw, from rosters or typed in by hand. */
+  /** Everyone we might need to draw, from rosters or typed in by hand. */
   const known = useMemo(() => {
     const m = new Map<string, TradePlayer>(extra);
     for (const t of rosters ?? []) for (const p of t.players) m.set(p.player_id, p);
@@ -112,12 +115,6 @@ export function Trade() {
     } finally { setBusy(false); }
   }, []);
 
-  // Debounced: tapping four names in a row should cost one simulation.
-  useEffect(() => {
-    const t = setTimeout(() => price(give, get), 350);
-    return () => clearTimeout(t);
-  }, [give, get, price]);
-
   const add = (side: "give" | "get", id: string) => {
     const set = side === "give" ? setGive : setGet;
     set((cur) => (cur.includes(id) ? cur : [...cur, id]));
@@ -128,7 +125,7 @@ export function Trade() {
   };
   const toggle = (side: "give" | "get", id: string) => {
     const cur = side === "give" ? give : get;
-    cur.includes(id) ? drop(side, id) : add(side, id);
+    if (cur.includes(id)) drop(side, id); else add(side, id);
   };
 
   async function scan() {
@@ -163,10 +160,12 @@ export function Trade() {
     setGet(o.get.map((p) => p.player_id));
     setOffers(null);
     setCounters(null);
+    setV(null);
   }
 
-  function addTyped(side: "give" | "get", h: { player_id: string; player_name: string;
-                                               position: string; headshot: string | null }) {
+  function addTyped(side: "give" | "get",
+                    h: { player_id: string; player_name: string;
+                         position: string; headshot: string | null }) {
     setExtra((m) => new Map(m).set(h.player_id, {
       player_id: h.player_id, player_name: h.player_name,
       position: h.position, headshot: h.headshot,
@@ -179,6 +178,7 @@ export function Trade() {
   const auto = entry === "auto" && !!mine;
   const myIds = auto ? new Set(mine!.players.map((p) => p.player_id)) : null;
   const theirIds = auto && other ? new Set(other.players.map((p) => p.player_id)) : null;
+  const empty = give.length === 0 && get.length === 0;
 
   return (
     <div className="space-y-3">
@@ -200,168 +200,150 @@ export function Trade() {
             </button>
           ))}
         </div>
-
         <StancePicker value={stance} onChange={setStance} />
-
         {auto && (
           <Button size="sm" variant="outline" className="h-7 text-[11px]"
                   onClick={scan} disabled={scanning}>
             {scanning ? "scanning…" : offers ? "Re-roll" : "Find me trades"}
           </Button>
         )}
-        {(give.length > 0 || get.length > 0) && (
+        {!empty && (
           <Button size="sm" variant="ghost" className="h-7 text-[11px]"
                   onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null); }}>
             Clear
           </Button>
         )}
+        <Button size="sm" className="ml-auto h-8 px-6 text-[12px]"
+                onClick={() => price(give, get)} disabled={busy || empty}>
+          {busy ? "Analysing…" : "Analyse"}
+        </Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.05fr]">
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <DropZone label="you give" tone="alarm" ids={give} players={known}
-                      onDrop={(id) => add("give", id)}
-                      onRemove={(id) => drop("give", id)} />
-            <DropZone label="you get" tone="turf" ids={get} players={known}
-                      onDrop={(id) => add("get", id)}
-                      onRemove={(id) => drop("get", id)} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <section className="rounded-lg border border-line bg-panel">
-              <header className="space-y-1.5 border-b border-line p-2">
-                <span className="eyebrow">Your team</span>
-                <AddByName placeholder="type a name…" restrictTo={myIds}
-                           onAdd={(h) => addTyped("give", h)} />
-              </header>
-              {auto && (
-                <ul className="max-h-[34vh] space-y-0.5 overflow-y-auto p-1.5">
-                  {mine!.players.map((p) => (
-                    <Row key={p.player_id} p={p} draggable
-                         selected={give.includes(p.player_id)}
-                         onToggle={() => toggle("give", p.player_id)} />
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="rounded-lg border border-line bg-panel">
-              <header className="space-y-1.5 border-b border-line p-2">
-                {auto ? (
-                  <select
-                    value={them ?? ""}
-                    onChange={(e) => { setThem(Number(e.target.value)); setGet([]); }}
-                    className="w-full bg-transparent text-[11px] font-semibold text-chalk focus:outline-none"
-                  >
-                    {(rosters ?? []).filter((t) => !t.mine).map((t) => (
-                      <option key={t.team_id} value={t.team_id} className="bg-panel">
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : <span className="eyebrow">Their team</span>}
-                <AddByName placeholder="type a name…" restrictTo={theirIds}
-                           onAdd={(h) => addTyped("get", h)} />
-              </header>
-              {auto && other && (
-                <ul className="max-h-[34vh] space-y-0.5 overflow-y-auto p-1.5">
-                  {other.players.map((p) => (
-                    <Row key={p.player_id} p={p} draggable
-                         selected={get.includes(p.player_id)}
-                         onToggle={() => toggle("get", p.player_id)} />
-                  ))}
-                </ul>
-              )}
-            </section>
-          </div>
+      <div className="grid gap-3 lg:grid-cols-[1fr_0.8fr_0.8fr_1fr]">
+        <div className="flex max-h-[46vh] min-h-0 flex-col gap-2">
+          <AddByName placeholder="add from my team…" restrictTo={myIds}
+                     onAdd={(h) => addTyped("give", h)} />
+          <RosterPanel title="My team" roster={mine} side="mine"
+                       selected={give} onToggle={(id) => toggle("give", id)} />
         </div>
 
-        <div className="space-y-3">
-          {busy && !v && <Thinking />}
-          {v && (
-            <>
-              <TradeVerdict v={v} />
-              {auto && (
-                <Button size="sm" variant="outline" className="w-full text-[11px]"
-                        onClick={askCounter} disabled={scanning}>
-                  {scanning ? "looking for a better version…" : "Find a better version of this"}
-                </Button>
-              )}
-            </>
-          )}
-          {!v && !busy && !offers && (
-            <div className="rounded-lg border border-dashed border-line p-8 text-center">
-              <p className="text-sm text-muted">Drag or type names into the two piles.</p>
-              <p className="mt-1 text-[11px] leading-snug text-muted">
-                The verdict is what the deal does to the lineup you can field —
-                not what the two piles add up to.
-              </p>
-            </div>
-          )}
+        <TradePile label="you give" tone="alarm" ids={give} players={known}
+                   onDrop={(id) => add("give", id)}
+                   onRemove={(id) => drop("give", id)} />
+        <TradePile label="you get" tone="turf" ids={get} players={known}
+                   onDrop={(id) => add("get", id)}
+                   onRemove={(id) => drop("get", id)} />
 
-          <AnimatePresence>
-            {(offers || counters) && (
-              <motion.section
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="rounded-lg border border-line bg-panel"
-              >
-                <header className="flex items-center gap-2 border-b border-line px-3 py-2">
-                  <span className="eyebrow">
-                    {counters ? "Better versions of this deal" : "Offers worth sending"}
-                  </span>
-                  <button onClick={() => { setOffers(null); setCounters(null); }}
-                          className="ml-auto text-[11px] text-muted hover:text-chalk">
-                    close
-                  </button>
-                </header>
-                {(counters ?? offers ?? []).length === 0 ? (
-                  <p className="px-3 py-6 text-center text-[11.5px] text-muted">
-                    {counters
-                      ? "No nearby version does better while they would still accept."
-                      : "Nothing worth offering — every roster is priced about right against yours."}
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-line/60">
-                    {(counters ?? offers ?? []).map((o, i) => (
-                      <li key={i}>
-                        <button onClick={() => load(o)}
-                                className="w-full px-3 py-2 text-left transition-colors hover:bg-raised/60">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-xs font-medium">{o.team_name}</span>
-                            <span className="num ml-auto text-xs font-semibold text-turf">
-                              +{Math.round(o.our_gain)}
-                            </span>
-                          </div>
-                          <p className="mt-0.5 text-[11px] leading-snug text-muted">
-                            <span className="text-alarm/80">
-                              {o.give.map((p) => p.player_name).join(", ") || "nothing"}
-                            </span>
-                            {" → "}
-                            <span className="text-turf/80">
-                              {o.get.map((p) => p.player_name).join(", ") || "nothing"}
-                            </span>
-                          </p>
-                          <p className="mt-0.5 text-[10.5px] text-muted">
-                            they read it as +{Math.round(o.their_gain)} in their favour
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </motion.section>
+        <div className="flex max-h-[46vh] min-h-0 flex-col gap-2">
+          {auto ? (
+            <select
+              value={them ?? ""}
+              onChange={(e) => { setThem(Number(e.target.value)); setGet([]); setV(null); }}
+              className="h-7 shrink-0 rounded border border-line bg-ink px-2 text-[11px] font-semibold text-chalk focus:outline-none"
+            >
+              {(rosters ?? []).filter((t) => !t.mine).map((t) => (
+                <option key={t.team_id} value={t.team_id} className="bg-panel">
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <AddByName placeholder="add their player…" restrictTo={null}
+                       onAdd={(h) => addTyped("get", h)} />
+          )}
+          <RosterPanel title={other?.name ?? "Their team"} roster={other}
+                       side="theirs" selected={get}
+                       onToggle={(id) => toggle("get", id)} />
+        </div>
+      </div>
+
+      {busy && <Thinking />}
+
+      {v && !busy && (
+        <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
+          <TradeVerdict v={v} />
+          <div className="space-y-3">
+            {auto && (
+              <Button size="sm" variant="outline" className="w-full text-[11px]"
+                      onClick={askCounter} disabled={scanning}>
+                {scanning ? "looking for a better version…" : "Counter this trade"}
+              </Button>
             )}
-          </AnimatePresence>
-
-          {err && (
-            <p className="rounded-md border border-alarm/30 bg-alarm/10 px-3 py-2 text-[11px] text-alarm">
-              {err}
-            </p>
-          )}
+            <AnimatePresence>
+              {(offers || counters) && (
+                <motion.section
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="rounded-lg border border-line bg-panel"
+                >
+                  <header className="flex items-center gap-2 border-b border-line px-3 py-2">
+                    <span className="eyebrow">
+                      {counters ? "Better versions of this deal" : "Offers worth sending"}
+                    </span>
+                    <button onClick={() => { setOffers(null); setCounters(null); }}
+                            className="ml-auto text-[11px] text-muted hover:text-chalk">
+                      close
+                    </button>
+                  </header>
+                  {(counters ?? offers ?? []).length === 0 ? (
+                    <p className="px-3 py-6 text-center text-[11.5px] text-muted">
+                      {counters
+                        ? "No nearby version does better while they would still accept."
+                        : "Nothing worth offering — every roster is priced about right against yours."}
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-line/60">
+                      {(counters ?? offers ?? []).map((o, i) => (
+                        <li key={i}>
+                          <button onClick={() => load(o)}
+                                  className="w-full px-3 py-2 text-left transition-colors hover:bg-raised/60">
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-xs font-medium">{o.team_name}</span>
+                              <span className="num ml-auto text-xs font-semibold text-turf">
+                                +{Math.round(o.our_gain)}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                              <span className="text-alarm/80">
+                                {o.give.map((p) => p.player_name).join(", ") || "nothing"}
+                              </span>
+                              {" → "}
+                              <span className="text-turf/80">
+                                {o.get.map((p) => p.player_name).join(", ") || "nothing"}
+                              </span>
+                            </p>
+                            <p className="mt-0.5 text-[10.5px] text-muted">
+                              they read it as +{Math.round(o.their_gain)} in their favour
+                            </p>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </motion.section>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
-      </div>
+      )}
+
+      {!v && !busy && (
+        <div className="rounded-lg border border-dashed border-line p-6 text-center">
+          <p className="text-sm text-muted">
+            Drag names into the two piles, then hit Analyse.
+          </p>
+          <p className="mt-1 text-[11px] leading-snug text-muted">
+            The ruling is what the deal does to the lineup you can field —
+            not what the two piles add up to.
+          </p>
+        </div>
+      )}
+
+      {err && (
+        <p className="rounded-md border border-alarm/30 bg-alarm/10 px-3 py-2 text-[11px] text-alarm">
+          {err}
+        </p>
+      )}
     </div>
   );
 }

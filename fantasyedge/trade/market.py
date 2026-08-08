@@ -58,6 +58,26 @@ MIN_EDGE = 8.0
 MAX_PRICED_RANK = 220.0
 
 
+# What the trade market pays over what a lineup actually needs, by position.
+#
+# VOR already prices scarcity correctly FOR A LINEUP -- that is the whole job
+# of a replacement level. This is a different claim and belongs only on the
+# perceived side: managers pay a premium for running backs beyond what their
+# lineup value justifies, less for receivers, least for tight ends. It is the
+# oldest bias in the game and it is why "sell an RB, buy a WR" is a standing
+# strategy.
+#
+# Applied to PERCEIVED value only. Putting it in true value would corrupt the
+# lineup simulation with a market opinion, and the entire point of having two
+# scales is that one of them is not an opinion.
+POSITION_PREMIUM: dict[str, float] = {
+    "RB": 1.12,
+    "WR": 1.00,
+    "TE": 0.92,
+    "QB": 0.88,
+}
+
+
 def value_curve(board: pl.DataFrame, rank_col: str = "ecr") -> pl.DataFrame:
     """Add `market_value`: what a player at this ADP is normally worth.
 
@@ -137,8 +157,11 @@ def perceived(
     from fantasyedge.models import inseason
 
     b = value_curve(board)
+    premium_expr = pl.col("position").replace_strict(
+        POSITION_PREMIUM, default=1.0, return_dtype=pl.Float64)
     if observed is None or not observed.height or through_week <= 0:
-        return b.with_columns(pl.col("market_value").alias("perceived_value"))
+        return b.with_columns(
+            (pl.col("market_value") * premium_expr).alias("perceived_value"))
 
     j = b.join(observed, on="player_id", how="left")
 
@@ -148,8 +171,18 @@ def perceived(
 
     # The honest weight, then the same curve pushed past it. Capped below 1:
     # even an overreacting manager does not entirely forget who a player was.
-    honest = pl.when(games > 0).then(games / (games + k)).otherwise(0.0)
+    # THE HONEST WEIGHT uses effective games -- a spiky record is worth fewer
+    # of them. THEIRS uses the raw count, amplified. That asymmetry is the
+    # whole buy-low / sell-high mechanism: a man who went 30-5-5 has moved the
+    # room a lot and moved the truth very little, and the space between those
+    # two numbers is the trade.
+    eff = pl.col("games_eff").fill_null(games) if "games_eff" in observed.columns \
+        else games
+    honest = pl.when(eff > 0).then(eff / (eff + k)).otherwise(0.0)
     theirs = pl.min_horizontal(honest * OVERREACTION, pl.lit(0.95))
+    theirs = pl.when(games > 0).then(
+        pl.min_horizontal(games / (games + k) * OVERREACTION, pl.lit(0.95))
+    ).otherwise(theirs)
 
     weeks_left = max(inseason.MAX_WEEKS - through_week, 1)
     prior_rate = pl.col("projected_points") / pl.col("expected_games").clip(1.0, None)
@@ -161,6 +194,11 @@ def perceived(
     honest_rate = (1 - honest) * prior_rate + honest * obs_rate
     shift = (their_rate - honest_rate) * weeks_left
 
+    premium = pl.col("position").replace_strict(
+        POSITION_PREMIUM, default=1.0, return_dtype=pl.Float64)
+
     return j.with_columns(
-        (pl.col("market_value") + shift.fill_null(0.0)).alias("perceived_value")
-    ).drop([c for c in ("games", "ppg", "opp_ppg") if c in j.columns])
+        ((pl.col("market_value") + shift.fill_null(0.0)) * premium)
+        .alias("perceived_value")
+    ).drop([c for c in ("games", "ppg", "opp_ppg", "sd", "best3", "cv", "games_eff")
+            if c in j.columns])

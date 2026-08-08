@@ -218,3 +218,95 @@ def changed(board: pl.DataFrame, season: int, top: int = 40) -> pl.DataFrame:
         .select(["player_id", "player_name", "position", "chart_team",
                  "expected_rank", "depth_rank", "depth_mult", "projected_points"])
     )
+
+
+# ---------------------------------------------------------------------------
+# Vacancy: what the man ahead of you being out is worth
+# ---------------------------------------------------------------------------
+# MEASURED on 2025, not assumed. For every team-position-week, whether the
+# number one appeared at all, against what the men behind him scored:
+#
+#            starter in   starter OUT    lift    n
+#   RB2            6.93         13.00   1.88x   28
+#   RB3            2.80          5.48   1.95x   24
+#   WR2            9.34         10.34   1.11x   36
+#   WR3            6.43          8.26   1.28x   31
+#   TE2            4.17          5.84   1.40x   62
+#   TE3            2.16          2.86   1.33x   51
+#
+# The ordering is the whole point and it is much sharper than "backups gain".
+# A running back behind an injured starter nearly DOUBLES; a receiver behind an
+# injured starter barely moves. Carries are a fixed pie that transfers whole to
+# the next back. Vacated targets scatter across the entire receiving corps --
+# other receivers, the tight end, the backs -- so no single WR2 inherits much.
+#
+# Small samples (n = 24-62 player-weeks), so these are rounded toward 1.0
+# rather than used raw. The direction and the RB/WR gap are not in doubt; the
+# second decimal place is.
+VACANCY_LIFT: dict[str, tuple[float, float]] = {
+    #        depth2  depth3+
+    "RB":   (1.80,   1.85),
+    "WR":   (1.10,   1.22),
+    "TE":   (1.35,   1.28),
+    "QB":   (1.60,   1.20),   # not measured: too few QB2 weeks to fit
+}
+
+# Statuses that mean he is not playing. "Questionable" is excluded on purpose:
+# questionable players play the large majority of the time, so treating it as
+# a vacancy would inflate every backup in the league every single week.
+GONE = frozenset({"Out", "Doubtful", "Injured Reserve", "IR", "PUP", "Suspension"})
+
+
+def vacancy(board: pl.DataFrame, season: int, week: int | None = None) -> pl.DataFrame:
+    """Promote the next man up when the starter ahead of him is out.
+
+    This is the in-season half of the depth chart. `apply` handles the static
+    case -- who has the job. This handles the case that actually moves trade
+    value week to week: the job just came open.
+
+    Adds `vacancy_mult` and applies it, so a backup's projection reflects the
+    role he is about to have rather than the one he had in August.
+    """
+    chart = depth_chart(season)
+    inj = injuries(season, week)
+    if not chart.height or not inj.height:
+        return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
+
+    hurt = (inj.filter(pl.col("injury_status").is_in(list(GONE)))
+               .select("player_id").unique())
+    if not hurt.height:
+        return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
+
+    # Which team-positions have their number one sidelined?
+    sidelined = (chart.filter(pl.col("depth_rank") == 1)
+                      .join(hurt, on="player_id", how="inner")
+                      .select(["chart_team", "chart_pos"])
+                      .with_columns(pl.lit(True).alias("open_job")))
+    if not sidelined.height:
+        return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
+
+    b = board
+    if "depth_rank" not in b.columns:
+        b = b.join(chart.drop(["chart_name", "chart_pos"]), on="player_id", how="left")
+    b = b.join(chart.select(["player_id", "chart_pos"]), on="player_id", how="left")
+    b = b.join(sidelined, left_on=["chart_team", "chart_pos"],
+               right_on=["chart_team", "chart_pos"], how="left")
+
+    lift = pl.lit(1.0)
+    for pos, (d2, d3) in VACANCY_LIFT.items():
+        step = (pl.when(pl.col("depth_rank") == 2).then(pl.lit(d2))
+                .when(pl.col("depth_rank") >= 3).then(pl.lit(d3))
+                .otherwise(pl.lit(1.0)))
+        lift = pl.when(pl.col("position") == pos).then(step).otherwise(lift)
+
+    b = b.with_columns(
+        pl.when(pl.col("open_job").fill_null(False))
+        .then(lift).otherwise(pl.lit(1.0)).alias("vacancy_mult")
+    )
+
+    out = b.with_columns(
+        (pl.col("projected_points") * pl.col("vacancy_mult")).alias("projected_points"))
+    for q in ("season_p20", "season_p50", "season_p80"):
+        if q in out.columns:
+            out = out.with_columns((pl.col(q) * pl.col("vacancy_mult")).alias(q))
+    return out.drop([c for c in ("open_job",) if c in out.columns])

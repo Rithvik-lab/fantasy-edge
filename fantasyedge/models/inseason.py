@@ -255,3 +255,70 @@ def measure(seasons: tuple[int, int] = (2002, 2023)) -> dict:
                     "k": round(float(np.median(ks)), 2) if ks else None,
                     "current": PRIOR_STRENGTH[pos]}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Spike versus sustained
+# ---------------------------------------------------------------------------
+# Two players average 13 points over three weeks. One went 30-5-5, the other
+# 13-13-14. They are not the same bet and the mean cannot tell them apart.
+#
+# The fix is that a spiky record is worth FEWER effective games than a steady
+# one. Four wild weeks tell you about as much as two calm ones, so the
+# shrinkage weight is computed on an effective sample size rather than a raw
+# count:
+#
+#     n_eff = n / (1 + SPIKE_PENALTY * cv^2)
+#
+# where cv is the player's own coefficient of variation over the games so far.
+#
+# THIS IS ALSO THE EDGE. The room does the opposite -- a 30-point week is the
+# most memorable thing that has happened all season, and it moves the price
+# more than three quiet good games do. So true value uses n_eff and perceived
+# value (in trade.market) uses the raw count, amplified. The gap between them
+# is precisely the short-term pop-off Rithvik asked to catch: a player whose
+# perceived value has run away from his effective one is a sell, and the
+# reverse is a buy.
+SPIKE_PENALTY = 0.8
+
+
+def effective_games(games: float, cv: float | None) -> float:
+    """Raw games, discounted for how erratic they were."""
+    if games <= 0:
+        return 0.0
+    if cv is None or cv <= 0:
+        return float(games)
+    return float(games / (1.0 + SPIKE_PENALTY * cv * cv))
+
+
+def observe_detailed(weekly: pl.DataFrame, season: int,
+                     through_week: int) -> pl.DataFrame:
+    """`observe`, plus the shape of the record rather than only its average.
+
+    Adds `cv` (own coefficient of variation), `games_eff`, and `last3` so a
+    caller can tell a steady producer from a man who had one enormous Sunday.
+    """
+    d = weekly.filter(
+        (pl.col("season") == season) & (pl.col("week") <= through_week)
+    )
+    if "fantasy_points_ppr" not in d.columns or not d.height:
+        return pl.DataFrame()
+
+    agg = [
+        pl.len().cast(pl.Float64).alias("games"),
+        pl.col("fantasy_points_ppr").mean().alias("ppg"),
+        pl.col("fantasy_points_ppr").std().alias("sd"),
+        pl.col("fantasy_points_ppr").sort(descending=True).head(3).mean().alias("best3"),
+    ]
+    if "opportunity" in d.columns and "points_per_opp" in d.columns:
+        agg.append((pl.col("opportunity").mean() * pl.col("points_per_opp").median())
+                   .alias("opp_ppg"))
+
+    out = d.group_by("player_id").agg(agg)
+    return out.with_columns([
+        pl.when(pl.col("ppg") > 0)
+        .then(pl.col("sd") / pl.col("ppg")).otherwise(None).alias("cv"),
+    ]).with_columns(
+        (pl.col("games") / (1.0 + SPIKE_PENALTY *
+                            pl.col("cv").fill_null(0.0).pow(2))).alias("games_eff")
+    )
