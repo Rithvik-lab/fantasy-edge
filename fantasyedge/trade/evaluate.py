@@ -178,6 +178,9 @@ class TradeVerdict:
     dropped: list[dict] = field(default_factory=list)
     naive_value_delta: float = 0.0
     opportunity_gap: float = 0.0
+    # False when there was no roster to price against. The difference matters
+    # enough that it travels with the verdict rather than being inferred.
+    roster_priced: bool = True
     roster_before: int = 0
     roster_after: int = 0
     slots_changed: list[dict] = field(default_factory=list)
@@ -196,6 +199,7 @@ class TradeVerdict:
             "dropped": self.dropped,
             "naive_value_delta": round(self.naive_value_delta, 1),
             "opportunity_gap": round(self.opportunity_gap, 1),
+            "roster_priced": self.roster_priced,
             "roster_before": self.roster_before,
             "roster_after": self.roster_after,
             "slots_changed": self.slots_changed,
@@ -286,4 +290,65 @@ def evaluate(
         roster_before=roster.height,
         roster_after=after.height,
         note=note,
+    )
+
+
+def compare_packages(
+    board: pl.DataFrame,
+    give_ids: list[str],
+    get_ids: list[str],
+    n_sims: int = N_SIMS,
+) -> TradeVerdict:
+    """Two piles of players, with no roster behind them.
+
+    FOR SPECULATION, AND HONEST ABOUT WHAT IT CANNOT SEE.
+
+    "What if I got this guy and sent him that guy" is a real question people
+    ask before they own anybody -- about a player they are chasing, or a deal
+    two moves away. Refusing to answer it because no roster is synced is the
+    tool being precious.
+
+    But this is NOT the lineup verdict and must never be shown as one. Without
+    a roster there are no starting slots, so the one thing this engine exists
+    to price -- what the bodies cost you -- is invisible here. It compares the
+    two sides on their own season distributions and says so. `roster_priced`
+    is False on the way out, and the interface has to say that out loud.
+    """
+    give = board.filter(pl.col("player_id").is_in(give_ids))
+    get = board.filter(pl.col("player_id").is_in(get_ids))
+
+    def totals(df: pl.DataFrame) -> np.ndarray:
+        if not df.height:
+            return np.zeros(n_sims)
+        out = np.zeros(n_sims)
+        for row in df.iter_rows(named=True):
+            out += _player_weeks(row, n_sims).sum(axis=1)
+        return out
+
+    # Common random numbers again: anyone appearing on both sides draws the
+    # same season, so the difference is the swap rather than sampling noise.
+    a, b = totals(give), totals(get)
+    sa, sb = _summary(a), _summary(b)
+
+    give_rows, get_rows = _rows(board, give_ids), _rows(board, get_ids)
+    naive = (sum(r.get("vor") or 0.0 for r in get_rows)
+             - sum(r.get("vor") or 0.0 for r in give_rows))
+
+    return TradeVerdict(
+        delta_median=sb["median"] - sa["median"],
+        delta_floor=sb["floor"] - sa["floor"],
+        delta_ceiling=sb["ceiling"] - sa["ceiling"],
+        win_probability=float((b > a).mean()),
+        before=sa,
+        after=sb,
+        give=give_rows,
+        get=get_rows,
+        naive_value_delta=naive,
+        opportunity_gap=0.0,
+        roster_before=0,
+        roster_after=0,
+        roster_priced=False,
+        note=("No roster, so this compares the two sides on their own season "
+              "output only. It cannot price what the extra bodies cost you — "
+              "add your players on the left for that."),
     )

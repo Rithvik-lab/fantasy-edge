@@ -639,12 +639,6 @@ def trade_evaluate(t: TradeIn) -> dict:
         raise HTTPException(400, "nothing to evaluate")
 
     mine = _my_roster_frame(t.roster)
-    if not mine.height:
-        raise HTTPException(
-            400,
-            "This prices a trade by what it does to your STARTING LINEUP, so it "
-            "needs to know your roster. Add your players on the left, or "
-            "connect an ESPN league to pull them.")
 
     b = _board()
     known = set(b["player_id"].to_list())
@@ -652,7 +646,14 @@ def trade_evaluate(t: TradeIn) -> dict:
     if unknown:
         raise HTTPException(400, f"not on the board: {unknown}")
 
-    v = trade.evaluate(mine, t.give, t.get, st.settings, b)
+    # No roster is a legitimate question, not an error. People speculate about
+    # players they do not own yet -- a deal two moves away, or a name they are
+    # chasing. Answer it, but as a package comparison, and say plainly that the
+    # roster-spot cost is the one thing it cannot see.
+    if not mine.height:
+        v = trade.compare_packages(b, t.give, t.get)
+    else:
+        v = trade.evaluate(mine, t.give, t.get, st.settings, b)
     return _with_faces(v.as_dict(), b)
 
 

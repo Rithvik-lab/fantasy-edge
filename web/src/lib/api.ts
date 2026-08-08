@@ -165,6 +165,7 @@ export interface TradeVerdict {
   dropped: TradePlayer[];
   naive_value_delta: number;
   opportunity_gap: number;
+  roster_priced: boolean;
   roster_before: number;
   roster_after: number;
   note: string;

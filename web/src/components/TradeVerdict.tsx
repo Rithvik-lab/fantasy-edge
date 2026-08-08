@@ -117,7 +117,10 @@ export function TradeVerdict({ v }: { v: Verdict }) {
         </span>
         <div className="min-w-0">
           <Term k="range">
-            <span className="text-xs text-chalk">points to your starting lineup</span>
+            <span className="text-xs text-chalk">
+              {v.roster_priced ? "points to your starting lineup"
+                               : "points, comparing the two sides only"}
+            </span>
           </Term>
           <p className="text-[11px] text-muted">
             better in {Math.round(v.win_probability * 100)}% of simulated seasons
@@ -125,9 +128,12 @@ export function TradeVerdict({ v }: { v: Verdict }) {
         </div>
         <span className={cn(
           "ml-auto rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider",
-          call === "take" ? "bg-turf text-ink"
+          !v.roster_priced ? "bg-raised text-muted"
+            : call === "take" ? "bg-turf text-ink"
             : call === "mid" ? "bg-clock/20 text-clock" : "bg-alarm/20 text-alarm")}>
-          {call === "take" ? "take it" : call === "mid" ? "counter it" : "turn it down"}
+          {!v.roster_priced ? "no roster"
+            : call === "take" ? "take it"
+            : call === "mid" ? "counter it" : "turn it down"}
         </span>
       </div>
 
@@ -159,7 +165,7 @@ export function TradeVerdict({ v }: { v: Verdict }) {
             </span>
           </div>
         </div>
-        {Math.abs(gap) >= 5 && (
+        {v.roster_priced && Math.abs(gap) >= 5 && (
           <p className="mt-2 border-t border-line pt-2 text-[11px] leading-snug text-muted">
             <span className="font-semibold text-chalk">
               {Math.abs(Math.round(gap))} points
