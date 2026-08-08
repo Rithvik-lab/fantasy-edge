@@ -652,9 +652,25 @@ def trade_evaluate(t: TradeIn) -> dict:
     # roster-spot cost is the one thing it cannot see.
     if not mine.height:
         v = trade.compare_packages(b, t.give, t.get)
-    else:
-        v = trade.evaluate(mine, t.give, t.get, st.settings, b)
-    return _with_faces(v.as_dict(), b)
+        d = _with_faces(v.as_dict(), b)
+        call, line = trade.explain.headline(d)
+        d.update({"call": call, "summary": line, "pros": [], "cons": []})
+        return d
+
+    v = trade.evaluate(mine, t.give, t.get, st.settings, b)
+    d = _with_faces(v.as_dict(), b)
+
+    # The roster as it would be afterwards, so the reasons are computed from
+    # the same lineup the verdict came from rather than described from memory.
+    after_ids = ([p for p in mine["player_id"].to_list() if p not in set(t.give)]
+                 + list(t.get))
+    dropped = {p["player_id"] for p in d.get("dropped") or []}
+    after = b.filter(pl.col("player_id").is_in([x for x in after_ids
+                                               if x not in dropped]))
+    d.update(trade.explain.reasons(mine, after, st.settings, d))
+    call, line = trade.explain.headline(d)
+    d.update({"call": call, "summary": line})
+    return d
 
 
 @app.get("/api/trade/suggest")

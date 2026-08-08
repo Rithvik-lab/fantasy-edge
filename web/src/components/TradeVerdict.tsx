@@ -3,6 +3,7 @@ import type { TradeVerdict as Verdict } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { Term } from "@/components/Explain";
 import { PlayerHover } from "@/components/PlayerHover";
+import { TradeChart } from "@/components/TradeChart";
 import { cn } from "@/lib/utils";
 
 /**
@@ -58,46 +59,16 @@ function Side({ label, players, tone }: {
   );
 }
 
-function Band({ label, v, lo, hi, accent }: {
-  label: string; v: Verdict["before"]; lo: number; hi: number; accent: boolean;
-}) {
-  const span = Math.max(hi - lo, 1);
-  const left = ((v.floor - lo) / span) * 100;
-  const width = Math.max(((v.ceiling - v.floor) / span) * 100, 2);
-  const med = ((v.median - lo) / span) * 100;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-baseline justify-between text-[10px]">
-        <span className="uppercase tracking-wider text-muted">{label}</span>
-        <span className={cn("num", accent ? "font-semibold text-chalk" : "text-muted")}>
-          {Math.round(v.median)}
-        </span>
-      </div>
-      <div className="relative h-2.5 rounded-full bg-ink">
-        <motion.div
-          className={cn("absolute inset-y-0 rounded-full",
-            accent ? "bg-turf/55" : "bg-muted/25")}
-          initial={{ width: 0 }}
-          animate={{ left: `${left}%`, width: `${width}%` }}
-          transition={{ type: "spring", stiffness: 220, damping: 30 }}
-        />
-        <div className={cn("absolute top-1/2 h-3.5 w-[2px] -translate-y-1/2 rounded",
-          accent ? "bg-chalk" : "bg-muted")}
-          style={{ left: `${Math.min(99, Math.max(0, med))}%` }} />
-      </div>
-    </div>
-  );
-}
-
 export function TradeVerdict({ v }: { v: Verdict }) {
   const good = v.delta_median > 0;
   // Three calls, not a number. "Take it or not" was the ask, and a middling
   // deal is not a third verdict -- it is an instruction to counter.
-  const call: "take" | "mid" | "pass" =
-    v.delta_median >= 15 && v.win_probability >= 0.58 ? "take"
-      : v.delta_median <= 0 || v.win_probability < 0.45 ? "pass" : "mid";
-  const lo = Math.min(v.before.floor, v.after.floor) * 0.98;
-  const hi = Math.max(v.before.ceiling, v.after.ceiling) * 1.02;
+  // Win / fair / loss, decided server-side so the words and the numbers can
+  // never disagree. It is a STATEMENT of the result, deliberately not styled
+  // as a control -- the old chip looked like a button, so it got clicked.
+  const verdict = v.call ?? (
+    v.delta_median >= 15 && v.win_probability >= 0.58 ? "win"
+      : v.delta_median <= -15 || v.win_probability < 0.42 ? "loss" : "fair");
 
   // Where the two scales disagree. Positive means value totals flatter the
   // deal — the classic three-for-one that ignores your bench.
@@ -126,26 +97,53 @@ export function TradeVerdict({ v }: { v: Verdict }) {
             better in {Math.round(v.win_probability * 100)}% of simulated seasons
           </p>
         </div>
-        <span className={cn(
-          "ml-auto rounded-md px-3 py-1.5 text-xs font-bold uppercase tracking-wider",
-          !v.roster_priced ? "bg-raised text-muted"
-            : call === "take" ? "bg-turf text-ink"
-            : call === "mid" ? "bg-clock/20 text-clock" : "bg-alarm/20 text-alarm")}>
-          {!v.roster_priced ? "no roster"
-            : call === "take" ? "take it"
-            : call === "mid" ? "counter it" : "turn it down"}
+        <span
+          aria-live="polite"
+          className={cn(
+            "ml-auto select-none border-l-4 py-0.5 pl-2.5 text-sm font-bold uppercase tracking-[0.14em]",
+            verdict === "win" ? "border-turf text-turf"
+              : verdict === "loss" ? "border-alarm text-alarm"
+              : "border-clock text-clock")}
+        >
+          {verdict === "win" ? "you win" : verdict === "loss" ? "you lose" : "fair"}
         </span>
       </div>
+
+      {v.summary && (
+        <p className="text-[12px] leading-snug text-chalk/85">{v.summary}</p>
+      )}
+
+      <TradeChart v={v} />
+
+      {(v.pros?.length || v.cons?.length) && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-turf/25 bg-turf/[0.06] p-2.5">
+            <span className="eyebrow text-turf/80">what you gain</span>
+            <ul className="mt-1.5 space-y-1.5">
+              {(v.pros ?? []).map((t, i) => (
+                <li key={i} className="flex gap-1.5 text-[11.5px] leading-snug text-chalk/85">
+                  <span className="text-turf">+</span>{t}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-md border border-alarm/25 bg-alarm/[0.06] p-2.5">
+            <span className="eyebrow text-alarm/80">what it costs</span>
+            <ul className="mt-1.5 space-y-1.5">
+              {(v.cons ?? []).map((t, i) => (
+                <li key={i} className="flex gap-1.5 text-[11.5px] leading-snug text-chalk/85">
+                  <span className="text-alarm">&minus;</span>{t}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-4 border-y border-line py-3">
         <Side label="you give" players={v.give} tone="alarm" />
         <div className="self-center text-muted">&rarr;</div>
         <Side label="you get" players={v.get} tone="turf" />
-      </div>
-
-      <div className="space-y-2">
-        <Band label="now" v={v.before} lo={lo} hi={hi} accent={false} />
-        <Band label="after the trade" v={v.after} lo={lo} hi={hi} accent />
       </div>
 
       {/* The argument. Two scales, and the space between them. */}

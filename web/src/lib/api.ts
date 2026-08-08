@@ -166,6 +166,10 @@ export interface TradeVerdict {
   naive_value_delta: number;
   opportunity_gap: number;
   roster_priced: boolean;
+  call?: "win" | "fair" | "loss";
+  summary?: string;
+  pros?: string[];
+  cons?: string[];
   roster_before: number;
   roster_after: number;
   note: string;
