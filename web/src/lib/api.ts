@@ -229,15 +229,34 @@ export interface TeamReport {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...init,
+    });
+  } catch {
+    // fetch itself failing is the same story as a 502: nothing is listening.
+    throw new Error(
+      "The engine is not running. Start it with ./run.sh in the project " +
+      "folder, then try again."
+    );
+  }
   if (!res.ok) {
     // A 404 on a route this build knows about means the engine is running
     // OLDER CODE than the interface. It is not a missing page and saying "not
     // found" sends you looking in the wrong place entirely -- a uvicorn here
     // sat up for four days answering 404 to every endpoint added in that time.
+    // 502/503/504 through the dev proxy means the ENGINE IS NOT RUNNING. The
+    // browser reports "Bad Gateway", which reads as a server bug and sends you
+    // looking at the league id, the cookies, ESPN — anywhere except the
+    // process that is simply not there.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        "The engine is not running. Start it with ./run.sh in the project " +
+        "folder, then try again."
+      );
+    }
     if (res.status === 404) {
       throw new Error(
         "The engine is running older code than this page — restart it " +

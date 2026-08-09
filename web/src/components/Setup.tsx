@@ -166,6 +166,25 @@ export function Setup({ onReady, onBack }: {
 
                 <CookieHelp />
 
+                {/* THE FIELDS THE INSTRUCTIONS WERE TELLING YOU TO FILL IN.
+                    The state and the API call existed; the inputs never did,
+                    so a private league could not be connected at all and the
+                    walkthrough above described a step with nowhere to put the
+                    answer. The linter had been reporting setS2 and setSwid as
+                    unused the whole time. */}
+                <Field label="espn_s2"
+                       hint="Private leagues only. Long string, starts AE… — leave both blank if your league is public.">
+                  <Input value={s2} onChange={(e) => setS2(e.target.value)}
+                         placeholder="AEBxxxxxxxxxxxxxxxx…"
+                         autoComplete="off" spellCheck={false} />
+                </Field>
+                <Field label="SWID"
+                       hint="Private leagues only. Looks like {XXXXXXXX-XXXX-…} — keep the braces.">
+                  <Input value={swid} onChange={(e) => setSwid(e.target.value)}
+                         placeholder="{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"
+                         autoComplete="off" spellCheck={false} />
+                </Field>
+
                 <p className="rounded-md border border-line bg-panel px-3 py-2 text-[11px] leading-relaxed text-muted">
                   Team count, lineup and PPR come from the league itself. Traded
                   picks and your draft seat can be adjusted once you are in.
