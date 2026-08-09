@@ -363,7 +363,7 @@ export default function App() {
               </div>
 
               <div className="min-h-0">
-                <Ladder data={ladder} myTurn={myTurn} />
+                <Ladder data={ladder} myTurn={myTurn} onDraft={draft} />
               </div>
             </div>
           ) : tab === "team" ? (

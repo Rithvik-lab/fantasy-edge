@@ -215,12 +215,14 @@ export function Trade() {
               <AddByName placeholder="add from my team…" restrictTo={myIds}
                          onAdd={(h) => addTyped("give", h)} />
               <RosterPanel title="My team" roster={mine} side="mine"
-                           selected={give} onToggle={(id) => toggle("give", id)} />
+                           selected={give} onToggle={(id) => toggle("give", id)}
+                           onAdd={(id) => add("give", id)} />
             </>
           ) : (
             <ManualRoster title="My team" ids={myManual} players={known}
                           selected={give}
                           onToggle={(id) => toggle("give", id)}
+                          onAdd={(id) => add("give", id)}
                           onRemove={(id) => {
                             setMyManual((r) => r.filter((x) => x !== id));
                             drop("give", id);
@@ -262,12 +264,14 @@ export function Trade() {
                          onAdd={(h) => addTyped("get", h)} />
               <RosterPanel title={other?.name ?? "Their team"} roster={other}
                            side="theirs" selected={get}
-                           onToggle={(id) => toggle("get", id)} />
+                           onToggle={(id) => toggle("get", id)}
+                           onAdd={(id) => add("get", id)} />
             </>
           ) : (
             <ManualRoster title="Their team" ids={theirManual} players={known}
                           selected={get}
                           onToggle={(id) => toggle("get", id)}
+                          onAdd={(id) => add("get", id)}
                           onRemove={(id) => {
                             setTheirManual((r) => r.filter((x) => x !== id));
                             drop("get", id);

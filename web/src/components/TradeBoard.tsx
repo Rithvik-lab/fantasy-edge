@@ -21,12 +21,16 @@ const SLOT_ORDER = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "D/ST", "K"];
 
 /** ESPN-style starters table: slot on the left, the man filling it beside. */
 export function RosterPanel({
-  title, roster, selected, onToggle, side,
+  title, roster, selected, onToggle, onAdd, side,
 }: {
   title: string;
   roster: LeagueRoster | null;
   selected: string[];
   onToggle: (id: string) => void;
+  /** Double-click forces him IN. Single-click toggles, so a double-click would
+   *  otherwise fire the toggle twice and net to nothing — which reads exactly
+   *  like a dead control. Same gesture as the draft board, same meaning. */
+  onAdd?: (id: string) => void;
   side: "mine" | "theirs";
 }) {
   if (!roster) {
@@ -51,10 +55,11 @@ export function RosterPanel({
           e.dataTransfer.effectAllowed = "copy";
         }}
         onClick={() => onToggle(p.player_id)}
+        onDoubleClick={() => onAdd?.(p.player_id)}
         title={on ? "in the trade — click to take him out"
-                  : "click to put him in the trade"}
+                  : "click or double-click to put him in the trade"}
         className={cn(
-          "group flex cursor-pointer items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0",
+          "group flex cursor-pointer select-none items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0",
           on ? "bg-turf/12" : "hover:bg-raised/60"
         )}
       >
@@ -220,13 +225,14 @@ click a name on the roster beside this, or drag one in
  * whether or not that team is yours or even exists.
  */
 export function ManualRoster({
-  title, ids, players, selected, onToggle, onRemove, onDropIn, children,
+  title, ids, players, selected, onToggle, onAdd, onRemove, onDropIn, children,
 }: {
   title: string;
   ids: string[];
   players: Map<string, TradePlayer>;
   selected: string[];
   onToggle: (id: string) => void;
+  onAdd?: (id: string) => void;
   onRemove: (id: string) => void;
   onDropIn?: (id: string) => void;
   children?: React.ReactNode;
@@ -264,10 +270,11 @@ export function ManualRoster({
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("text/plain", id)}
                 onClick={() => onToggle(id)}
+                onDoubleClick={() => onAdd?.(id)}
                 title={on ? "in the trade — click to take him out"
-                          : "click to put him in the trade"}
+                          : "click or double-click to put him in the trade"}
                 className={cn(
-                  "group flex cursor-pointer items-center gap-2 border-b border-line/40 px-2 py-1.5 last:border-0",
+                  "group flex cursor-pointer select-none items-center gap-2 border-b border-line/40 px-2 py-1.5 last:border-0",
                   on ? "bg-turf/12" : "hover:bg-raised/60"
                 )}
               >

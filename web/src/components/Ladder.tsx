@@ -25,7 +25,14 @@ import { cn } from "@/lib/utils";
  */
 const PAGE = 10;
 
-export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boolean }) {
+export function Ladder({ data, myTurn, onDraft }: {
+  data: AdpLadder | null;
+  myTurn: boolean;
+  /** Double-click a name to take him. Same meaning as dragging him onto your
+   *  team, one gesture shorter — which matters when you are on the clock and
+   *  the whole point of this app is the seconds. */
+  onDraft?: (playerId: string) => void;
+}) {
   const [start, setStart] = useState(0);
   const reduce = useReducedMotion();
 
@@ -125,7 +132,11 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
                     (e as unknown as React.DragEvent).dataTransfer
                       .setData("text/plain", p.player_id);
                   }}
-                  title={p.drafted ? undefined : "drag onto your team to draft him"}
+                  onDoubleClick={() => {
+                    if (!p.drafted && onDraft) onDraft(p.player_id);
+                  }}
+                  title={p.drafted ? undefined
+                    : "double-click to draft him, or drag him onto your team"}
                   initial={reduce ? undefined : { opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   // A short stagger so the page arrives as a cascade rather
@@ -133,7 +144,7 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
                   // that the tenth row is there before you look at it.
                   transition={{ delay: reduce ? 0 : i * 0.022, duration: 0.16 }}
                   className={cn(
-                    "flex h-[33px] items-center gap-2 border-b border-line/50 px-3 transition-colors last:border-0",
+                    "flex h-[33px] select-none items-center gap-2 border-b border-line/50 px-3 transition-colors last:border-0",
                     p.drafted ? "opacity-35" : "cursor-grab hover:bg-raised/60 active:cursor-grabbing",
                     isNext && !p.drafted && "bg-turf/8"
                   )}
