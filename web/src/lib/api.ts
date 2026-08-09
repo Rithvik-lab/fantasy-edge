@@ -201,6 +201,27 @@ export interface LeagueRoster {
                             injury_status: string | null })[];
 }
 
+
+export interface TeamReport {
+  empty: boolean;
+  note?: string;
+  grade: { score?: number; season_floor?: number; season_ceiling?: number;
+           par?: number; unfilled?: Record<string, number> };
+  starters: { player_id: string; player_name: string; position: string;
+              slot?: string; projected_points?: number; vor?: number;
+              headshot?: string | null; starting: boolean }[];
+  bench: TeamReport["starters"];
+  strength: { position: string; have: number; need: number; points: number;
+              per_starter?: number; league_median: number; percentile: number;
+              edge: number }[];
+  byes: { week: number; count: number; players: string[]; points: number }[];
+  draft: { picks: { overall: number; player_name: string; position: string | null;
+                    adp: number; edge: number; verdict: string }[];
+           total_edge: number; steals: number; reaches: number };
+  strengths: string[];
+  weaknesses: string[];
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -269,5 +290,6 @@ export const api = {
       method: "POST", body: JSON.stringify({ give, get, team_id, stance }) }),
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
+  teamReport: () => req<TeamReport>("/team/report"),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };

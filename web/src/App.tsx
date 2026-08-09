@@ -17,6 +17,7 @@ import { PickInput } from "@/components/PickInput";
 import { Phase, SyncDot } from "@/components/Phase";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
+import { MyTeam } from "@/components/MyTeam";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ function pollDelay(s: Status | null, quiet: number): number | null {
   return until != null && until <= 3 ? POLL.near : POLL.live;
 }
 
-type Tab = "room" | "data";
+type Tab = "room" | "team" | "data";
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -296,7 +297,7 @@ export default function App() {
         ) : (
         <>
         <div className="mb-3 flex rounded-md border border-line p-0.5">
-          {(["room", "data"] as const).map((t) => (
+          {(["room", "team", "data"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -305,7 +306,7 @@ export default function App() {
                 tab === t ? "bg-raised font-medium text-chalk" : "text-muted hover:text-chalk"
               )}
             >
-              {t === "room" ? "The room" : "The numbers"}
+              {t === "room" ? "The room" : t === "team" ? "My team" : "The numbers"}
             </button>
           ))}
         </div>
@@ -347,6 +348,8 @@ export default function App() {
                 <Ladder data={ladder} myTurn={myTurn} />
               </div>
             </div>
+          ) : tab === "team" ? (
+            <MyTeam />
           ) : (
             <Charts data={stats} />
           )}

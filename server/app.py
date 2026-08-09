@@ -25,8 +25,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import draft as D
+from fantasyedge import config
 from fantasyedge.data import espn_draft, refresh
-from fantasyedge.draft import explain
+from fantasyedge.draft import explain, report
 from fantasyedge.draft.engine import (
     DraftState,
     recommend,
@@ -577,6 +578,58 @@ def league_rosters() -> dict:
         })
     return {"teams": sorted(out, key=lambda t: t["team_id"]),
             "as_of": time.time()}
+
+
+@app.get("/api/team/report")
+def team_report() -> dict:
+    """Your team: what it does well, what it does not, and how you got it.
+
+    Everything is measured against THIS league's startable pool rather than an
+    absolute. A 240-point tight end is excellent where the median starter is
+    150 and unremarkable where he is 230, and only the comparative version can
+    be traded on.
+    """
+    st = _require()
+    b = _board()
+    mine = b.filter(pl.col("player_id").is_in(st.my_ids))
+    if not mine.height:
+        return {"empty": True,
+                "note": "Nothing drafted yet — this fills in as you pick."}
+
+    grade = grade_roster(mine, st.settings, b)
+    starters, bench = optimal_lineup(mine, st.settings)
+    strength = report.positional_strength(mine, b, st.settings)
+    dr = report.draft_report(st.picks, b, st.my_ids)
+    words = report.summarise(strength, grade)
+    shots = _headshots(b)
+
+    def rows(df: pl.DataFrame, starting: bool) -> list[dict]:
+        if not df.height:
+            return []
+        keep = [c for c in ("player_id", "player_name", "position", "slot",
+                            "projected_points", "vor", "ecr", "season_p20",
+                            "season_p50", "season_p80", "expected_games")
+                if c in df.columns]
+        out = df.select(keep).to_dicts()
+        for r in out:
+            r["headshot"] = shots.get(r["player_id"])
+            r["starting"] = starting
+        return out
+
+    return {
+        "empty": False,
+        "grade": {k: v for k, v in grade.items()
+                  if k not in ("lineup", "bench")},
+        "starters": rows(starters, True),
+        "bench": rows(bench, False),
+        "strength": strength,
+        "byes": report.bye_conflicts(
+            report.with_byes(mine, config.PRODUCTION_TARGET_SEASON),
+            st.settings),
+        "draft": dr,
+        "strengths": words["strengths"],
+        "weaknesses": words["weaknesses"],
+    }
 
 
 # ---------------------------------------------------------------------------
