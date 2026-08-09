@@ -1268,12 +1268,17 @@ def adp_ladder(limit: int | None = None,
     """
     st = _require()
     # `limit` counts what comes BACK, and with upcoming_only that means
-    # available players -- the slice below already reaches past everyone
-    # already taken to fill the quota. So the client asks for a few rounds'
-    # worth and keeps getting them on the last pick of the draft, without
-    # anyone having to guess a depth up front.
+    # AVAILABLE players -- the slice below reaches past everyone already taken
+    # to fill the quota, so the board never thins as the draft goes on.
+    #
+    # Unbounded by default, because two different needs got conflated here and
+    # sizing for one broke the other. "Deep enough to never run dry" is about
+    # five rounds; "deep enough to page through" is the whole board, and
+    # picking the first number quietly capped browsing at sixty names. The
+    # payload is ~110 KB at its very largest, on loopback, refetched only when
+    # a pick actually lands -- so there is nothing to save by guessing.
     if limit is None:
-        limit = st.settings.n_teams * 5
+        limit = st.settings.total_picks + 400
     b = _board()
     taken = set(st.drafted_ids)
     _, _, overall = st.on_the_clock()
