@@ -138,6 +138,27 @@ def _sources() -> dict:
         # whole streaming model runs on, and they publish months ahead.
         "team_stats": lambda s: nfl.load_team_stats(seasons=[s]),
         "schedules": lambda s: nfl.load_schedules(seasons=[s]),
+        # The rest of CORE, per config.FEATURE_TIERS. These are what the
+        # feature builder reads, so leaving them out meant the weekly pull kept
+        # the model fed on results while starving it of everything that
+        # explains them.
+        #
+        #   ff_opportunity  expected points from usage, which is the whole
+        #                   basis of the opportunity/efficiency split
+        #   pbp             per-play detail: roof and surface as PLAYED rather
+        #                   than as scheduled, air yards, red-zone work
+        #   rosters_weekly  who was on which team that week -- a player traded
+        #                   mid-season is otherwise attributed to the wrong one
+        #
+        # Measured before adding: 0.7s / 0.3s / 1.2s and a few tens of MB.
+        # Cheap enough that leaving them out was never the saving it looked
+        # like. Stadium geometry needs no pull at all -- roof, surface,
+        # altitude and cold-weather flags are a static table in data/stadiums,
+        # and weather is derived from that plus the schedule.
+        "ff_opportunity": lambda s: nfl.load_ff_opportunity(
+            seasons=[s], stat_type="weekly"),
+        "rosters_weekly": lambda s: nfl.load_rosters_weekly(seasons=[s]),
+        "pbp": lambda s: nfl.load_pbp(seasons=[s]),
     }
 
 
