@@ -147,9 +147,41 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
   );
 }
 
-function Lineup({ d }: { d: TeamReport }) {
+/**
+ * Drag one of your own onto another to swap where they play.
+ *
+ * The lineup is solved optimally, which is right nearly always and wrong the
+ * moment you know something the projection does not. Swapping PINS both men
+ * and lets the solver fill around them, so one correction never costs you the
+ * rest of the optimisation.
+ */
+function Lineup({ d, onSwap, onReset, busy }: {
+  d: TeamReport;
+  onSwap: (a: string, b: string) => void;
+  onReset: () => void;
+  busy: boolean;
+}) {
+  const [over, setOver] = useState<string | null>(null);
+  const pinned = d.pinned ?? {};
+
   const Row = ({ p, slot }: { p: TeamReport["starters"][0]; slot?: string }) => (
-    <li className="flex items-center gap-2 border-b border-line/40 px-2.5 py-1.5 last:border-0">
+    <li
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", p.player_id)}
+      onDragOver={(e) => { e.preventDefault(); setOver(p.player_id); }}
+      onDragLeave={() => setOver((o) => (o === p.player_id ? null : o))}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(null);
+        const from = e.dataTransfer.getData("text/plain");
+        if (from && from !== p.player_id) onSwap(from, p.player_id);
+      }}
+      title="drag onto another of your players to swap where they play"
+      className={cn(
+        "flex cursor-grab select-none items-center gap-2 border-b border-line/40 px-2.5 py-1.5 transition-colors last:border-0 active:cursor-grabbing",
+        over === p.player_id && "bg-turf/12",
+        pinned[p.player_id] && "border-l-2 border-l-clock"
+      )}>
       <span className="num w-9 shrink-0 text-[9.5px] uppercase tracking-wider text-muted">
         {slot ?? "BE"}
       </span>
@@ -176,6 +208,12 @@ function Lineup({ d }: { d: TeamReport }) {
     <section className="rounded-lg border border-line bg-panel">
       <header className="flex items-baseline gap-2 border-b border-line px-2.5 py-1.5">
         <span className="eyebrow">Your lineup</span>
+        {Object.keys(pinned).length > 0 && (
+          <button onClick={onReset} disabled={busy}
+                  className="text-[10.5px] text-clock underline-offset-2 hover:underline">
+            {Object.keys(pinned).length} set by hand — solve it
+          </button>
+        )}
         {d.grade?.score != null && (
           <Term k="grade">
             <span className={cn("num ml-auto text-[11px]",
@@ -201,6 +239,7 @@ function Lineup({ d }: { d: TeamReport }) {
 export function MyTeam() {
   const [d, setD] = useState<TeamReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api.teamReport().then(setD)
@@ -269,7 +308,18 @@ export function MyTeam() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Lineup d={d} />
+        <Lineup d={d} busy={busy}
+                onSwap={async (a, b) => {
+                  setBusy(true);
+                  try { await api.rosterSwap(a, b); setD(await api.teamReport()); }
+                  catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+                  finally { setBusy(false); }
+                }}
+                onReset={async () => {
+                  setBusy(true);
+                  try { await api.rosterUnpin(); setD(await api.teamReport()); }
+                  finally { setBusy(false); }
+                }} />
         <DraftReport d={d.draft} />
       </div>
     </div>

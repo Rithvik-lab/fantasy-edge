@@ -137,7 +137,8 @@ export interface Status {
   espn_connected?: boolean;
   last_sync?: number;
   sync_error?: string | null;
-  recent?: { overall: number; name: string; slot: number; mine: boolean }[];
+  recent?: { overall: number; name: string; slot: number;
+             round: number; mine: boolean }[];
 }
 
 export interface TeamRow {
@@ -222,6 +223,7 @@ export interface TeamReport {
   draft: { picks: { overall: number; player_name: string; position: string | null;
                     adp: number; edge: number; verdict: string }[];
            total_edge: number; steals: number; reaches: number };
+  pinned?: Record<string, string>;
   strengths: string[];
   weaknesses: string[];
 }
@@ -298,5 +300,10 @@ export const api = {
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
   teamReport: () => req<TeamReport>("/team/report"),
+  rosterSwap: (a: string, b: string) =>
+    req<{ pinned: Record<string, string> }>("/roster/swap", {
+      method: "POST", body: JSON.stringify({ a, b }) }),
+  rosterUnpin: () =>
+    req<{ pinned: Record<string, string> }>("/roster/unpin", { method: "POST" }),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
 };

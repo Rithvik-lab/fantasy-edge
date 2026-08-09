@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { AdpLadder } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { Term } from "@/components/Explain";
 import { cn } from "@/lib/utils";
 
 /**
@@ -181,9 +182,11 @@ export function Ladder({ data, myTurn, perPage, onDraft, onGone }: {
                     </span>
                   </PlayerHover>
                   {p.rookie && (
-                    <span className="rounded bg-clock/15 px-1 text-[9px] font-bold text-clock">
-                      R
-                    </span>
+                    <Term k="rookie">
+                      <span className="rounded bg-clock/15 px-1 text-[9px] font-bold text-clock">
+                        R
+                      </span>
+                    </Term>
                   )}
                   <span className="w-7 text-right text-[10px] font-bold" style={{ color: hue }}>
                     {p.position}

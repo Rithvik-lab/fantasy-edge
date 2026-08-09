@@ -130,13 +130,19 @@ class Session:
 # ---------------------------------------------------------------------------
 
 def optimal_lineup(
-    roster: pl.DataFrame, settings: LeagueSettings, points_col: str = "projected_points"
+    roster: pl.DataFrame, settings: LeagueSettings,
+    points_col: str = "projected_points",
+    pinned: dict[str, str] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Split a roster into the best legal starting lineup and the bench.
 
     Fills dedicated slots first with the best player at each position, then
     lets FLEX take the best remaining eligible player. Greedy is optimal here
     because FLEX is strictly less constrained than the dedicated slots.
+
+    `pinned` maps player_id to a slot you have placed him in by hand. Those men
+    are seated first and the solver fills what is left around them, so one
+    correction never costs you the rest of the optimisation.
     """
     if not roster.height:
         return roster, roster
@@ -144,21 +150,44 @@ def optimal_lineup(
     remaining = roster.sort(points_col, descending=True, nulls_last=True)
     starters = []
 
+    # Hand placements first, and only for slots this lineup actually has.
+    held: dict[str, int] = {}
+    if pinned:
+        for pid, slot in pinned.items():
+            base = slot.rstrip("0123456789") or slot
+            if base not in settings.lineup and slot not in settings.lineup:
+                continue
+            row = remaining.filter(pl.col("player_id") == pid)
+            if not row.height:
+                continue
+            starters.append(row.with_columns(pl.lit(slot).alias("slot")))
+            remaining = remaining.filter(pl.col("player_id") != pid)
+            held[base] = held.get(base, 0) + 1
+
     for slot, count in settings.lineup.items():
         if slot in ("FLEX", "SUPERFLEX"):
+            continue
+        total = count
+        count -= held.get(slot, 0)
+        if count <= 0:
             continue
         pool = remaining.filter(pl.col("position") == slot).head(count)
         if pool.height:
             # Label which slot each starter is filling. A lineup is positions,
             # not a list -- "RB2" and "FLEX" are different jobs.
+            #
+            # Numbered off the slot's TOTAL, not off how many are left to fill.
+            # Pinning a man into RB2 left one RB slot open, and numbering by the
+            # remainder relabelled his partner from RB1 to a bare RB -- the
+            # lineup silently changed shape because of an unrelated edit.
             starters.append(pool.with_columns(
                 (pl.lit(slot) + (pl.int_range(pl.len()) + 1).cast(pl.Utf8)
-                 if count > 1 else pl.lit(slot)).alias("slot")
+                 if total > 1 else pl.lit(slot)).alias("slot")
             ))
             remaining = remaining.filter(~pl.col("player_id").is_in(pool["player_id"]))
 
-    flex = settings.lineup.get("FLEX", 0)
-    if flex:
+    flex = settings.lineup.get("FLEX", 0) - held.get("FLEX", 0)
+    if flex > 0:
         pool = remaining.filter(
             pl.col("position").is_in(list(settings.flex_eligible))
         ).head(flex)

@@ -150,6 +150,11 @@ class Draft:
         # People trade picks, and once they do "your picks" is a set of
         # numbers rather than a formula.
         self.owned_picks: list[int] | None = None
+        # Players you have pinned into a starting slot by hand. The lineup is
+        # computed optimally by default; this is the override for when you know
+        # something the projection does not, and it is deliberately partial --
+        # pin one man and the rest still solve around him.
+        self.pinned: dict[str, str] = {}      # player_id -> slot
         self.platform: str = "espn"
         self.league_id: str | None = None      # set once saved
         self.name: str = ""
@@ -235,6 +240,7 @@ def _snapshot() -> dict:
         "my_team_id": st.my_team_id,
         "slot_confirmed": st.slot_confirmed,
         "draft_time": st.draft_time,
+        "pinned": dict(st.pinned),
     }
 
 
@@ -629,6 +635,58 @@ def league_rosters() -> dict:
             "as_of": time.time()}
 
 
+class SwapIn(BaseModel):
+    a: str
+    b: str
+
+
+@app.post("/api/roster/swap")
+def roster_swap(x: SwapIn) -> dict:
+    """Trade two of your own players' lineup slots.
+
+    The lineup is solved optimally, which is right nearly always and wrong the
+    moment you know something the projection does not -- a coach's comment, a
+    matchup, a body you simply do not trust. Swapping pins BOTH men where you
+    put them and leaves everyone else to solve around them, so one correction
+    does not cost you the rest of the optimisation.
+    """
+    st = _require()
+    b = _board()
+    mine = set(st.my_ids)
+    if x.a not in mine or x.b not in mine:
+        raise HTTPException(400, "both players have to be on your roster")
+
+    starters, bench = optimal_lineup(
+        b.filter(pl.col("player_id").is_in(list(mine))), st.settings)
+    slot_of = {r["player_id"]: r.get("slot")
+               for r in starters.iter_rows(named=True)}
+    slot_of.update({r["player_id"]: None for r in bench.iter_rows(named=True)})
+    slot_of.update(STATE.pinned)
+
+    sa, sb = slot_of.get(x.a), slot_of.get(x.b)
+    if sa == sb:
+        raise HTTPException(400, "those two are already in the same place")
+
+    with STATE.lock:
+        for pid, slot in ((x.a, sb), (x.b, sa)):
+            if slot:
+                STATE.pinned[pid] = slot
+            else:
+                STATE.pinned.pop(pid, None)
+    _autosave()
+    return {"pinned": dict(STATE.pinned)}
+
+
+@app.post("/api/roster/unpin")
+def roster_unpin() -> dict:
+    """Back to the solved lineup."""
+    _require()
+    with STATE.lock:
+        STATE.pinned = {}
+    _autosave()
+    return {"pinned": {}}
+
+
 @app.get("/api/team/report")
 def team_report() -> dict:
     """Your team: what it does well, what it does not, and how you got it.
@@ -646,7 +704,7 @@ def team_report() -> dict:
                 "note": "Nothing drafted yet — this fills in as you pick."}
 
     grade = grade_roster(mine, st.settings, b)
-    starters, bench = optimal_lineup(mine, st.settings)
+    starters, bench = optimal_lineup(mine, st.settings, pinned=STATE.pinned)
     strength = report.positional_strength(mine, b, st.settings)
     dr = report.draft_report(st.picks, b, st.my_ids)
     words = report.summarise(strength, grade)
@@ -676,6 +734,7 @@ def team_report() -> dict:
             report.with_byes(mine, config.PRODUCTION_TARGET_SEASON),
             st.settings),
         "draft": dr,
+        "pinned": dict(STATE.pinned),
         "strengths": words["strengths"],
         "weaknesses": words["weaknesses"],
     }
@@ -1020,10 +1079,18 @@ def status() -> dict:
         "espn_connected": STATE.espn is not None,
         "last_sync": STATE.last_sync,
         "sync_error": STATE.sync_error,
+        # EVERY pick, newest first, with the round it fell in — the feed pages
+        # by round now and cannot do that from the last eight. `mine` reads the
+        # flag recorded on the pick; deriving it from the seat was wrong the
+        # moment ownership stopped being a property of the pick NUMBER.
         "recent": [
             {"overall": p["overall"], "name": p["name"], "slot": p["slot"],
-             "mine": p["slot"] == STATE.my_slot}
-            for p in STATE.picks[-8:][::-1]
+             "round": (p["overall"] - 1) // STATE.settings.n_teams + 1,
+             "mine": p["mine"] if "mine" in p
+                     else (p.get("team_id") == STATE.my_team_id
+                           if STATE.my_team_id is not None
+                           else p["overall"] in set(STATE.my_picks()))}
+            for p in STATE.picks[::-1]
         ],
     }
 
@@ -1400,6 +1467,7 @@ def load_league(league_id: str) -> dict:
         STATE.league_name = d.get("league_name") or ""
         STATE.team_names = {int(k): v for k, v in (d.get("team_names") or {}).items()}
         STATE.my_team_id = d.get("my_team_id")
+        STATE.pinned = dict(d.get("pinned") or {})
         STATE.slot_confirmed = bool(d.get("slot_confirmed", True))
         STATE.draft_time = d.get("draft_time")
         STATE.draft_started = bool(STATE.picks)
