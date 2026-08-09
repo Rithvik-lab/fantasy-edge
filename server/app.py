@@ -178,6 +178,13 @@ class Draft:
         if self.my_team_id is not None:
             return [p["player_id"] for p in self.picks
                     if p.get("player_id") and p.get("team_id") == self.my_team_id]
+        # A pick recorded by hand says outright whose it is. Only fall back to
+        # the schedule for picks saved before that flag existed, or typed in
+        # without one.
+        flagged = [p for p in self.picks if "mine" in p]
+        if flagged:
+            return [p["player_id"] for p in flagged
+                    if p.get("player_id") and p["mine"]]
         owned = set(self.my_picks())
         return [p["player_id"] for p in self.picks
                 if p.get("player_id") and p.get("overall") in owned]
@@ -884,16 +891,30 @@ def add_pick(p: PickIn) -> dict:
 
     rnd, pick, overall = st.on_the_clock()
     slot = slot_for_pick(rnd, pick, st.settings.n_teams)
+
+    # A full roster is a real stop. Recording an 18th man on a 16-man team is
+    # not a draft, it is a typo, and letting it through quietly corrupts every
+    # lineup and grade downstream.
+    if p.mine and len(st.my_ids) >= st.settings.roster_size:
+        raise HTTPException(
+            400,
+            f"Your roster is full at {st.settings.roster_size}. Remove someone "
+            f"first if this is a correction.")
+
     with STATE.lock:
-        # Marking a pick as yours records the pick NUMBER, which is what
-        # ownership means once picks get traded.
-        if p.mine and overall not in (STATE.owned_picks or st.my_picks()):
-            STATE.owned_picks = sorted(set(st.my_picks()) | {overall})
-        elif not p.mine and overall in (STATE.owned_picks or st.my_picks()):
-            STATE.owned_picks = sorted(set(st.my_picks()) - {overall})
+        # WHICH PLAYERS ARE YOURS and WHICH PICK NUMBERS ARE YOURS are two
+        # different facts, and treating them as one is what broke manual mode.
+        # Taking eighteen men straight off the board rewrote the schedule to
+        # "I own picks 1 through 18", which then poisoned the wait until your
+        # next turn and with it every survival probability on the board.
+        #
+        # Ownership of a player is recorded here, on the pick. Ownership of a
+        # pick number is a schedule, and it is edited deliberately in the pick
+        # editor -- never as a side effect of drafting somebody.
         STATE.picks.append({
             "player_id": hit["player_id"], "name": hit["player_name"],
             "slot": slot, "overall": overall, "team_id": None,
+            "mine": bool(p.mine),
         })
     _autosave()
     return status()
