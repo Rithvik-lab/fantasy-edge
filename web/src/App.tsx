@@ -344,7 +344,7 @@ export default function App() {
                 <Roster data={roster} onRemove={removePlayer} busy={busy} />
               </div>
 
-              <div className="min-h-0 lg:max-h-[62vh]">
+              <div className="min-h-0">
                 <Ladder data={ladder} myTurn={myTurn} />
               </div>
             </div>
