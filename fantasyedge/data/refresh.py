@@ -132,6 +132,12 @@ def _sources() -> dict:
         "depth_charts": lambda s: nfl.load_depth_charts(seasons=[s]),
         "injuries": lambda s: nfl.load_injuries(seasons=[s]),
         "snap_counts": lambda s: nfl.load_snap_counts(seasons=[s]),
+        # Kickers live in player_stats already, but a DEFENCE is a team and has
+        # no row there -- without team_stats the position simply does not exist
+        # week to week. Schedules carry the spread and total, which is what the
+        # whole streaming model runs on, and they publish months ahead.
+        "team_stats": lambda s: nfl.load_team_stats(seasons=[s]),
+        "schedules": lambda s: nfl.load_schedules(seasons=[s]),
     }
 
 
@@ -244,3 +250,122 @@ def describe() -> dict:
             "pull. Depth charts and the schedule are already live."
         )
     return out
+
+
+def stream_inputs(target: int | None = None,
+                  fit_seasons: int = 4) -> dict:
+    """Everything the K/DST streaming model needs, from the weekly pull.
+
+    Returns the fitted residual table per opponent, plus the per-team implied
+    points for each remaining game. All of it derived rather than frozen in
+    source, because rosters turn over and a hardcoded list of thirty-two teams
+    rots quietly.
+
+    THE FIT AND THE FIXTURE LIST ARE ON DIFFERENT CLOCKS. Which games are
+    coming is a question about THIS season and comes from the weekly pull. How
+    soft an opponent is takes several years to see -- one season gives about
+    seventeen games a team, and the split-half test says that is too few to
+    separate a real edge from noise. So the residuals are fitted over the last
+    `fit_seasons` years, read straight from nflverse (cached), and the current
+    season supplies only the schedule.
+    """
+    from fantasyedge.models import kdst
+
+    target = target or config.PRODUCTION_TARGET_SEASON
+    sp, tp, kp = (_out("schedules", target), _out("team_stats", target),
+                  _out("player_stats", target))
+    # The fit does NOT depend on this season's schedule -- it is history. An
+    # early return here took the edges down with the fixture list, so in August,
+    # before any 2026 line is published, the whole model came back empty when
+    # only half of it was actually unavailable.
+    if not sp.exists():
+        return {"edges": _fit_edges(target, fit_seasons), "games": pl.DataFrame()}
+
+    sch = pl.read_parquet(sp)
+    need = {"week", "home_team", "away_team", "spread_line", "total_line"}
+    if not need <= set(sch.columns):
+        return {"edges": _fit_edges(target, fit_seasons), "games": pl.DataFrame()}
+
+    def side(t: str, o: str, sign: int) -> pl.DataFrame:
+        cols = ["week", pl.col(t).alias("team"), pl.col(o).alias("opp"),
+                (pl.col("total_line") / 2
+                 + sign * pl.col("spread_line") / 2).alias("implied_for"),
+                (pl.col("total_line") / 2
+                 - sign * pl.col("spread_line") / 2).alias("implied_against")]
+        if "home_score" in sch.columns:
+            cols.append(pl.col("away_score" if sign > 0 else "home_score")
+                        .alias("pts_allowed"))
+        return sch.select(cols)
+
+    games = pl.concat([side("home_team", "away_team", 1),
+                       side("away_team", "home_team", -1)]).drop_nulls(
+        ["implied_for", "implied_against"])
+
+    return {"edges": _fit_edges(target, fit_seasons), "games": games}
+
+
+def _fit_edges(target: int, back: int) -> dict[str, dict[str, float]]:
+    """Per-opponent residuals over the last few completed seasons."""
+    from fantasyedge.models import kdst
+
+    try:
+        import nflreadpy as nfl
+
+        years = [y for y in range(target - back, target) if y >= 2002]
+        if not years:
+            return {"K": {}, "DST": {}}
+        sch = nfl.load_schedules(seasons=years)
+        keep = ["season", "week", "home_team", "away_team", "spread_line",
+                "total_line", "home_score", "away_score"]
+        if not set(keep) <= set(sch.columns):
+            return {"K": {}, "DST": {}}
+        sch = sch.select(keep).drop_nulls()
+
+        def side(t, o, sign, sc):
+            return sch.select([
+                "season", "week", pl.col(t).alias("team"), pl.col(o).alias("opp"),
+                (pl.col("total_line") / 2
+                 + sign * pl.col("spread_line") / 2).alias("implied_for"),
+                (pl.col("total_line") / 2
+                 - sign * pl.col("spread_line") / 2).alias("implied_against"),
+                pl.col(sc).alias("pts_allowed")])
+
+        g = pl.concat([side("home_team", "away_team", 1, "away_score"),
+                       side("away_team", "home_team", -1, "home_score")])
+
+        ps = nfl.load_player_stats(seasons=years)
+        kicks = None
+        if {"position", "fg_made", "pat_made"} <= set(ps.columns):
+            kicks = (ps.filter(pl.col("position") == "K")
+                       .select(["season", "week", "team", "fg_made", "pat_made"])
+                       .drop_nulls()
+                       .with_columns((pl.col("fg_made") * 3
+                                      + pl.col("pat_made")).alias("pts"))
+                       .join(g, on=["season", "week", "team"], how="inner")
+                       .with_columns((kdst.K_INTERCEPT + kdst.K_SLOPE
+                                      * pl.col("implied_for")).alias("expected")))
+
+        ts = nfl.load_team_stats(seasons=years)
+        cnt = pl.lit(0.0)
+        for c, w in (("def_sacks", 1), ("def_interceptions", 2),
+                     ("def_fumble_recovery_opp", 2), ("def_tds", 6),
+                     ("def_safeties", 2)):
+            if c in ts.columns:
+                cnt = cnt + pl.col(c).fill_null(0) * w
+        tier = (pl.when(pl.col("pts_allowed") == 0).then(10)
+                .when(pl.col("pts_allowed") <= 6).then(7)
+                .when(pl.col("pts_allowed") <= 13).then(4)
+                .when(pl.col("pts_allowed") <= 20).then(1)
+                .when(pl.col("pts_allowed") <= 27).then(0)
+                .when(pl.col("pts_allowed") <= 34).then(-1).otherwise(-4))
+        defs = (ts.with_columns(cnt.alias("_c"))
+                  .select(["season", "week", "team", "_c"])
+                  .join(g, on=["season", "week", "team"], how="inner")
+                  .with_columns([(pl.col("_c") + tier).alias("pts"),
+                                 (kdst.DST_INTERCEPT + kdst.DST_SLOPE
+                                  * pl.col("implied_against")).alias("expected")]))
+        return kdst.opponent_edge(kicks, defs)
+    except Exception:
+        # No fit is a fine answer: stream_score falls back to the line, which
+        # is where nearly all of the signal lives anyway.
+        return {"K": {}, "DST": {}}

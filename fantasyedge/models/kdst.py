@@ -184,3 +184,69 @@ def implied(total_line: float, spread_line: float) -> tuple[float, float]:
     """
     return (total_line / 2 + spread_line / 2,
             total_line / 2 - spread_line / 2)
+
+
+# ---------------------------------------------------------------------------
+# The fine print: which opponents are soft, beyond what the line already says
+# ---------------------------------------------------------------------------
+# The betting line prices most of a matchup, so "who allows the most kicker
+# points" is mostly just "who is bad" and the market has taken that already.
+# What is left is the RESIDUAL -- teams whose opponents beat the fitted model
+# week after week. That is the part worth streaming on.
+#
+# Measured 2022-2025, and then tested for whether it is real rather than noise.
+# Split-half across a two-year gap, 2022-23 against 2024-25:
+#
+#     kickers allowed, residual    r = +0.304
+#     defences allowed, residual   r = +0.233
+#     implied points (control)     r = +0.294
+#
+# The control matters. Team quality itself only persists at 0.294 over that
+# gap -- rosters turn over -- so a matchup edge persisting at 0.30 and 0.23 is
+# about as stable as anything team-level gets. It is a real effect.
+#
+# It is also SMALL: sd 0.52 points a week across defences for kickers, 0.73
+# across offences for defences. Against the 3.81-point range the line itself
+# explains, this is a tiebreaker between two similar streams, not a reason to
+# start a bad one. Sized accordingly, and computed from the pulled data rather
+# than frozen into a table here, because rosters change and a hardcoded list of
+# 32 teams would quietly rot.
+MIN_GAMES_FOR_EDGE = 25
+
+
+def opponent_edge(kicker_weeks: pl.DataFrame | None = None,
+                  defence_weeks: pl.DataFrame | None = None) -> dict[str, dict[str, float]]:
+    """Per-opponent residual, in points a week.
+
+    Each frame needs `opp`, `pts` and `expected`. Positive means opponents of
+    that team beat the model there -- a soft draw.
+    """
+    out: dict[str, dict[str, float]] = {"K": {}, "DST": {}}
+    for key, df in (("K", kicker_weeks), ("DST", defence_weeks)):
+        if df is None or not df.height:
+            continue
+        if not {"opp", "pts", "expected"} <= set(df.columns):
+            continue
+        agg = (df.with_columns((pl.col("pts") - pl.col("expected")).alias("_r"))
+                 .group_by("opp")
+                 .agg(pl.col("_r").mean().alias("edge"), pl.len().alias("n"))
+                 .filter(pl.col("n") >= MIN_GAMES_FOR_EDGE))
+        out[key] = {r["opp"]: round(float(r["edge"]), 2)
+                    for r in agg.iter_rows(named=True)}
+    return out
+
+
+def stream_score(position: str, opponent: str,
+                 implied_for: float | None = None,
+                 implied_against: float | None = None,
+                 edges: dict[str, dict[str, float]] | None = None) -> float | None:
+    """Weekly projection with the opponent adjustment folded in.
+
+    This is the number a waiver decision should be made on: what the line says,
+    plus the small persistent thing it does not.
+    """
+    base = project_week(position, implied_for, implied_against)
+    if base is None:
+        return None
+    bump = (edges or {}).get(position, {}).get(opponent, 0.0)
+    return base + bump
