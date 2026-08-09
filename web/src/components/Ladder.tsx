@@ -10,24 +10,26 @@ import { cn } from "@/lib/utils";
  * The board, in the order the room will take it.
  *
  * Everything else in this app is analysis. This is the thing you glance at:
- * who is next, who is already gone, and where your pick falls in the line.
- * Struck-through means off the board — seeing that is often the whole question.
+ * who is available, and where your picks fall among them.
  *
- * TEN AT A TIME, not ninety in a scroller. A ninety-row list is a list you
- * scroll rather than read, and on the clock you do not scroll — you look, and
- * the answer is either on screen or it is not. Ten rows fit in one glance;
- * the rest are a button away.
+ * ONE PAGE IS ONE ROUND. The page size is the league's team count, so a page
+ * is exactly the set of players who will come off between now and your next
+ * turn. Ten was arbitrary; twelve, in a twelve-team league, is a unit that
+ * means something — page down and you are looking at the next round.
  *
- * It also opens where YOUR pick is rather than at the top. The top of the
- * board is the least useful part of it once a draft is underway: those men are
- * gone. The rows worth seeing are the ones around the pick you are about to
- * make, and landing there saves the one interaction nobody has time for.
+ * AVAILABLE ONLY. Drafted names used to sit here struck through, which slowly
+ * turned the board into a history of the draft instead of a picture of it: by
+ * round six half the rows were men nobody could take. They leave now, and the
+ * next name backfills, so the page is always a full round of REAL options. Who
+ * went where is a different question and the feed beside this answers it.
  */
-const PAGE = 10;
+const FALLBACK_PAGE = 12;
 
-export function Ladder({ data, myTurn, onDraft }: {
+export function Ladder({ data, myTurn, perPage, onDraft }: {
   data: AdpLadder | null;
   myTurn: boolean;
+  /** One page = one round, so this is the league's team count. */
+  perPage?: number;
   /** Double-click a name to take him. Same meaning as dragging him onto your
    *  team, one gesture shorter — which matters when you are on the clock and
    *  the whole point of this app is the seconds. */
@@ -41,23 +43,20 @@ export function Ladder({ data, myTurn, onDraft }: {
   // Keyed off `data.players` itself, not a `?? []` fallback — that fallback is
   // a fresh array on every render, which quietly turns both memos into plain
   // function calls and makes the effect below re-run for no reason.
+  const PAGE = perPage && perPage > 0 ? perPage : FALLBACK_PAGE;
   const source = data?.players;
-  const players = useMemo(() => source ?? [], [source]);
-  const gone = useMemo(() => players.filter((p) => p.drafted).length, [players]);
+  const all = useMemo(() => source ?? [], [source]);
+  const gone = useMemo(() => all.filter((p) => p.drafted).length, [all]);
+  // Only men you can actually take. A drafted name leaving is what backfills
+  // the page from below without anything having to ask for more.
+  const players = useMemo(() => all.filter((p) => !p.drafted), [all]);
 
-  /** First row worth looking at: the best player still on the board. */
-  const firstLive = useMemo(() => {
-    const i = players.findIndex((p) => !p.drafted);
-    return i < 0 ? 0 : Math.max(0, i - 1);
-  }, [players]);
-
-  // Follow the draft. As names come off the board the window walks down with
-  // them, so the top of the list is never a column of struck-through picks --
-  // unless you have deliberately paged somewhere else, which is respected.
+  // Back to the top when the pool shrinks under us, so paging never strands
+  // you past the end of a list that just got shorter.
   const [pinned, setPinned] = useState(false);
   useEffect(() => {
-    if (!pinned) setStart(firstLive);
-  }, [firstLive, pinned]);
+    if (!pinned) setStart(0);
+  }, [players.length, pinned]);
 
   if (!data) return null;
 
@@ -129,21 +128,20 @@ export function Ladder({ data, myTurn, onDraft }: {
                 ))}
                 <motion.li
                   key={p.player_id}
-                  draggable={!p.drafted}
+                  draggable
                   onDragStart={(e) => {
                     (e as unknown as React.DragEvent).dataTransfer
                       .setData("text/plain", p.player_id);
                   }}
                   onDoubleClick={(e) => {
-                    if (p.drafted || !onDraft) return;
+                    if (!onDraft) return;
                     onDraft(p.player_id, {
                       el: e.currentTarget as unknown as Element,
                       name: p.player_name,
                       headshot: p.headshot,
                     });
                   }}
-                  title={p.drafted ? undefined
-                    : "double-click to draft him, or drag him onto your team"}
+                  title="double-click to draft him, or drag him onto your team"
                   initial={reduce ? undefined : { opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   // A short stagger so the page arrives as a cascade rather
@@ -152,8 +150,8 @@ export function Ladder({ data, myTurn, onDraft }: {
                   transition={{ delay: reduce ? 0 : i * 0.022, duration: 0.16 }}
                   className={cn(
                     "flex h-[33px] select-none items-center gap-2 border-b border-line/50 px-3 transition-colors last:border-0",
-                    p.drafted ? "opacity-35" : "cursor-grab hover:bg-raised/60 active:cursor-grabbing",
-                    isNext && !p.drafted && "bg-turf/8"
+                    "cursor-grab hover:bg-raised/60 active:cursor-grabbing",
+                    isNext && "bg-turf/8"
                   )}
                 >
                   <span className="num w-7 shrink-0 text-[10.5px] text-muted">
@@ -168,8 +166,7 @@ export function Ladder({ data, myTurn, onDraft }: {
                     )}
                   </PlayerHover>
                   <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
-                    <span className={cn("block cursor-help truncate text-xs",
-                      p.drafted && "line-through decoration-muted/60")}>
+                    <span className="block cursor-help truncate text-xs">
                       {p.player_name}
                     </span>
                   </PlayerHover>
@@ -195,12 +192,12 @@ export function Ladder({ data, myTurn, onDraft }: {
 
       <footer className="flex items-center gap-2 border-t border-line px-3 py-1.5">
         <span className="num text-[10.5px] text-muted">
-          {at + 1}–{Math.min(at + PAGE, players.length)} of {players.length}
+          {at + 1}–{Math.min(at + PAGE, players.length)} of {players.length} left
         </span>
 
-        {pinned && at !== firstLive && (
+        {pinned && at !== 0 && (
           <button
-            onClick={() => { setPinned(false); setStart(firstLive); }}
+            onClick={() => { setPinned(false); setStart(0); }}
             className="text-[10.5px] text-turf underline-offset-2 hover:underline"
           >
             back to the board
