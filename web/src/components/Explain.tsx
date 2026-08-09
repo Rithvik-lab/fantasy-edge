@@ -56,6 +56,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Your starting lineup against an even share of the league's total startable value. 100 means you hold exactly one team's worth. A running score, not a prediction.",
   },
+  off_board: {
+    title: "Off the board",
+    body:
+      "Every name that has left the board, yours in green and everyone else's in grey. In a manual draft most picks are not yours — eleven of every twelve — so marking them is the work. Double-click a player on the board to take him yourself; hold SHIFT and double-click when somebody else does. Both remove him from the board; only the first puts him on your team.",
+  },
   season_total: {
     title: "Season points, along the bottom",
     body:

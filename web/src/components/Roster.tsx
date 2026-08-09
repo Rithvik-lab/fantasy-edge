@@ -35,7 +35,7 @@ export function Roster({ data, onRemove, busy, onDropPlayer, landing }: {
 
   if (!data || (!data.starters.length && !data.bench.length)) {
     return (
-      <section {...drop} {...{ [LANDING]: "" }}
+      <section {...drop} {...{ [LANDING]: "mine" }}
                className="relative rounded-lg border border-dashed border-line bg-panel">
         <Landed on={!!landing} />
         <header className="border-b border-line px-3 py-2">
@@ -81,7 +81,7 @@ export function Roster({ data, onRemove, busy, onDropPlayer, landing }: {
   );
 
   return (
-    <section {...drop} {...{ [LANDING]: "" }}
+    <section {...drop} {...{ [LANDING]: "mine" }}
              className="relative rounded-lg border border-line bg-panel">
       <Landed on={!!landing} />
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">

@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
  */
 const FALLBACK_PAGE = 12;
 
-export function Ladder({ data, myTurn, perPage, onDraft }: {
+export function Ladder({ data, myTurn, perPage, onDraft, onGone }: {
   data: AdpLadder | null;
   myTurn: boolean;
   /** One page = one round, so this is the league's team count. */
@@ -34,6 +34,12 @@ export function Ladder({ data, myTurn, perPage, onDraft }: {
    *  team, one gesture shorter — which matters when you are on the clock and
    *  the whole point of this app is the seconds. */
   onDraft?: (playerId: string, from?: {
+    el: Element | null; name: string; headshot: string | null;
+  }) => void;
+  /** SHIFT + double-click: he is gone, but not to you. In a manual draft this
+   *  is the commoner of the two by eleven to one — most names leaving the
+   *  board leave to somebody else, and typing each one was the tax. */
+  onGone?: (playerId: string, from?: {
     el: Element | null; name: string; headshot: string | null;
   }) => void;
 }) {
@@ -136,14 +142,16 @@ export function Ladder({ data, myTurn, perPage, onDraft }: {
                       .setData("text/plain", p.player_id);
                   }}
                   onDoubleClick={(e) => {
-                    if (!onDraft) return;
-                    onDraft(p.player_id, {
+                    const from = {
                       el: e.currentTarget as unknown as Element,
                       name: p.player_name,
                       headshot: p.headshot,
-                    });
+                    };
+                    if (e.shiftKey) onGone?.(p.player_id, from);
+                    else onDraft?.(p.player_id, from);
                   }}
-                  title="double-click to draft him, or drag him onto your team"
+                  title={"double-click to draft him to your team"
+                    + "\nshift + double-click if someone else took him"}
                   initial={reduce ? undefined : { opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   // A short stagger so the page arrives as a cascade rather

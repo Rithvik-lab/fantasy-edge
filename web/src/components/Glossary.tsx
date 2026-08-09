@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
  */
 const ORDER = ["vor", "survive", "range", "score", "dropoff",
                "volatility", "rookie", "adp", "board_rank", "shares",
-               "pos_rank", "grade", "season_total", "curve_now",
+               "pos_rank", "grade", "off_board", "season_total", "curve_now",
                "curve_after", "crossover", "overlap"] as const;
 
 const LABEL: Record<string, string> = {
@@ -23,7 +23,7 @@ const LABEL: Record<string, string> = {
   dropoff: "Falls off", volatility: "Volatility", rookie: "Rookie",
   adp: "ADP", board_rank: "Board rank", shares: "Catches / TDs",
   pos_rank: "Position rank", grade: "Roster grade",
-  season_total: "Season points", curve_now: "Grey curve",
+  off_board: "Off the board", season_total: "Season points", curve_now: "Grey curve",
   curve_after: "Green curve", crossover: "Break-even", overlap: "Overlap",
 };
 

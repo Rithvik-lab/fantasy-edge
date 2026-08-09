@@ -73,7 +73,7 @@ export default function App() {
   // planning round six while round three is on the clock.
   const [planAt, setPlanAt] = useState<number | null>(null);
   const planRef = useRef<number | null>(null);
-  const { launch, layer, arriving } = useFlight();
+  const { launch, layer, landingIn } = useFlight();
   const skipped = useRef<string[]>([]);
   const lastPickCount = useRef(-1);
 
@@ -170,7 +170,7 @@ export default function App() {
     // Fired before the request so the motion starts on the click rather than
     // on the round trip. It is purely visual; if the pick fails the ghost has
     // already faded and the roster simply never changed.
-    if (from) launch(from.el, from.name, from.headshot);
+    if (from) launch(from.el, from.name, from.headshot, "mine");
     setBusy(true);
     try {
       skipped.current = [];
@@ -198,6 +198,22 @@ export default function App() {
     setBusy(true);
     await loadList();
     setBusy(false);
+  }
+
+  /** Somebody else took him. Off the board, not onto your team — which in a
+   *  manual draft is eleven picks out of every twelve. */
+  async function markGone(
+    playerId: string,
+    from?: { el: Element | null; name: string; headshot: string | null },
+  ) {
+    if (from) launch(from.el, from.name, from.headshot, "gone");
+    setBusy(true);
+    try {
+      skipped.current = [];
+      await refreshAll(await api.pick({ player_id: playerId, mine: false }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
   }
 
   /** Take one specific player back off the board, not just the last pick. */
@@ -364,15 +380,16 @@ export default function App() {
                 </div>
                 <div key={side} className="tick-in">
                   {side === "feed"
-                    ? <Ticker status={status} onUndo={undo} busy={busy} />
+                    ? <Ticker status={status} onUndo={undo} busy={busy}
+                                 landing={landingIn("gone")} />
                     : <Teams teams={teams} mySlot={status.my_slot ?? 1} />}
                 </div>
                 <Roster data={roster} onRemove={removePlayer} busy={busy}
-                        onDropPlayer={draft} landing={arriving} />
+                        onDropPlayer={draft} landing={landingIn("mine")} />
               </div>
 
               <div className="min-h-0">
-                <Ladder data={ladder} myTurn={myTurn} onDraft={draft}
+                <Ladder data={ladder} myTurn={myTurn} onDraft={draft} onGone={markGone}
                         perPage={status.n_teams} />
               </div>
             </div>
