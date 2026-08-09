@@ -981,10 +981,12 @@ def _headshots(b: pl.DataFrame) -> dict[str, str]:
 
 
 @app.get("/api/suggestions")
-def suggestions(n: int = 3, exclude: str = "") -> dict:
+def suggestions(n: int = 3, exclude: str = "",
+                at: int | None = None) -> dict:
     """The names to take right now, with the reasoning that produced them."""
     st = _require()
-    _, _, overall = st.on_the_clock()
+    _, _, live = st.on_the_clock()
+    overall = at or live
     if st.draft_complete or overall > st.settings.total_picks:
         # Recommending a 17th round of a 16-round draft is not a small
         # cosmetic problem -- it is the tool confidently answering a question
@@ -995,9 +997,25 @@ def suggestions(n: int = 3, exclude: str = "") -> dict:
     b = _board()
     skip = [x for x in exclude.split(",") if x]
 
+    # PLANNING AHEAD HAS TO DROP THE MEN WHO WILL BE GONE. Asked what to target
+    # in round four, the first version answered with the same three names as
+    # round one -- correct in the sense that nobody has taken them in this
+    # empty draft, and useless, because by pick 39 they are not a choice you
+    # get to make. So when evaluating a FUTURE pick, anyone with less than a
+    # one-in-ten chance of lasting that long is filtered out. The current pick
+    # is never filtered: who is actually on the board is a fact, not a forecast.
+    if at and at > live:
+        b = b.with_columns(
+            pl.struct(["ecr", "sd"]).map_elements(
+                lambda r: survival_probability(r["ecr"], r["sd"],
+                                               at - live, live),
+                return_dtype=pl.Float64).alias("_reach")
+        ).filter(pl.col("_reach") >= 0.10).drop("_reach")
+
     state = DraftState(settings=st.settings, my_slot=st.my_slot,
                        drafted=st.drafted_ids, my_roster=st.my_ids,
-                       owned_picks=st.owned_picks)
+                       owned_picks=st.owned_picks,
+                       at_overall=at if at and at != live else None)
 
     strength = None
     if st.my_ids:
@@ -1037,6 +1055,16 @@ def suggestions(n: int = 3, exclude: str = "") -> dict:
         "needs": needs,
         "compare": explain.compare(rows),
         "suggestions": rows,
+        "planning": bool(at and at != live),
+        "live_overall": live,
+        # (overall, round) pairs. The round is computed here because this is
+        # where n_teams lives -- deriving it in the browser meant hardcoding 12
+        # and silently mislabelling every pick in a 10-team league.
+        "my_picks": [
+            {"overall": p,
+             "round": (p - 1) // st.settings.n_teams + 1}
+            for p in st.my_picks()
+        ],
     }
 
 

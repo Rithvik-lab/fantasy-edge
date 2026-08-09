@@ -32,7 +32,7 @@ const SPRING = { type: "spring" as const, stiffness: 300, damping: 34, mass: 0.9
  * viewport is clipped and the track is driven by the buttons.
  */
 export function Shortlist({
-  data, onDraft, onSkip, busy, myTurn, stale,
+  data, onDraft, onSkip, busy, myTurn, stale, planAt, onPlan,
 }: {
   data: ShortlistData | null;
   onDraft: (id: string) => void;
@@ -40,6 +40,8 @@ export function Shortlist({
   busy: boolean;
   myTurn: boolean;
   stale: boolean;
+  planAt: number | null;
+  onPlan: (overall: number | null) => void;
 }) {
   const [page, setPage] = useState(0);
   const [vw, setVw] = useState(0);
@@ -131,9 +133,38 @@ export function Shortlist({
           <span className="eyebrow">
             {myTurn ? "You are on the clock" : "Take these when it is your turn"}
           </span>
-          <span className="text-[11px] text-muted num">
-            Round {data.round} · Pick {data.pick} · Overall {data.overall}
-          </span>
+          {/* Which pick this answers for. It follows the draft on its own and
+              snaps back the moment a pick lands, so choosing a round here is a
+              detour rather than a mode you can get stranded in. */}
+          <label className="flex items-center gap-1.5">
+            <span className="sr-only">Plan for pick</span>
+            <select
+              value={planAt ?? ""}
+              onChange={(e) => onPlan(e.target.value ? Number(e.target.value) : null)}
+              disabled={busy}
+              className={cn(
+                "num rounded border bg-ink px-1.5 py-0.5 text-[11px] focus:outline-none",
+                data.planning ? "border-clock/50 text-clock" : "border-line text-muted"
+              )}
+            >
+              <option value="">
+                Round {data.round} · pick {data.overall} (live)
+              </option>
+              {(data.my_picks ?? [])
+                .filter((p) => p.overall !== data.live_overall)
+                .map((p) => (
+                  <option key={p.overall} value={p.overall} className="bg-panel">
+                    Round {p.round} · pick {p.overall}
+                  </option>
+                ))}
+            </select>
+          </label>
+          {data.planning && (
+            <button onClick={() => onPlan(null)}
+                    className="text-[11px] text-clock underline-offset-2 hover:underline">
+              planning ahead — back to now
+            </button>
+          )}
           {data.picks_until_next != null && (
             <Term k="survive">
               <span className="num text-[11px] text-muted">

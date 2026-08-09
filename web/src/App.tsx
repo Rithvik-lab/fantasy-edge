@@ -67,6 +67,11 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Which of your picks the shortlist is answering for. null = the live one,
+  // and it snaps back to null whenever a pick lands so you are never quietly
+  // planning round six while round three is on the clock.
+  const [planAt, setPlanAt] = useState<number | null>(null);
+  const planRef = useRef<number | null>(null);
   const skipped = useRef<string[]>([]);
   const lastPickCount = useRef(-1);
 
@@ -76,7 +81,7 @@ export default function App() {
   // through it locally — an arrow press is a slide, not a round trip.
   const loadList = useCallback(async () => {
     try {
-      setList(await api.suggestions(NAMES, skipped.current));
+      setList(await api.suggestions(NAMES, skipped.current, planRef.current));
       setStale(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -147,10 +152,22 @@ export default function App() {
 
   /* -- actions ---------------------------------------------------------- */
 
+  /** Aim the shortlist at one of your picks. */
+  async function planFor(overall: number | null) {
+    planRef.current = overall;
+    setPlanAt(overall);
+    setBusy(true);
+    await loadList();
+    setBusy(false);
+  }
+
   async function draft(playerId: string) {
     setBusy(true);
     try {
       skipped.current = [];
+      // A pick landing ends the planning detour and moves you on.
+      planRef.current = null;
+      setPlanAt(null);
       await refreshAll(await api.pick({ player_id: playerId, mine: true }));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -341,7 +358,8 @@ export default function App() {
                     ? <Ticker status={status} onUndo={undo} busy={busy} />
                     : <Teams teams={teams} mySlot={status.my_slot ?? 1} />}
                 </div>
-                <Roster data={roster} onRemove={removePlayer} busy={busy} />
+                <Roster data={roster} onRemove={removePlayer} busy={busy}
+                        onDropPlayer={draft} />
               </div>
 
               <div className="min-h-0">
@@ -381,6 +399,8 @@ export default function App() {
         stale={stale}
         onDraft={draft}
         onSkip={skip}
+        planAt={planAt}
+        onPlan={planFor}
       />
       )}
 

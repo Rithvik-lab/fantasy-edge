@@ -64,6 +64,12 @@ class DraftState:
     # Overall pick numbers you actually hold. None means the plain snake off
     # `my_slot`; pass a list once picks have been traded.
     owned_picks: list[int] | None = None
+    # Plan for a pick other than the one up now. Everything downstream --
+    # the wait until your next turn, and therefore every survival probability
+    # -- keys off the pick being evaluated, so overriding it here is what makes
+    # "what should I be aiming at in round five" a real question rather than a
+    # relabelled version of the current answer.
+    at_overall: int | None = None
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_slot <= self.settings.n_teams:
@@ -83,8 +89,8 @@ class DraftState:
                               self.settings.n_rounds)
 
     def on_the_clock(self) -> tuple[int, int]:
-        """(round, pick) currently up, 1-indexed."""
-        nxt = self.picks_made + 1
+        """(round, pick) being evaluated, 1-indexed."""
+        nxt = self.at_overall if self.at_overall is not None else self.picks_made + 1
         rnd = (nxt - 1) // self.settings.n_teams + 1
         pick = (nxt - 1) % self.settings.n_teams + 1
         return rnd, pick

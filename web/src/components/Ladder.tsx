@@ -90,6 +90,12 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
               return (
                 <motion.li
                   key={p.player_id}
+                  draggable={!p.drafted}
+                  onDragStart={(e) => {
+                    (e as unknown as React.DragEvent).dataTransfer
+                      .setData("text/plain", p.player_id);
+                  }}
+                  title={p.drafted ? undefined : "drag onto your team to draft him"}
                   initial={reduce ? undefined : { opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   // A short stagger so the page arrives as a cascade rather
@@ -98,7 +104,7 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
                   transition={{ delay: reduce ? 0 : i * 0.022, duration: 0.16 }}
                   className={cn(
                     "flex h-[33px] items-center gap-2 border-b border-line/50 px-3 transition-colors last:border-0",
-                    p.drafted ? "opacity-35" : "hover:bg-raised/60",
+                    p.drafted ? "opacity-35" : "cursor-grab hover:bg-raised/60 active:cursor-grabbing",
                     isNext && !p.drafted && "bg-turf/8"
                   )}
                 >

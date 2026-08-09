@@ -31,6 +31,9 @@ export interface Shortlist {
   compare: string;
   suggestions: Suggestion[];
   note?: string;
+  planning?: boolean;
+  live_overall?: number;
+  my_picks?: { overall: number; round: number }[];
 }
 
 export interface SearchHit {
@@ -256,8 +259,9 @@ export const api = {
   connectEspn: (body: unknown) =>
     req<Status>("/espn/connect", { method: "POST", body: JSON.stringify(body) }),
   sync: () => req<Status>("/espn/sync", { method: "POST" }),
-  suggestions: (n = 3, exclude: string[] = []) =>
-    req<Shortlist>(`/suggestions?n=${n}&exclude=${exclude.join(",")}`),
+  suggestions: (n = 3, exclude: string[] = [], at?: number | null) =>
+    req<Shortlist>(`/suggestions?n=${n}&exclude=${exclude.join(",")}`
+      + (at ? `&at=${at}` : "")),
   pick: (body: { name?: string; player_id?: string; mine?: boolean }) =>
     req<Status>("/pick", { method: "POST", body: JSON.stringify(body) }),
   undo: () => req<Status>("/undo", { method: "POST" }),

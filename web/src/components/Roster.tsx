@@ -12,19 +12,33 @@ import { cn } from "@/lib/utils";
  * row can be removed on its own, which puts him back on the board and
  * renumbers the picks after him.
  */
-export function Roster({ data, onRemove, busy }: {
+export function Roster({ data, onRemove, busy, onDropPlayer }: {
   data: RosterView | null;
   onRemove: (playerId: string, name: string) => void;
   busy: boolean;
+  /** Drop a name from the board here to draft him. */
+  onDropPlayer?: (playerId: string) => void;
 }) {
+  // Dropping a name from the board onto your team IS drafting him — the
+  // gesture and the meaning are the same, which is the whole argument for it.
+  const drop = onDropPlayer ? {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData("text/plain");
+      if (id) onDropPlayer(id);
+    },
+  } : {};
+
   if (!data || (!data.starters.length && !data.bench.length)) {
     return (
-      <section className="rounded-lg border border-line bg-panel">
+      <section {...drop}
+               className="rounded-lg border border-dashed border-line bg-panel">
         <header className="border-b border-line px-3 py-2">
           <span className="eyebrow">Your team</span>
         </header>
         <p className="px-3 py-6 text-center text-xs text-muted">
-          Nothing drafted yet.
+          Nothing drafted yet.{onDropPlayer && " Drag a name from the board here."}
         </p>
       </section>
     );
@@ -63,7 +77,7 @@ export function Roster({ data, onRemove, busy }: {
   );
 
   return (
-    <section className="rounded-lg border border-line bg-panel">
+    <section {...drop} className="rounded-lg border border-line bg-panel">
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="eyebrow">Your team</span>
         {g.score != null && (
