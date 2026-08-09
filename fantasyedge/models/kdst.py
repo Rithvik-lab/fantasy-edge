@@ -124,3 +124,63 @@ def rows(market: pl.DataFrame) -> pl.DataFrame:
         pl.lit(16.5).alias("expected_games"),
         pl.lit(False).alias("rookie"),
     ])
+
+
+# ---------------------------------------------------------------------------
+# WEEKLY, which is a completely different question from the season curve above
+# ---------------------------------------------------------------------------
+# The curves above are flat because season-long finish at these positions is
+# close to unpredictable in August. Week to week is the opposite: the betting
+# market prices every game before it is played, and those numbers carry real
+# signal about how a kicker and a defence will score. This is the foundation
+# waiver mode needs -- streaming K and DST is the most repeatable edge in the
+# format, and it is repeatable precisely BECAUSE the season-long ranking is not.
+#
+# Fitted on 2022-2025, every team-week with a published line:
+#
+#   KICKER   pts = 3.38 + 0.174 * own team's implied points     n = 2,277
+#   DEFENCE  pts = 14.02 - 0.411 * opponent's implied points    n = 2,278
+#
+# The defence slope is the one that matters. r = -0.310, and the softest
+# quartile of matchup returns 6.82 a week against 3.02 for the toughest -- a
+# 3.81 point gap, which is roughly 65 points across a season, or the difference
+# between a good starter and a mediocre one at a real position.
+#
+# THAT NUMBER WAS 1.36 UNTIL POINTS-ALLOWED TIERS WENT IN. Scoring a defence on
+# sacks and turnovers alone hides most of the effect, because the largest part
+# of what a soft matchup buys you is simply the opponent failing to score. It
+# is worth naming: measuring the wrong scoring rules understated the edge by
+# a factor of nearly three, and would have made streaming look not worth doing.
+K_INTERCEPT, K_SLOPE = 3.38, 0.174
+DST_INTERCEPT, DST_SLOPE = 14.02, -0.411
+
+
+def project_week(position: str, implied_for: float | None = None,
+                 implied_against: float | None = None) -> float | None:
+    """Points for one kicker or defence in one game, from the betting line.
+
+    `implied_for` is what the market expects this team to score; the opponent's
+    number goes in `implied_against`. Both come straight out of a spread and a
+    total: total/2 +- spread/2.
+
+    Returns None when there is no line, which is honest -- before a game is
+    priced there is nothing here the season curve does not already say.
+    """
+    if position == "K":
+        if implied_for is None:
+            return None
+        return K_INTERCEPT + K_SLOPE * float(implied_for)
+    if position == "DST":
+        if implied_against is None:
+            return None
+        return DST_INTERCEPT + DST_SLOPE * float(implied_against)
+    return None
+
+
+def implied(total_line: float, spread_line: float) -> tuple[float, float]:
+    """(this team's implied points, the opponent's) from a line.
+
+    `spread_line` is from this team's perspective: negative when favoured.
+    """
+    return (total_line / 2 + spread_line / 2,
+            total_line / 2 - spread_line / 2)
