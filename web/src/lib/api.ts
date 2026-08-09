@@ -269,7 +269,9 @@ export const api = {
   setSlot: (slot: number) => req<Status>(`/slot?slot=${slot}`, { method: "POST" }),
   teams: () => req<{ teams: TeamRow[] }>("/teams"),
   analytics: () => req<Analytics>("/analytics"),
-  adp: (limit = 80) => req<AdpLadder>(`/adp?limit=${limit}`),
+  adp: (limit?: number) =>
+    req<AdpLadder>(`/adp?upcoming_only=true`
+      + (limit ? `&limit=${limit}` : "")),
   player: (id: string) => req<PlayerProfile>(`/player/${id}`),
   search: (q: string) => req<{ players: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
   setOwnedPicks: (picks: number[]) =>

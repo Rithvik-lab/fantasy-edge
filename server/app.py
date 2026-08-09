@@ -1258,7 +1258,8 @@ def analytics(depth: int = 10) -> dict:
 
 
 @app.get("/api/adp")
-def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
+def adp_ladder(limit: int | None = None,
+               upcoming_only: bool = False) -> dict:
     """The draft board in ADP order, with what has already gone struck out.
 
     This is the ladder people actually read during a draft: who is next off
@@ -1266,6 +1267,13 @@ def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
     analysis; this is the thing you glance at.
     """
     st = _require()
+    # `limit` counts what comes BACK, and with upcoming_only that means
+    # available players -- the slice below already reaches past everyone
+    # already taken to fill the quota. So the client asks for a few rounds'
+    # worth and keeps getting them on the last pick of the draft, without
+    # anyone having to guess a depth up front.
+    if limit is None:
+        limit = st.settings.n_teams * 5
     b = _board()
     taken = set(st.drafted_ids)
     _, _, overall = st.on_the_clock()

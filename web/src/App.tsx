@@ -95,7 +95,7 @@ export default function App() {
     await loadList();
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
     try { setStats(await api.analytics()); } catch { /* optional */ }
-    try { setLadder(await api.adp(260)); } catch { /* optional */ }
+    try { setLadder(await api.adp()); } catch { /* optional */ }
     try { setRoster(await api.roster()); } catch { /* optional */ }
     setScreen("draft");
   }, [loadList]);
@@ -133,7 +133,7 @@ export default function App() {
           await loadList();
           try { setTeams((await api.teams()).teams); } catch { /* optional */ }
           try { setStats(await api.analytics()); } catch { /* optional */ }
-          try { setLadder(await api.adp(260)); } catch { /* optional */ }
+          try { setLadder(await api.adp()); } catch { /* optional */ }
           try { setRoster(await api.roster()); } catch { /* optional */ }
         } else {
           quiet += 1;

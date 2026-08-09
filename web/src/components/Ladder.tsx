@@ -47,8 +47,10 @@ export function Ladder({ data, myTurn, perPage, onDraft }: {
   const source = data?.players;
   const all = useMemo(() => source ?? [], [source]);
   const gone = useMemo(() => all.filter((p) => p.drafted).length, [all]);
-  // Only men you can actually take. A drafted name leaving is what backfills
-  // the page from below without anything having to ask for more.
+  // The server already sends available players only, and reaches deeper into
+  // the board to keep the quota full as picks land -- so this is a guard
+  // rather than the mechanism. Left in because a stale response mid-pick
+  // would otherwise show a name that is already gone.
   const players = useMemo(() => all.filter((p) => !p.drafted), [all]);
 
   // Back to the top when the pool shrinks under us, so paging never strands
