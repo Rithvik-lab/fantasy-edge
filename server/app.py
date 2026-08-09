@@ -231,13 +231,50 @@ def _snapshot() -> dict:
     }
 
 
-def _autosave() -> None:
-    """Persist after every mutation, so closing the tab costs nothing."""
-    if STATE.league_id and STATE.settings is not None:
-        try:
-            store.save(STATE.league_id, _snapshot())
-        except Exception:      # a failed save must never break a draft
-            pass
+# What was on disk the last time we wrote. The live sync fires every few
+# seconds and almost always changes nothing, so writing on every call would be
+# hundreds of pointless disk writes an hour during a draft.
+_SAVED: tuple | None = None
+
+
+def _fingerprint() -> tuple:
+    """Everything worth persisting, reduced to something comparable."""
+    st = STATE
+    return (
+        len(st.picks),
+        st.my_slot,
+        tuple(st.owned_picks) if st.owned_picks else None,
+        st.my_team_id,
+        st.slot_confirmed,
+        st.draft_complete,
+        st.risk,
+        st.bench_risk,
+        st.name,
+        bool(st.espn),
+    )
+
+
+def _autosave(force: bool = False) -> None:
+    """Persist after every mutation, so closing the tab costs nothing.
+
+    Named once, saved forever after: `league_id` is set by /leagues/save and
+    every later change writes itself. There is no second button to forget.
+
+    Skips the write when nothing has actually changed, which matters because
+    the live-draft poll calls through here every few seconds and is usually
+    reporting that the board is exactly as it was.
+    """
+    global _SAVED
+    if not STATE.league_id or STATE.settings is None:
+        return
+    fp = _fingerprint()
+    if not force and fp == _SAVED:
+        return
+    try:
+        store.save(STATE.league_id, _snapshot())
+        _SAVED = fp
+    except Exception:      # a failed save must never break a draft
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +383,7 @@ def connect_espn(cfg: EspnIn) -> dict:
                 STATE.my_slot = slot
                 STATE.slot_confirmed = True
     _ingest(payload)
+    _autosave()
     return status()
 
 
@@ -491,6 +529,10 @@ def sync() -> dict:
     except espn_draft.DraftUnavailable as exc:
         with STATE.lock:
             STATE.sync_error = str(exc)
+    # Picks arriving from ESPN are the highest-frequency mutation there is, and
+    # were the one kind that never reached disk. A tab closed mid-draft lost
+    # every pick since the last one typed by hand.
+    _autosave()
     return status()
 
 
@@ -1255,6 +1297,14 @@ def adp_ladder(limit: int = 80, upcoming_only: bool = False) -> dict:
         "platform": st.platform,
         "overall": overall,
         "my_next": min([p for p in mine if p >= overall], default=None),
+        # Every pick you still hold, so the board can show WHERE they land.
+        # A draft board sorted by ADP is a forecast of the order names come
+        # off, so drawing your picks into it answers the question you actually
+        # have between turns: who is likely to still be there when I am up.
+        "my_upcoming": [
+            {"overall": p, "round": (p - 1) // st.settings.n_teams + 1}
+            for p in mine if p >= overall
+        ],
         "players": out,
     }
 

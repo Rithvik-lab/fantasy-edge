@@ -66,6 +66,7 @@ export interface AdpLadder {
   platform: string;
   overall: number;
   my_next: number | null;
+  my_upcoming?: { overall: number; round: number }[];
   players: {
     player_id: string; player_name: string; position: string;
     ecr: number | null; draft_rank: number | null; vor: number | null;

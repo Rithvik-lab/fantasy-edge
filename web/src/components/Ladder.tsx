@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { AdpLadder } from "@/lib/api";
@@ -52,6 +52,19 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
 
   if (!data) return null;
 
+  /**
+   * Your picks, drawn into the board where they land.
+   *
+   * The board is sorted by ADP, which makes it a forecast of the order names
+   * come off. So a line at pick 39 sits exactly between the men expected to go
+   * 38th and 40th, and answers the question you have between turns: of these,
+   * who is likely to still be here when I am up. Reading that off a separate
+   * "next pick #39" label meant holding two numbers in your head and comparing
+   * them by hand.
+   */
+  const marks = (data.my_upcoming ?? []).filter(
+    (m) => m.overall >= (players[0]?.ecr ?? 0) - 2);
+
   const max = Math.max(0, players.length - PAGE);
   const at = Math.min(start, max);
   const page = players.slice(at, at + PAGE);
@@ -87,7 +100,24 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
               const hue = POS_HUE[p.position] ?? "#8CA096";
               const isNext = data.my_next != null
                 && Math.round(p.ecr ?? 0) === data.my_next;
+              // Picks that fall between the man above and this one.
+              const prev = at + i > 0 ? players[at + i - 1]?.ecr ?? 0 : 0;
+              const here = marks.filter(
+                (m) => m.overall > prev && m.overall <= (p.ecr ?? 0));
               return (
+                <Fragment key={p.player_id}>
+                {here.map((m) => (
+                  <li key={`mark-${m.overall}`}
+                      className="relative flex h-0 items-center">
+                    <span className="absolute inset-x-0 flex items-center gap-2 px-3">
+                      <span className="h-px flex-1 bg-turf/45" />
+                      <span className="num whitespace-nowrap rounded bg-ink px-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-turf">
+                        your pick {m.overall} &middot; r{m.round}
+                      </span>
+                      <span className="h-px w-6 bg-turf/45" />
+                    </span>
+                  </li>
+                ))}
                 <motion.li
                   key={p.player_id}
                   draggable={!p.drafted}
@@ -138,6 +168,7 @@ export function Ladder({ data, myTurn }: { data: AdpLadder | null; myTurn: boole
                     {p.vor != null ? Math.round(p.vor) : "—"}
                   </span>
                 </motion.li>
+                </Fragment>
               );
             })}
           </motion.ul>
