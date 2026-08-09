@@ -31,7 +31,9 @@ export function Ladder({ data, myTurn, onDraft }: {
   /** Double-click a name to take him. Same meaning as dragging him onto your
    *  team, one gesture shorter — which matters when you are on the clock and
    *  the whole point of this app is the seconds. */
-  onDraft?: (playerId: string) => void;
+  onDraft?: (playerId: string, from?: {
+    el: Element | null; name: string; headshot: string | null;
+  }) => void;
 }) {
   const [start, setStart] = useState(0);
   const reduce = useReducedMotion();
@@ -132,8 +134,13 @@ export function Ladder({ data, myTurn, onDraft }: {
                     (e as unknown as React.DragEvent).dataTransfer
                       .setData("text/plain", p.player_id);
                   }}
-                  onDoubleClick={() => {
-                    if (!p.drafted && onDraft) onDraft(p.player_id);
+                  onDoubleClick={(e) => {
+                    if (p.drafted || !onDraft) return;
+                    onDraft(p.player_id, {
+                      el: e.currentTarget as unknown as Element,
+                      name: p.player_name,
+                      headshot: p.headshot,
+                    });
                   }}
                   title={p.drafted ? undefined
                     : "double-click to draft him, or drag him onto your team"}

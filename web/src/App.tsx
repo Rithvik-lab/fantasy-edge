@@ -15,6 +15,7 @@ import { GlossaryDrawer } from "@/components/Glossary";
 import { PickEditor } from "@/components/PickEditor";
 import { PickInput } from "@/components/PickInput";
 import { Phase, SyncDot } from "@/components/Phase";
+import { useFlight } from "@/components/Flight";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
 import { MyTeam } from "@/components/MyTeam";
@@ -72,6 +73,7 @@ export default function App() {
   // planning round six while round three is on the clock.
   const [planAt, setPlanAt] = useState<number | null>(null);
   const planRef = useRef<number | null>(null);
+  const { launch, layer, arriving } = useFlight();
   const skipped = useRef<string[]>([]);
   const lastPickCount = useRef(-1);
 
@@ -161,7 +163,14 @@ export default function App() {
     setBusy(false);
   }
 
-  async function draft(playerId: string) {
+  async function draft(
+    playerId: string,
+    from?: { el: Element | null; name: string; headshot: string | null },
+  ) {
+    // Fired before the request so the motion starts on the click rather than
+    // on the round trip. It is purely visual; if the pick fails the ghost has
+    // already faded and the roster simply never changed.
+    if (from) launch(from.el, from.name, from.headshot);
     setBusy(true);
     try {
       skipped.current = [];
@@ -359,7 +368,7 @@ export default function App() {
                     : <Teams teams={teams} mySlot={status.my_slot ?? 1} />}
                 </div>
                 <Roster data={roster} onRemove={removePlayer} busy={busy}
-                        onDropPlayer={draft} />
+                        onDropPlayer={draft} landing={arriving} />
               </div>
 
               <div className="min-h-0">
@@ -403,6 +412,8 @@ export default function App() {
         onPlan={planFor}
       />
       )}
+
+      {layer}
 
       {editPicks && (
         <PickEditor

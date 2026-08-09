@@ -1,6 +1,7 @@
 import type { RosterView } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { Term } from "@/components/Explain";
+import { LANDING, Landed } from "@/components/Flight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -12,12 +13,14 @@ import { cn } from "@/lib/utils";
  * row can be removed on its own, which puts him back on the board and
  * renumbers the picks after him.
  */
-export function Roster({ data, onRemove, busy, onDropPlayer }: {
+export function Roster({ data, onRemove, busy, onDropPlayer, landing }: {
   data: RosterView | null;
   onRemove: (playerId: string, name: string) => void;
   busy: boolean;
   /** Drop a name from the board here to draft him. */
   onDropPlayer?: (playerId: string) => void;
+  /** True for the moment a drafted player is landing. */
+  landing?: boolean;
 }) {
   // Dropping a name from the board onto your team IS drafting him — the
   // gesture and the meaning are the same, which is the whole argument for it.
@@ -32,8 +35,9 @@ export function Roster({ data, onRemove, busy, onDropPlayer }: {
 
   if (!data || (!data.starters.length && !data.bench.length)) {
     return (
-      <section {...drop}
-               className="rounded-lg border border-dashed border-line bg-panel">
+      <section {...drop} {...{ [LANDING]: "" }}
+               className="relative rounded-lg border border-dashed border-line bg-panel">
+        <Landed on={!!landing} />
         <header className="border-b border-line px-3 py-2">
           <span className="eyebrow">Your team</span>
         </header>
@@ -77,7 +81,9 @@ export function Roster({ data, onRemove, busy, onDropPlayer }: {
   );
 
   return (
-    <section {...drop} className="rounded-lg border border-line bg-panel">
+    <section {...drop} {...{ [LANDING]: "" }}
+             className="relative rounded-lg border border-line bg-panel">
+      <Landed on={!!landing} />
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="eyebrow">Your team</span>
         {g.score != null && (

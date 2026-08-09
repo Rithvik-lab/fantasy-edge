@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { LeagueRoster, TradePlayer } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { LANDING, Landed } from "@/components/Flight";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,7 +31,7 @@ export function RosterPanel({
   /** Double-click forces him IN. Single-click toggles, so a double-click would
    *  otherwise fire the toggle twice and net to nothing — which reads exactly
    *  like a dead control. Same gesture as the draft board, same meaning. */
-  onAdd?: (id: string) => void;
+  onAdd?: (id: string, el?: Element | null) => void;
   side: "mine" | "theirs";
 }) {
   if (!roster) {
@@ -55,7 +56,7 @@ export function RosterPanel({
           e.dataTransfer.effectAllowed = "copy";
         }}
         onClick={() => onToggle(p.player_id)}
-        onDoubleClick={() => onAdd?.(p.player_id)}
+        onDoubleClick={(e) => onAdd?.(p.player_id, e.currentTarget as Element)}
         title={on ? "in the trade — click to take him out"
                   : "click or double-click to put him in the trade"}
         className={cn(
@@ -133,7 +134,7 @@ export function RosterPanel({
 
 /** A pile of faces — what is crossing the table from one side. */
 export function TradePile({
-  label, ids, players, tone, onDrop, onRemove,
+  label, ids, players, tone, onDrop, onRemove, side, landing,
 }: {
   label: string;
   ids: string[];
@@ -141,6 +142,9 @@ export function TradePile({
   tone: "alarm" | "turf";
   onDrop: (id: string) => void;
   onRemove: (id: string) => void;
+  /** Names the pile so a flying player knows which one he is joining. */
+  side?: string;
+  landing?: boolean;
 }) {
   return (
     <div
@@ -150,11 +154,13 @@ export function TradePile({
         const id = e.dataTransfer.getData("text/plain");
         if (id) onDrop(id);
       }}
+      {...(side ? { [LANDING]: side } : {})}
       className={cn(
-        "flex min-h-[190px] flex-col gap-2 rounded-lg border border-dashed p-2 transition-colors",
+        "relative flex min-h-[190px] flex-col gap-2 rounded-lg border border-dashed p-2 transition-colors",
         tone === "alarm" ? "border-alarm/25" : "border-turf/25"
       )}
     >
+      <Landed on={!!landing} />
       <span className={cn("eyebrow", tone === "alarm" ? "text-alarm/70" : "text-turf/70")}>
         {label}
       </span>
@@ -232,7 +238,7 @@ export function ManualRoster({
   players: Map<string, TradePlayer>;
   selected: string[];
   onToggle: (id: string) => void;
-  onAdd?: (id: string) => void;
+  onAdd?: (id: string, el?: Element | null) => void;
   onRemove: (id: string) => void;
   onDropIn?: (id: string) => void;
   children?: React.ReactNode;
@@ -270,7 +276,7 @@ export function ManualRoster({
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("text/plain", id)}
                 onClick={() => onToggle(id)}
-                onDoubleClick={() => onAdd?.(id)}
+                onDoubleClick={(e) => onAdd?.(id, e.currentTarget as Element)}
                 title={on ? "in the trade — click to take him out"
                           : "click or double-click to put him in the trade"}
                 className={cn(

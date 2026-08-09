@@ -8,6 +8,7 @@ import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
 import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
 import { Simulating } from "@/components/Simulating";
+import { useFlight } from "@/components/Flight";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ export function Trade() {
   // the hypothetical: any roster, real or not, can be priced against.
   const [myManual, setMyManual] = useState<string[]>([]);
   const [theirManual, setTheirManual] = useState<string[]>([]);
+  const { launch, layer, landingIn } = useFlight();
 
   useEffect(() => {
     api.rosters()
@@ -80,9 +82,11 @@ export function Trade() {
     } finally { setBusy(false); }
   }, []);
 
-  const add = (side: "give" | "get", id: string) => {
+  const add = (side: "give" | "get", id: string, from?: Element | null) => {
     const set = side === "give" ? setGive : setGet;
     set((cur) => (cur.includes(id) ? cur : [...cur, id]));
+    const p = known.get(id);
+    if (from && p) launch(from, p.player_name, p.headshot ?? null, side);
   };
   const drop = (side: "give" | "get", id: string) => {
     const set = side === "give" ? setGive : setGet;
@@ -156,6 +160,7 @@ export function Trade() {
 
   return (
     <div className="space-y-3">
+      {layer}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-line p-0.5">
           {(["auto", "manual"] as const).map((e) => (
@@ -216,13 +221,13 @@ export function Trade() {
                          onAdd={(h) => addTyped("give", h)} />
               <RosterPanel title="My team" roster={mine} side="mine"
                            selected={give} onToggle={(id) => toggle("give", id)}
-                           onAdd={(id) => add("give", id)} />
+                           onAdd={(id, el) => add("give", id, el)} />
             </>
           ) : (
             <ManualRoster title="My team" ids={myManual} players={known}
                           selected={give}
                           onToggle={(id) => toggle("give", id)}
-                          onAdd={(id) => add("give", id)}
+                          onAdd={(id, el) => add("give", id, el)}
                           onRemove={(id) => {
                             setMyManual((r) => r.filter((x) => x !== id));
                             drop("give", id);
@@ -238,9 +243,11 @@ export function Trade() {
         </div>
 
         <TradePile label="you give" tone="alarm" ids={give} players={known}
+                   side="give" landing={landingIn("give")}
                    onDrop={(id) => add("give", id)}
                    onRemove={(id) => drop("give", id)} />
         <TradePile label="you get" tone="turf" ids={get} players={known}
+                   side="get" landing={landingIn("get")}
                    onDrop={(id) => add("get", id)}
                    onRemove={(id) => drop("get", id)} />
 
@@ -265,13 +272,13 @@ export function Trade() {
               <RosterPanel title={other?.name ?? "Their team"} roster={other}
                            side="theirs" selected={get}
                            onToggle={(id) => toggle("get", id)}
-                           onAdd={(id) => add("get", id)} />
+                           onAdd={(id, el) => add("get", id, el)} />
             </>
           ) : (
             <ManualRoster title="Their team" ids={theirManual} players={known}
                           selected={get}
                           onToggle={(id) => toggle("get", id)}
-                          onAdd={(id) => add("get", id)}
+                          onAdd={(id, el) => add("get", id, el)}
                           onRemove={(id) => {
                             setTheirManual((r) => r.filter((x) => x !== id));
                             drop("get", id);
