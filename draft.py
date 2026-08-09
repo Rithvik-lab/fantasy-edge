@@ -32,7 +32,7 @@ from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge import config  # noqa: E402
 from fantasyedge.features import build as fb  # noqa: E402
 from fantasyedge.league import LeagueSettings, picks_for_slot  # noqa: E402
-from fantasyedge.models import pergame_curve, rookie_risk  # noqa: E402
+from fantasyedge.models import kdst, pergame_curve, rookie_risk  # noqa: E402
 
 W = 78
 _BOARD: pl.DataFrame | None = None
@@ -90,7 +90,8 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     if _BOARD is not None:
         return _BOARD
 
-    m = _market().filter(pl.col("gsis_id").is_not_null())
+    market_all = _market()
+    m = market_all.filter(pl.col("gsis_id").is_not_null())
 
     # Market rank -> what players ranked there have historically done. The
     # curve is keyed on PRE-season rank; keying it on where players finished
@@ -113,6 +114,7 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     vets, rk = _merge_rookies(vets, _rookies())
     b = pl.concat([vets, rk], how="diagonal") if rk.height else vets
 
+
     # Rookie draft position is the least settled on the board, so widen it.
     b = b.with_columns(
         pl.when(pl.col("rookie").fill_null(False))
@@ -126,6 +128,23 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     b = rookie_risk.apply(b)          # discount the projection ...
     b = _season_distribution(b)
     b = rookie_risk.apply_floor(b)    # ... and drop the floor further still
+
+    # Kickers and defences last, AFTER the skill-position transforms. They
+    # carry their own bands from models.kdst and none of the machinery above
+    # applies to them -- there is no scoring mix for a defence and no rookie
+    # discount for a kicker. Joining them earlier collided with the curve's
+    # own season columns, which is the shape of the mistake: they are not
+    # players the model reasons about, they are slots that must be filled.
+    kd = kdst.rows(market_all)
+    if kd.height:
+        kd = kd.rename({"gsis_id": "player_id", "market_name": "player_name"})
+        if "ecr" not in kd.columns:
+            kd = kd.with_columns(pl.col("adp").alias("ecr"))
+        keep = ["player_id", "player_name", "position", "projected_points",
+                "ecr", "sd", "draft_rank", "rookie", "season_p20", "season_p50",
+                "season_p80", "expected_games"]
+        kd = kd.select([c for c in keep if c in kd.columns])
+        b = pl.concat([b, kd], how="diagonal")
     _BOARD = add_vor(b, settings)
     return _BOARD
 

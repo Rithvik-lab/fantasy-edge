@@ -79,7 +79,12 @@ def fetch(
         if not adp or adp <= 0:
             continue
         pos = POSITION.get(p.get("defaultPositionId"))
-        if pos not in config.MODELED_POSITIONS:
+        # K and DST are not MODELLED -- no per-game curve is fitted for them
+        # and none should be. But they are DRAFTED, and filtering them out here
+        # meant the board had none at all, so the engine could never complete a
+        # legal lineup. They ride along with an ADP and get their projection
+        # from models.kdst.
+        if pos not in config.MODELED_POSITIONS and pos not in ("K", "DST"):
             continue
         # ESPN publishes TWO different orderings and they are not the same
         # number. `averageDraftPosition` is where players actually go in real

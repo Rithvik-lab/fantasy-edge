@@ -561,6 +561,40 @@ def recommend(
     if not avail.height:
         return avail
 
+    # ---------------------------------------------------------------------
+    # A LEGAL LINEUP IS A CONSTRAINT, NOT A PREFERENCE.
+    #
+    # Value alone will never tell you to draft a kicker, and it is right not
+    # to: replacement level at K is so close to the best K that his VOR is
+    # deeply negative, and no need multiplier survives being applied to a
+    # negative number. Follow the ranking for sixteen straight picks and you
+    # end up with eight running backs, six receivers, and no quarterback,
+    # kicker or defence -- a roster that cannot field a legal lineup at all.
+    #
+    # So the last few picks are not a ranking problem. Once the picks you have
+    # left are down to the slots you still cannot fill, those positions are the
+    # only candidates. It binds only at the very end, which is exactly when a
+    # manager stops asking "who is best" and starts asking "what do I still
+    # need".
+    roster_pos = (
+        projections.filter(pl.col("player_id").is_in(state.my_roster))
+        ["position"].to_list() if state.my_roster else []
+    )
+    open_slots = roster_needs(state, roster_pos)
+    must = {p: n for p, n in open_slots.items()
+            if n > 0 and p not in ("FLEX", "SUPERFLEX")}
+    # ROSTER SPOTS LEFT, not picks left. The first version counted picks
+    # remaining on the snake schedule, which is only meaningful when every pick
+    # in the league is being recorded -- draft only your own men and `current`
+    # walks one at a time while the schedule still says you hold fifteen more
+    # turns. The constraint never bound and the roster still finished with no
+    # quarterback. Spots on the roster are true in either mode.
+    spots_left = settings.roster_size - len(state.my_roster)
+    if must and spots_left <= sum(must.values()):
+        forced = avail.filter(pl.col("position").is_in(list(must)))
+        if forced.height:
+            avail = forced
+
     # Replacement level from the FULL board, not from who is left. See add_vor.
     avail = add_vor(avail, settings,
                     replacement=replacement_points(projections, settings))

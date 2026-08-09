@@ -76,8 +76,13 @@ class LeagueSettings:
         ranks: dict[str, float] = {}
 
         for slot, count in self.lineup.items():
-            if slot in ("FLEX", "SUPERFLEX", "K", "DST"):
+            if slot in ("FLEX", "SUPERFLEX"):
                 continue
+            # K and DST are included. They were skipped back when the board had
+            # none of either, and leaving them out once it does means they come
+            # back with a null VOR -- which sorts them off the end of every
+            # ranking and makes the position undraftable all over again, for a
+            # different reason.
             ranks[slot] = ranks.get(slot, 0) + count * self.n_teams
 
         flex_slots = self.lineup.get("FLEX", 0) * self.n_teams
