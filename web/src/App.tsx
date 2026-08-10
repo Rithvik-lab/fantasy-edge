@@ -101,6 +101,20 @@ export default function App() {
   }, []);
 
   const open = useCallback(async (s: Status) => {
+    // SETTLE THE PHASE BEFORE ANYTHING RENDERS.
+    //
+    // The status we boot with is the state we last SAVED. For a synced league
+    // the truth is at ESPN, and the first poll -- a second or two after the
+    // gate lifts -- is what discovers the draft actually finished. That is the
+    // "went to draft mode, then randomly cut to My team" cut: the gate was
+    // waiting on the wrong question and then the answer arrived in public.
+    //
+    // So an attached league gets synced here, inside the gate, and the phase
+    // decision uses what comes back. A failed sync keeps the saved status,
+    // which is the best answer available and never worse than not asking.
+    if (s.espn_connected) {
+      try { s = await api.sync(); } catch { /* keep the saved status */ }
+    }
     setStatus(s);
     // Decide the mode and tab from the status we already have, BEFORE any of
     // this renders. Doing it in an effect afterwards is what made the app
@@ -287,12 +301,13 @@ export default function App() {
   // handled in refreshAll before the first render, so this only fires for the
   // live transition -- and only once, never against a deliberate move back.
   useEffect(() => {
+    if (booting) return;      // opening is handled in open(), before render
     if (status?.phase === "live") wasLive.current = true;
     if (status?.phase === "complete" && wasLive.current) {
       wasLive.current = false;
       setTab("team");
     }
-  }, [status?.phase]);
+  }, [status?.phase, booting]);
 
   if (booting) return <Booting name={status?.league_name || status?.saved_name} />;
 
