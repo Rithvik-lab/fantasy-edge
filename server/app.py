@@ -233,6 +233,22 @@ def _adopt(name: str) -> None:
     """
     if STATE.league_id:
         return
+
+    # REUSE THE EXISTING RECORD FOR THIS LEAGUE. Minting an id on every connect
+    # means reconnecting after a reload -- or a restart, which happens -- files
+    # the same league again under a new row. Ten connects, ten identical
+    # entries in My Leagues, and the older ones quietly stop receiving picks.
+    if STATE.espn:
+        key = str(STATE.espn.get("league_id"))
+        season = STATE.espn.get("season")
+        for row in store.listing():
+            if (str(row.get("espn_league_id")) == key
+                    and row.get("season", season) == season):
+                STATE.league_id = row["id"]
+                STATE.name = STATE.name or row.get("name") or name
+                _autosave(force=True)
+                return
+
     STATE.league_id = store.new_id()
     STATE.name = STATE.name or name
     _autosave(force=True)

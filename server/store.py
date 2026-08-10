@@ -84,6 +84,7 @@ def listing() -> list[dict]:
             "roster_size": d.get("roster_size"),
             "my_slot": d.get("my_slot"),
             "espn_league_id": (d.get("espn") or {}).get("league_id"),
+            "season": (d.get("espn") or {}).get("season"),
             "picks_made": len(picks),
             "total_picks": total,
             "complete": len(picks) >= total,
