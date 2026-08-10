@@ -251,3 +251,95 @@ def summarise(strength: list[dict], grade: dict) -> dict[str, list[str]]:
     if not bad:
         bad.append("No position is materially behind the league.")
     return {"strengths": good, "weaknesses": bad}
+
+
+# ---------------------------------------------------------------------------
+# The post-draft card
+# ---------------------------------------------------------------------------
+
+def league_comparison(board: pl.DataFrame, picks: list[dict],
+                      settings: LeagueSettings,
+                      my_ids: list[str],
+                      my_slot: int | None = None) -> list[dict]:
+    """Every team's starting strength, so yours has something to stand next to.
+
+    A grade in isolation is a number you cannot act on. The same number beside
+    eleven others is a standing, and standing is the only thing that decides
+    whether to push or hold.
+    """
+    if not picks:
+        return []
+    mine = set(my_ids)
+    by_slot: dict[int, list[str]] = {}
+    for p in picks:
+        pid = p.get("player_id")
+        if not pid or pid in mine:
+            # YOUR players are identified by ownership, not by the seat the
+            # pick number implies. In manual mode the two disagree -- you
+            # record picks in sequence and your men land under whatever slot
+            # the counter happened to be on, which had two different teams
+            # coming back flagged as yours.
+            continue
+        by_slot.setdefault(int(p.get("slot") or 0), []).append(pid)
+    # Your seat becomes the synthetic bucket, not an extra one beside it. Left
+    # in, a twelve-team league came back with thirteen rows: eleven opponents,
+    # your seat holding whatever the pick counter happened to attribute to it,
+    # and you again.
+    if my_slot is not None:
+        by_slot.pop(int(my_slot), None)
+    if mine:
+        by_slot[-1] = list(mine)
+
+    out = []
+    for slot, ids in sorted(by_slot.items()):
+        roster = board.filter(pl.col("player_id").is_in(ids))
+        if not roster.height:
+            continue
+        starters, _ = optimal_lineup(roster, settings)
+        pts = float(starters["projected_points"].fill_null(0).sum()) \
+            if starters.height else 0.0
+        floor = ceil = None
+        if "season_p20" in starters.columns and starters.height:
+            floor = float(starters["season_p20"].drop_nulls().sum())
+            ceil = float(starters["season_p80"].drop_nulls().sum())
+        out.append({
+            "slot": slot,
+            "mine": slot == -1,
+            "starters": round(pts, 1),
+            "floor": round(floor, 1) if floor else None,
+            "ceiling": round(ceil, 1) if ceil else None,
+            "players": roster.height,
+        })
+    out.sort(key=lambda r: -r["starters"])
+    for i, r in enumerate(out):
+        r["rank"] = i + 1
+    return out
+
+
+def sleepers(board: pl.DataFrame, my_ids: list[str], top: int = 5) -> list[dict]:
+    """Your men the market priced lowest relative to what the model expects.
+
+    Not "who is good" -- that is the roster. This is where YOUR team disagrees
+    with the room, which is the only part of a draft that can actually beat it.
+    Ranked by value over what a player at that ADP normally returns.
+    """
+    if not my_ids:
+        return []
+    from fantasyedge.trade import market
+
+    # FIT ON THE WHOLE BOARD, then look at yours. The curve is "what a player
+    # at this ADP normally returns", which needs the whole market to describe;
+    # fitting it on the five men you drafted asks what a player at this ADP
+    # returns among your own picks, and answers nothing.
+    priced = market.value_curve(board).filter(pl.col("player_id").is_in(my_ids))
+    if "market_edge" not in priced.columns:
+        return []
+    return (priced.filter(pl.col("market_edge") > 0)
+                  .sort("market_edge", descending=True)
+                  .head(top)
+                  .select([c for c in ("player_id", "player_name", "position",
+                                       "ecr", "vor", "market_value",
+                                       "market_edge", "season_p20",
+                                       "season_p80")
+                           if c in priced.columns])
+                  .to_dicts())

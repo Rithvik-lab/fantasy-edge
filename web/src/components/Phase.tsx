@@ -28,22 +28,12 @@ export function Phase({ status }: { status: Status }) {
     return () => clearInterval(id);
   }, []);
 
-  // A finished draft is worth saying either way: in manual mode you can still
-  // fill a board past the last pick without noticing.
-  if (status.phase === "complete") {
-    return (
-      <div className="border-b border-line bg-raised px-4 py-2.5">
-        <div className="mx-auto flex max-w-[1400px] items-center gap-3">
-          <span className="h-2 w-2 shrink-0 rounded-full bg-muted" />
-          <span className="text-sm font-medium">This draft is already over.</span>
-          <span className="text-xs text-muted">
-            All {status.picks_made} picks are in. Nothing below is a live
-            recommendation — it is a record.
-          </span>
-        </div>
-      </div>
-    );
-  }
+  // A FINISHED DRAFT GETS NO BANNER. It used to announce itself and then
+  // apologise -- "nothing below is a live pick" -- while still showing a live
+  // draft interface underneath. A completed draft is a state the app should
+  // BE IN, not a caption over the wrong screen, so the layout changes instead
+  // and the banner is gone.
+  if (status.phase === "complete") return null;
 
   // Manual mode has no scheduled draft and nothing syncing, so "you are here
   // early" is meaningless there — it described a live connection that does not

@@ -735,6 +735,11 @@ def team_report() -> dict:
             st.settings),
         "draft": dr,
         "pinned": dict(STATE.pinned),
+        "league": report.league_comparison(b, st.picks, st.settings,
+                                          st.my_ids, st.my_slot),
+        "sleepers": report.sleepers(b, st.my_ids),
+        "complete": bool(st.draft_complete
+                         or st.on_the_clock()[2] > st.settings.total_picks),
         "strengths": words["strengths"],
         "weaknesses": words["weaknesses"],
     }
@@ -1046,7 +1051,10 @@ def status() -> dict:
                 f"{STATE.my_slot} is a guess. Set it before you draft — a wrong "
                 f"seat makes every survival probability wrong.")
     if complete:
-        warnings.append("This draft is finished. Nothing here is a live pick.")
+        # No warning for a finished draft. The interface switches to the
+        # post-draft view; saying it twice, once as an alert, was the app
+        # treating a normal end state as a problem.
+        pass
 
     return {
         "configured": True,
@@ -1121,8 +1129,7 @@ def suggestions(n: int = 3, exclude: str = "",
         # Recommending a 17th round of a 16-round draft is not a small
         # cosmetic problem -- it is the tool confidently answering a question
         # nobody asked.
-        return {"suggestions": [],
-                "note": "This draft is over. Every pick has been made."}
+        return {"suggestions": [], "note": ""}
 
     b = _board()
     skip = [x for x in exclude.split(",") if x]

@@ -62,6 +62,7 @@ export default function App() {
   const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
   const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<Tab>("room");
+  const wasLive = useRef(false);
   const [mode, setMode] = useState<Mode>("draft");
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
@@ -234,6 +235,15 @@ export default function App() {
       await refreshAll(await api.undo());
     } finally { setBusy(false); }
   }
+
+  // The draft ending is a change of question, not a caption over the old one.
+  // The moment the last pick lands the useful screen is your team, so that is
+  // where you get put -- once, and never against a deliberate move back.
+  useEffect(() => {
+    const done = status?.phase === "complete";
+    if (done && wasLive.current) setTab("team");
+    if (status?.phase === "live") wasLive.current = true;
+  }, [status?.phase]);
 
   if (screen === "home" && !status?.configured) {
     return (
@@ -418,7 +428,7 @@ export default function App() {
         </div>
       )}
 
-      {mode === "draft" && (
+      {mode === "draft" && status.phase !== "complete" && (
       <Shortlist
         data={list}
         busy={busy}

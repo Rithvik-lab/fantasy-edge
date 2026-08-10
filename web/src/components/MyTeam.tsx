@@ -236,6 +236,108 @@ function Lineup({ d, onSwap, onReset, busy }: {
   );
 }
 
+
+/**
+ * WHERE YOU STAND, which is the only version of a grade you can act on.
+ *
+ * "You are a 112" is unusable. The same number as a bar beside eleven others
+ * is a standing, and standing is what decides whether to push for a title or
+ * sell for next year. Ranked, because rank is the question — and yours is
+ * marked rather than recoloured, so the eye finds it without the chart having
+ * to spend a hue on identity.
+ */
+function Standing({ rows }: { rows: NonNullable<TeamReport["league"]> }) {
+  if (rows.length < 2) return null;
+  const max = Math.max(...rows.map((r) => r.starters), 1);
+  const me = rows.find((r) => r.mine);
+
+  return (
+    <section className="rounded-lg border border-line bg-panel p-3">
+      <header className="mb-2.5">
+        <span className="eyebrow">Where you stand</span>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted">
+          Projected points from each team&rsquo;s best starting lineup.
+          {me && (
+            <> You are <span className="font-semibold text-chalk">
+              {me.rank}
+              {me.rank === 1 ? "st" : me.rank === 2 ? "nd"
+                : me.rank === 3 ? "rd" : "th"}
+            </span> of {rows.length}.</>
+          )}
+        </p>
+      </header>
+
+      <div className="space-y-1">
+        {rows.map((r, i) => (
+          <div key={r.slot} className="flex items-center gap-2">
+            <span className={cn("num w-7 shrink-0 text-[10px]",
+              r.mine ? "font-semibold text-turf" : "text-muted")}>
+              {r.mine ? "you" : r.slot}
+            </span>
+            <div className="relative h-3.5 flex-1 overflow-hidden rounded-[2px] bg-ink">
+              <motion.div
+                className={cn("absolute inset-y-0 left-0 rounded-[2px]",
+                  r.mine ? "bg-turf" : "bg-muted/35")}
+                initial={{ width: 0 }}
+                animate={{ width: `${(r.starters / max) * 100}%` }}
+                transition={{ type: "spring", stiffness: 190, damping: 26,
+                              delay: i * 0.03 }}
+              />
+            </div>
+            <span className={cn("num w-11 shrink-0 text-right text-[10.5px]",
+              r.mine ? "font-semibold text-chalk" : "text-muted")}>
+              {Math.round(r.starters)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Your men the room underpriced. Where your draft disagreed with the market. */
+function Sleepers({ rows }: { rows: NonNullable<TeamReport["sleepers"]> }) {
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map((r) => r.market_edge), 1);
+  return (
+    <section className="rounded-lg border border-line bg-panel p-3">
+      <header className="mb-2.5">
+        <span className="eyebrow">Where you beat the room</span>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted">
+          Value above what a player at that ADP normally returns. Not who is
+          best on your team — where your draft <em>disagreed</em> with the
+          market, which is the only part that can beat it.
+        </p>
+      </header>
+      <ul className="space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.player_id} className="flex items-center gap-2">
+            <PlayerHover playerId={r.player_id} className="min-w-0 w-[112px] shrink-0">
+              <span className="block cursor-help truncate text-[11.5px]">
+                {r.player_name}
+              </span>
+            </PlayerHover>
+            <span className="w-6 shrink-0 text-[9.5px] font-bold"
+                  style={{ color: POS_HUE[r.position] ?? "#8CA096" }}>
+              {r.position}
+            </span>
+            <span className="num w-10 shrink-0 text-[10px] text-muted">
+              adp {Math.round(r.ecr ?? 0)}
+            </span>
+            <div className="h-2 flex-1 rounded-[2px] bg-ink">
+              <div className="h-2 rounded-[2px] bg-turf/70"
+                   style={{ width: `${(r.market_edge / max) * 100}%` }} />
+            </div>
+            <span className="num w-9 shrink-0 text-right text-[10.5px] text-turf">
+              +{Math.round(r.market_edge)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function MyTeam() {
   const [d, setD] = useState<TeamReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -307,6 +409,8 @@ export function MyTeam() {
         </section>
       )}
 
+      {d.league && d.league.length > 1 && <Standing rows={d.league} />}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Lineup d={d} busy={busy}
                 onSwap={async (a, b) => {
@@ -320,7 +424,20 @@ export function MyTeam() {
                   try { await api.rosterUnpin(); setD(await api.teamReport()); }
                   finally { setBusy(false); }
                 }} />
-        <DraftReport d={d.draft} />
+        <div className="space-y-4">
+          {d.sleepers && d.sleepers.length > 0 && <Sleepers rows={d.sleepers} />}
+          {/* The draft report matters for about a week and then never again,
+              so it sits at the bottom as a subsection rather than competing
+              with the roster for the top of the page. */}
+          <div>
+            {d.complete && (
+              <p className="mb-1.5 text-[10.5px] text-muted">
+                How you got here — worth one read, then it stops mattering.
+              </p>
+            )}
+            <DraftReport d={d.draft} />
+          </div>
+        </div>
       </div>
     </div>
   );

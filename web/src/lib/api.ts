@@ -224,6 +224,14 @@ export interface TeamReport {
                     adp: number; edge: number; verdict: string }[];
            total_edge: number; steals: number; reaches: number };
   pinned?: Record<string, string>;
+  complete?: boolean;
+  league?: { slot: number; mine: boolean; starters: number;
+             floor: number | null; ceiling: number | null;
+             players: number; rank: number }[];
+  sleepers?: { player_id: string; player_name: string; position: string;
+               ecr?: number | null; vor?: number | null;
+               market_value?: number | null; market_edge: number;
+               season_p20?: number | null; season_p80?: number | null }[];
   strengths: string[];
   weaknesses: string[];
 }
