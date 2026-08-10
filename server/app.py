@@ -219,6 +219,25 @@ def _board() -> pl.DataFrame:
     return D.board(STATE.settings)
 
 
+def _adopt(name: str) -> None:
+    """Give this league a home on disk the moment it exists.
+
+    Autosave keys off `league_id`, and that used to be set only by pressing
+    Save -- so a freshly connected league was live in memory and invisible in
+    My Leagues, and every pick after it went nowhere. Connecting a league IS
+    intent to keep it; asking for a second, separate confirmation was a step
+    whose only possible outcome was losing a draft.
+
+    Names default to something recognisable and stay editable, so Save became
+    a rename rather than a commit.
+    """
+    if STATE.league_id:
+        return
+    STATE.league_id = store.new_id()
+    STATE.name = STATE.name or name
+    _autosave(force=True)
+
+
 def _snapshot() -> dict:
     """Everything needed to resume this draft exactly where it is."""
     st = STATE
@@ -356,6 +375,7 @@ def set_league(cfg: LeagueIn) -> dict:
         STATE.draft_started = False
         STATE.draft_complete = False
         D._BOARD = None
+    _adopt(STATE.settings.describe().split("|")[0].strip())
     return status()
 
 
@@ -396,6 +416,7 @@ def connect_espn(cfg: EspnIn) -> dict:
                 STATE.my_slot = slot
                 STATE.slot_confirmed = True
     _ingest(payload)
+    _adopt(STATE.league_name or f"ESPN {cfg.league_id}")
     _autosave()
     return status()
 
@@ -1447,7 +1468,13 @@ def list_leagues() -> dict:
 
 @app.post("/api/leagues/save")
 def save_league(body: SaveIn) -> dict:
-    """Name this draft so you can come back to it. Autosaves from here on."""
+    """Rename this league.
+
+    It is already saved -- every league is adopted the moment it is configured
+    or connected, because that is when it starts being worth keeping. This
+    only changes what it is called, and `force` because a rename does not move
+    the fingerprint that normally decides whether a write is needed.
+    """
     _require()
     name = body.name.strip()
     if not name:
@@ -1456,7 +1483,7 @@ def save_league(body: SaveIn) -> dict:
         STATE.name = name
         if not STATE.league_id:
             STATE.league_id = store.new_id()
-    _autosave()
+    _autosave(force=True)
     return status()
 
 
