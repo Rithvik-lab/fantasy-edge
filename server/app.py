@@ -132,6 +132,14 @@ class Draft:
         # all happen after it, so once a draft is complete this is the truth
         # and the picks are only history.
         self.rosters: dict[int, list[str]] = {}
+        # Your hand edits ON TOP of that roster, which have to survive a sync.
+        # ESPN is authoritative and it is also SLOW -- a waiver claim shows up
+        # there hours after you made it, and a trade only once both sides
+        # accept. Without these, typing a name into your team did nothing
+        # visible at all: the pick was recorded and then the next roster read
+        # overwrote it.
+        self.added: list[str] = []
+        self.dropped: list[str] = []
         self.espn: dict | None = None        # league_id / season / cookies
         self.league_name = ""
         self.team_names: dict[int, str] = {}
@@ -191,8 +199,14 @@ class Draft:
         # dropped man stays on your team forever. During the draft it is the
         # other way round -- picks land instantly, the roster view can lag --
         # so the switch happens exactly when the draft completes.
+        #
+        # Your own edits sit on top, because ESPN lags reality by hours and
+        # sometimes by a whole trade negotiation. They are cleared the moment
+        # ESPN agrees, so an add is a correction and never a second copy.
         if self.draft_complete and self.my_team_id in self.rosters:
-            return list(self.rosters[self.my_team_id])
+            drop = set(self.dropped)
+            live = [p for p in self.rosters[self.my_team_id] if p not in drop]
+            return live + [p for p in self.added if p not in live]
         if self.my_team_id is not None:
             return [p["player_id"] for p in self.picks
                     if p.get("player_id") and p.get("team_id") == self.my_team_id]
@@ -289,6 +303,8 @@ def _snapshot() -> dict:
         "slot_confirmed": st.slot_confirmed,
         "draft_time": st.draft_time,
         "pinned": dict(st.pinned),
+        "added": list(st.added),
+        "dropped": list(st.dropped),
     }
 
 
@@ -312,6 +328,11 @@ def _fingerprint() -> tuple:
         st.bench_risk,
         st.name,
         bool(st.espn),
+        # Hand edits to the roster count as a change even when the pick log
+        # has not moved -- after the draft they are the ONLY thing that moves.
+        tuple(st.added),
+        tuple(st.dropped),
+        tuple(sorted(st.pinned.items())),
     )
 
 
@@ -604,6 +625,20 @@ def _live_rosters(payload: dict, board: pl.DataFrame) -> dict[int, list[str]]:
     return out
 
 
+def _settle(live: list[str]) -> None:
+    """Retire hand edits ESPN has caught up with.
+
+    An override that outlives the thing it was overriding stops being a
+    correction and becomes a second, private copy of the roster -- so a man you
+    added by hand and then genuinely lost in a trade would sit on your team for
+    the rest of the season because you once typed his name. Kept only while
+    they still disagree.
+    """
+    have = set(live)
+    STATE.added = [p for p in STATE.added if p not in have]
+    STATE.dropped = [p for p in STATE.dropped if p in have]
+
+
 def _ingest(payload: dict) -> None:
     """Replace local pick history with ESPN's, which is authoritative."""
     info = espn_draft.league_info(payload)
@@ -649,6 +684,7 @@ def _ingest(payload: dict) -> None:
         STATE.picks = sorted(fresh, key=lambda p: p["overall"])
         if live:
             STATE.rosters = live
+            _settle(live.get(STATE.my_team_id or -1, []))
         # Round one is the first chance to read the seat off real picks.
         if not STATE.slot_confirmed and STATE.my_team_id:
             slot = espn_draft.draft_slot(payload, STATE.my_team_id)
@@ -749,6 +785,7 @@ def _espn_rosters() -> pl.DataFrame:
                          for t, grp in
                          ((tid[0] if isinstance(tid, tuple) else tid, g)
                           for tid, g in r.group_by("team_id"))}
+        _settle(STATE.rosters.get(STATE.my_team_id or -1, []))
     return r
 
 
@@ -1292,6 +1329,16 @@ def add_pick(p: PickIn) -> dict:
             "slot": slot, "overall": overall, "team_id": None,
             "mine": bool(p.mine),
         })
+        # AND ON THE ROSTER, once the draft is over. After it, ownership is
+        # read from ESPN rather than from this log, so recording the pick and
+        # stopping there put the man nowhere you could see him -- the request
+        # succeeded, the roster did not move, and the control read as broken.
+        if p.mine and STATE.draft_complete:
+            pid = hit["player_id"]
+            if pid not in STATE.added:
+                STATE.added.append(pid)
+            if pid in STATE.dropped:
+                STATE.dropped.remove(pid)
     _autosave()
     return status()
 
@@ -1322,8 +1369,22 @@ def remove_pick(body: RemoveIn) -> dict:
     """
     st = _require()
     with STATE.lock:
+        # Off the roster first. After the draft your team comes from ESPN, and
+        # a man who arrived there by waiver was never in the pick log at all --
+        # refusing to drop him because of that is answering the wrong question.
+        on_roster = body.player_id in set(STATE.rosters.get(
+            STATE.my_team_id, [])) or body.player_id in STATE.added
+        if STATE.draft_complete and on_roster:
+            if body.player_id in STATE.added:
+                STATE.added.remove(body.player_id)
+            elif body.player_id not in STATE.dropped:
+                STATE.dropped.append(body.player_id)
+
         keep = [p for p in STATE.picks if p.get("player_id") != body.player_id]
         if len(keep) == len(STATE.picks):
+            if STATE.draft_complete and on_roster:
+                _autosave()
+                return status()
             raise HTTPException(404, "that player is not in the pick history")
         for i, p in enumerate(keep, start=1):
             p["overall"] = i
@@ -1803,6 +1864,9 @@ def load_league(league_id: str) -> dict:
         STATE.team_names = {int(k): v for k, v in (d.get("team_names") or {}).items()}
         STATE.my_team_id = d.get("my_team_id")
         STATE.pinned = dict(d.get("pinned") or {})
+        STATE.added = list(d.get("added") or [])
+        STATE.dropped = list(d.get("dropped") or [])
+        STATE.rosters = {}
         STATE.slot_confirmed = bool(d.get("slot_confirmed", True))
         STATE.draft_time = d.get("draft_time")
         STATE.draft_started = bool(STATE.picks)
