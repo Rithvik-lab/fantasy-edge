@@ -302,17 +302,55 @@ def league_comparison(board: pl.DataFrame, picks: list[dict],
         if "season_p20" in starters.columns and starters.height:
             floor = float(starters["season_p20"].drop_nulls().sum())
             ceil = float(starters["season_p80"].drop_nulls().sum())
+        keep = [c for c in ("player_id", "player_name", "position",
+                            "projected_points") if c in starters.columns]
         out.append({
-            "slot": slot,
+            "slot": slot if slot != -1 else (my_slot or 0),
             "mine": slot == -1,
             "starters": round(pts, 1),
             "floor": round(floor, 1) if floor else None,
             "ceiling": round(ceil, 1) if ceil else None,
             "players": roster.height,
+            # Their lineup, for the hover. A bar telling you someone is ahead
+            # is an assertion; showing who they start is the evidence, and it
+            # is also the thing you would actually go looking for next.
+            "lineup": (starters.select(keep).to_dicts()
+                       if starters.height else []),
         })
     out.sort(key=lambda r: -r["starters"])
     for i, r in enumerate(out):
         r["rank"] = i + 1
+    return out
+
+
+def improvements(strength: list[dict], board: pl.DataFrame,
+                 drafted: list[str], settings: LeagueSettings,
+                 top: int = 3) -> list[dict]:
+    """What to do about the weak spots, not just where they are.
+
+    A weakness with no move attached is a complaint. Each one comes back with
+    the best men still unowned at that position, because in the week after a
+    draft that is exactly the question -- who can I actually get.
+    """
+    weak = [r for r in strength if r["edge"] < 0][:top]
+    if not weak:
+        return []
+    free = board.filter(~pl.col("player_id").is_in(drafted))
+    out = []
+    for w in weak:
+        pool = (free.filter(pl.col("position") == w["position"])
+                    .sort("projected_points", descending=True, nulls_last=True)
+                    .head(3))
+        out.append({
+            "position": w["position"],
+            "edge": w["edge"],
+            "percentile": w["percentile"],
+            "gap_to_median": round(w["league_median"] - (w.get("per_starter") or 0), 1),
+            "available": pool.select(
+                [c for c in ("player_id", "player_name", "position", "ecr",
+                             "projected_points", "vor") if c in pool.columns]
+            ).to_dicts() if pool.height else [],
+        })
     return out
 
 

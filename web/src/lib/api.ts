@@ -227,7 +227,16 @@ export interface TeamReport {
   complete?: boolean;
   league?: { slot: number; mine: boolean; starters: number;
              floor: number | null; ceiling: number | null;
-             players: number; rank: number }[];
+             players: number; rank: number;
+             lineup?: { player_id: string; player_name: string;
+                        position: string; projected_points?: number }[] }[];
+  improve?: { position: string; edge: number; percentile: number;
+              gap_to_median: number;
+              available: { player_id: string; player_name: string;
+                           position: string; ecr?: number | null;
+                           projected_points?: number | null;
+                           vor?: number | null }[] }[];
+  team_names?: Record<string, string>;
   sleepers?: { player_id: string; player_name: string; position: string;
                ecr?: number | null; vor?: number | null;
                market_value?: number | null; market_edge: number;

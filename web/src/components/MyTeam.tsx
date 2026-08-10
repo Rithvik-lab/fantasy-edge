@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { api, type TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
-import { Term } from "@/components/Explain";
-import { PlayerHover } from "@/components/PlayerHover";
+import { TeamRoster } from "@/components/TeamRoster";
+import { Standing, Improve, Sleepers } from "@/components/TeamPanels";
 import { cn } from "@/lib/utils";
 
 /**
@@ -147,197 +147,6 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
   );
 }
 
-/**
- * Drag one of your own onto another to swap where they play.
- *
- * The lineup is solved optimally, which is right nearly always and wrong the
- * moment you know something the projection does not. Swapping PINS both men
- * and lets the solver fill around them, so one correction never costs you the
- * rest of the optimisation.
- */
-function Lineup({ d, onSwap, onReset, busy }: {
-  d: TeamReport;
-  onSwap: (a: string, b: string) => void;
-  onReset: () => void;
-  busy: boolean;
-}) {
-  const [over, setOver] = useState<string | null>(null);
-  const pinned = d.pinned ?? {};
-
-  const Row = ({ p, slot }: { p: TeamReport["starters"][0]; slot?: string }) => (
-    <li
-      draggable
-      onDragStart={(e) => e.dataTransfer.setData("text/plain", p.player_id)}
-      onDragOver={(e) => { e.preventDefault(); setOver(p.player_id); }}
-      onDragLeave={() => setOver((o) => (o === p.player_id ? null : o))}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(null);
-        const from = e.dataTransfer.getData("text/plain");
-        if (from && from !== p.player_id) onSwap(from, p.player_id);
-      }}
-      title="drag onto another of your players to swap where they play"
-      className={cn(
-        "flex cursor-grab select-none items-center gap-2 border-b border-line/40 px-2.5 py-1.5 transition-colors last:border-0 active:cursor-grabbing",
-        over === p.player_id && "bg-turf/12",
-        pinned[p.player_id] && "border-l-2 border-l-clock"
-      )}>
-      <span className="num w-9 shrink-0 text-[9.5px] uppercase tracking-wider text-muted">
-        {slot ?? "BE"}
-      </span>
-      {p.headshot ? (
-        <PlayerHover playerId={p.player_id} className="shrink-0">
-          <img src={p.headshot} alt="" loading="lazy"
-               className="h-7 w-7 shrink-0 cursor-help rounded bg-raised object-cover object-top" />
-        </PlayerHover>
-      ) : <span className="h-7 w-7 shrink-0 rounded bg-raised" />}
-      <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
-        <span className="block cursor-help truncate text-[11.5px]">{p.player_name}</span>
-      </PlayerHover>
-      <span className="w-6 shrink-0 text-[10px] font-bold"
-            style={{ color: POS_HUE[p.position] ?? "#8CA096" }}>
-        {p.position}
-      </span>
-      <span className="num w-9 shrink-0 text-right text-[10.5px] text-muted">
-        {Math.round(p.projected_points ?? 0)}
-      </span>
-    </li>
-  );
-
-  return (
-    <section className="rounded-lg border border-line bg-panel">
-      <header className="flex items-baseline gap-2 border-b border-line px-2.5 py-1.5">
-        <span className="eyebrow">Your lineup</span>
-        {Object.keys(pinned).length > 0 && (
-          <button onClick={onReset} disabled={busy}
-                  className="text-[10.5px] text-clock underline-offset-2 hover:underline">
-            {Object.keys(pinned).length} set by hand — solve it
-          </button>
-        )}
-        {d.grade?.score != null && (
-          <Term k="grade">
-            <span className={cn("num ml-auto text-[11px]",
-              d.grade.score >= 100 ? "text-turf" : "text-muted")}>
-              grade {d.grade.score}
-            </span>
-          </Term>
-        )}
-      </header>
-      <ul>{d.starters.map((p) => <Row key={p.player_id} p={p} slot={p.slot} />)}</ul>
-      {d.bench.length > 0 && (
-        <>
-          <div className="border-y border-line bg-raised/40 px-2.5 py-1">
-            <span className="eyebrow">Bench</span>
-          </div>
-          <ul>{d.bench.map((p) => <Row key={p.player_id} p={p} />)}</ul>
-        </>
-      )}
-    </section>
-  );
-}
-
-
-/**
- * WHERE YOU STAND, which is the only version of a grade you can act on.
- *
- * "You are a 112" is unusable. The same number as a bar beside eleven others
- * is a standing, and standing is what decides whether to push for a title or
- * sell for next year. Ranked, because rank is the question — and yours is
- * marked rather than recoloured, so the eye finds it without the chart having
- * to spend a hue on identity.
- */
-function Standing({ rows }: { rows: NonNullable<TeamReport["league"]> }) {
-  if (rows.length < 2) return null;
-  const max = Math.max(...rows.map((r) => r.starters), 1);
-  const me = rows.find((r) => r.mine);
-
-  return (
-    <section className="rounded-lg border border-line bg-panel p-3">
-      <header className="mb-2.5">
-        <span className="eyebrow">Where you stand</span>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
-          Projected points from each team&rsquo;s best starting lineup.
-          {me && (
-            <> You are <span className="font-semibold text-chalk">
-              {me.rank}
-              {me.rank === 1 ? "st" : me.rank === 2 ? "nd"
-                : me.rank === 3 ? "rd" : "th"}
-            </span> of {rows.length}.</>
-          )}
-        </p>
-      </header>
-
-      <div className="space-y-1">
-        {rows.map((r, i) => (
-          <div key={r.slot} className="flex items-center gap-2">
-            <span className={cn("num w-7 shrink-0 text-[10px]",
-              r.mine ? "font-semibold text-turf" : "text-muted")}>
-              {r.mine ? "you" : r.slot}
-            </span>
-            <div className="relative h-3.5 flex-1 overflow-hidden rounded-[2px] bg-ink">
-              <motion.div
-                className={cn("absolute inset-y-0 left-0 rounded-[2px]",
-                  r.mine ? "bg-turf" : "bg-muted/35")}
-                initial={{ width: 0 }}
-                animate={{ width: `${(r.starters / max) * 100}%` }}
-                transition={{ type: "spring", stiffness: 190, damping: 26,
-                              delay: i * 0.03 }}
-              />
-            </div>
-            <span className={cn("num w-11 shrink-0 text-right text-[10.5px]",
-              r.mine ? "font-semibold text-chalk" : "text-muted")}>
-              {Math.round(r.starters)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/** Your men the room underpriced. Where your draft disagreed with the market. */
-function Sleepers({ rows }: { rows: NonNullable<TeamReport["sleepers"]> }) {
-  if (!rows.length) return null;
-  const max = Math.max(...rows.map((r) => r.market_edge), 1);
-  return (
-    <section className="rounded-lg border border-line bg-panel p-3">
-      <header className="mb-2.5">
-        <span className="eyebrow">Where you beat the room</span>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
-          Value above what a player at that ADP normally returns. Not who is
-          best on your team — where your draft <em>disagreed</em> with the
-          market, which is the only part that can beat it.
-        </p>
-      </header>
-      <ul className="space-y-1.5">
-        {rows.map((r) => (
-          <li key={r.player_id} className="flex items-center gap-2">
-            <PlayerHover playerId={r.player_id} className="min-w-0 w-[112px] shrink-0">
-              <span className="block cursor-help truncate text-[11.5px]">
-                {r.player_name}
-              </span>
-            </PlayerHover>
-            <span className="w-6 shrink-0 text-[9.5px] font-bold"
-                  style={{ color: POS_HUE[r.position] ?? "#8CA096" }}>
-              {r.position}
-            </span>
-            <span className="num w-10 shrink-0 text-[10px] text-muted">
-              adp {Math.round(r.ecr ?? 0)}
-            </span>
-            <div className="h-2 flex-1 rounded-[2px] bg-ink">
-              <div className="h-2 rounded-[2px] bg-turf/70"
-                   style={{ width: `${(r.market_edge / max) * 100}%` }} />
-            </div>
-            <span className="num w-9 shrink-0 text-right text-[10.5px] text-turf">
-              +{Math.round(r.market_edge)}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 export function MyTeam() {
   const [d, setD] = useState<TeamReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -364,34 +173,59 @@ export function MyTeam() {
     );
   }
 
+  const swap = async (a: string, b: string) => {
+    setBusy(true);
+    try { await api.rosterSwap(a, b); setD(await api.teamReport()); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  const reset = async () => {
+    setBusy(true);
+    try { await api.rosterUnpin(); setD(await api.teamReport()); }
+    finally { setBusy(false); }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <section className="rounded-md border border-turf/25 p-3">
-          <div className="mb-2 flex items-baseline gap-2">
-            <span className="h-px w-3 bg-turf" />
-            <span className="eyebrow">what this team does well</span>
-          </div>
-          <ul className="space-y-1.5">
-            {d.strengths.map((t, i) => (
-              <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
-            ))}
-          </ul>
-        </section>
-        <section className="rounded-md border border-alarm/25 p-3">
-          <div className="mb-2 flex items-baseline gap-2">
-            <span className="h-px w-3 bg-alarm" />
-            <span className="eyebrow">where it will lose weeks</span>
-          </div>
-          <ul className="space-y-1.5">
-            {d.weaknesses.map((t, i) => (
-              <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
-            ))}
-          </ul>
-        </section>
-      </div>
+      {/* Roster left, what to do about it centre, how it measures up right.
+          The roster is the biggest thing on the page because everything else
+          here describes it. */}
+      <div className="grid gap-4 lg:grid-cols-[1.05fr_0.9fr_1fr]">
+        <TeamRoster d={d} onSwap={swap} onReset={reset} busy={busy} />
 
-      <Edges rows={d.strength} />
+        <div className="space-y-4">
+          {d.improve && d.improve.length > 0 && <Improve rows={d.improve} />}
+          <section className="rounded-md border border-turf/25 p-3">
+            <div className="mb-2 flex items-baseline gap-2">
+              <span className="h-px w-3 bg-turf" />
+              <span className="eyebrow">what this team does well</span>
+            </div>
+            <ul className="space-y-1.5">
+              {d.strengths.map((t, i) => (
+                <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
+              ))}
+            </ul>
+          </section>
+          <section className="rounded-md border border-alarm/25 p-3">
+            <div className="mb-2 flex items-baseline gap-2">
+              <span className="h-px w-3 bg-alarm" />
+              <span className="eyebrow">where it will lose weeks</span>
+            </div>
+            <ul className="space-y-1.5">
+              {d.weaknesses.map((t, i) => (
+                <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
+              ))}
+            </ul>
+          </section>
+        </div>
+
+        <div className="space-y-4">
+          <Edges rows={d.strength} />
+          {d.league && d.league.length > 1 && (
+            <Standing rows={d.league} names={d.team_names} />
+          )}
+        </div>
+      </div>
 
       {d.byes.length > 0 && (
         <section className="rounded-lg border border-clock/25 bg-clock/[0.05] p-3">
@@ -400,45 +234,30 @@ export function MyTeam() {
             {d.byes.map((b) => (
               <li key={b.week} className="text-[11.5px] text-chalk/80">
                 <span className="num text-clock">week {b.week}</span> — {b.count}{" "}
-                starters out ({b.players.join(", ")}), about{" "}
-                <span className="num">{Math.round(b.points / 17)}</span> points of
-                your lineup.
+                starters out ({b.players.join(", ")}).
               </li>
             ))}
           </ul>
         </section>
       )}
 
-      {d.league && d.league.length > 1 && <Standing rows={d.league} />}
-
       <div className="grid gap-4 lg:grid-cols-2">
-        <Lineup d={d} busy={busy}
-                onSwap={async (a, b) => {
-                  setBusy(true);
-                  try { await api.rosterSwap(a, b); setD(await api.teamReport()); }
-                  catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-                  finally { setBusy(false); }
-                }}
-                onReset={async () => {
-                  setBusy(true);
-                  try { await api.rosterUnpin(); setD(await api.teamReport()); }
-                  finally { setBusy(false); }
-                }} />
-        <div className="space-y-4">
-          {d.sleepers && d.sleepers.length > 0 && <Sleepers rows={d.sleepers} />}
-          {/* The draft report matters for about a week and then never again,
-              so it sits at the bottom as a subsection rather than competing
-              with the roster for the top of the page. */}
-          <div>
-            {d.complete && (
-              <p className="mb-1.5 text-[10.5px] text-muted">
-                How you got here — worth one read, then it stops mattering.
-              </p>
-            )}
-            <DraftReport d={d.draft} />
-          </div>
+        {d.sleepers && d.sleepers.length > 0 && <Sleepers rows={d.sleepers} />}
+        <div>
+          {d.complete && (
+            <p className="mb-1.5 text-[10.5px] text-muted">
+              How you got here — worth one read, then it stops mattering.
+            </p>
+          )}
+          <DraftReport d={d.draft} />
         </div>
       </div>
+
+      {err && (
+        <p className="rounded-md border border-alarm/30 bg-alarm/10 px-3 py-2 text-[11px] text-alarm">
+          {err}
+        </p>
+      )}
     </div>
   );
 }

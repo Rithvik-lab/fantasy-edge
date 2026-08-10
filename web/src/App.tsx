@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  api, type AdpLadder, type Analytics, type RosterView,
+  api, type AdpLadder, type RosterView,
   type Shortlist as ShortlistData, type Status, type TeamRow,
 } from "@/lib/api";
 import { Home } from "@/components/Home";
@@ -9,7 +9,6 @@ import { Roster } from "@/components/Roster";
 import { SaveLeague } from "@/components/SaveLeague";
 import { Shortlist, NAMES } from "@/components/Shortlist";
 import { Ticker, Teams } from "@/components/Ticker";
-import { Charts } from "@/components/Charts";
 import { Ladder } from "@/components/Ladder";
 import { GlossaryDrawer } from "@/components/Glossary";
 import { PickEditor } from "@/components/PickEditor";
@@ -50,18 +49,17 @@ function pollDelay(s: Status | null, quiet: number): number | null {
   return until != null && until <= 3 ? POLL.near : POLL.live;
 }
 
-type Tab = "room" | "team" | "data";
+type Tab = "team" | "room";
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [list, setList] = useState<ShortlistData | null>(null);
   const [teams, setTeams] = useState<TeamRow[]>([]);
-  const [stats, setStats] = useState<Analytics | null>(null);
   const [ladder, setLadder] = useState<AdpLadder | null>(null);
   const [roster, setRoster] = useState<RosterView | null>(null);
   const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
   const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
-  const [tab, setTab] = useState<Tab>("room");
+  const [tab, setTab] = useState<Tab>("team");
   const wasLive = useRef(false);
   const [mode, setMode] = useState<Mode>("draft");
   const [side, setSide] = useState<"feed" | "room">("feed");
@@ -95,7 +93,6 @@ export default function App() {
     setStatus(s);
     await loadList();
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
-    try { setStats(await api.analytics()); } catch { /* optional */ }
     try { setLadder(await api.adp()); } catch { /* optional */ }
     try { setRoster(await api.roster()); } catch { /* optional */ }
     setScreen("draft");
@@ -133,8 +130,7 @@ export default function App() {
           skipped.current = [];
           await loadList();
           try { setTeams((await api.teams()).teams); } catch { /* optional */ }
-          try { setStats(await api.analytics()); } catch { /* optional */ }
-          try { setLadder(await api.adp()); } catch { /* optional */ }
+                try { setLadder(await api.adp()); } catch { /* optional */ }
           try { setRoster(await api.roster()); } catch { /* optional */ }
         } else {
           quiet += 1;
@@ -349,7 +345,7 @@ export default function App() {
         ) : (
         <>
         <div className="mb-3 flex rounded-md border border-line p-0.5">
-          {(["room", "team", "data"] as const).map((t) => (
+          {(["team", "room"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -358,13 +354,15 @@ export default function App() {
                 tab === t ? "bg-raised font-medium text-chalk" : "text-muted hover:text-chalk"
               )}
             >
-              {t === "room" ? "The room" : t === "team" ? "My team" : "The numbers"}
+              {t === "team" ? "My team" : "The room"}
             </button>
           ))}
         </div>
 
         <div key={tab} className="tick-in space-y-4">
-          {tab === "room" ? (
+          {tab === "team" ? (
+            <MyTeam />
+          ) : (
             <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">
               {/* Left: what you do. Right: the board itself, which is the
                   thing people actually stare at during a draft. */}
@@ -403,10 +401,6 @@ export default function App() {
                         perPage={status.n_teams} />
               </div>
             </div>
-          ) : tab === "team" ? (
-            <MyTeam />
-          ) : (
-            <Charts data={stats} />
           )}
         </div>
         </>

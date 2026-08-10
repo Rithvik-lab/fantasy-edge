@@ -738,6 +738,8 @@ def team_report() -> dict:
         "league": report.league_comparison(b, st.picks, st.settings,
                                           st.my_ids, st.my_slot),
         "sleepers": report.sleepers(b, st.my_ids),
+        "improve": report.improvements(strength, b, st.drafted_ids, st.settings),
+        "team_names": {str(k): v for k, v in STATE.team_names.items()},
         "complete": bool(st.draft_complete
                          or st.on_the_clock()[2] > st.settings.total_picks),
         "strengths": words["strengths"],
