@@ -121,7 +121,21 @@ export default function App() {
     setScreen("draft");
   }, [loadList]);
 
-  const refreshAll = useCallback(async (s: Status) => {
+  /** After a pick, an undo, a removal. No gate — the page is already right,
+   *  it just needs new numbers, and a loading screen between every pick would
+   *  be far worse than the flash this file is trying to remove. */
+  const refreshAll = open;
+
+  /**
+   * OPENING A LEAGUE. Different event, different treatment.
+   *
+   * This is the one route people actually use — click a league in My Leagues —
+   * and it was the one route the loading screen never covered, because
+   * `booting` was set false on first mount and never raised again. The gate
+   * existed and simply was not up. That is the flash in the screenshot.
+   */
+  const openLeague = useCallback(async (s: Status) => {
+    setBooting(true);
     // finally, always. A gate that can fail to open is worse than the flash it
     // exists to prevent -- a stuck loading screen has no way out but a reload.
     try {
@@ -135,11 +149,11 @@ export default function App() {
   useEffect(() => {
     api.status()
       .then((s) => {
-        if (s.configured) refreshAll(s);
+        if (s.configured) openLeague(s);
         else setBooting(false);      // nothing to open; the home screen is right
       })
       .catch(() => setBooting(false));
-  }, [refreshAll]);
+  }, [openLeague]);
 
   /* -- the poll --------------------------------------------------------- */
   /* Picks land on their own, and the moment the count changes the shortlist
@@ -285,7 +299,7 @@ export default function App() {
   if (screen === "home" && !status?.configured) {
     return (
       <Home
-        onOpen={(s) => refreshAll(s)}
+        onOpen={(s) => openLeague(s)}
         onNew={() => setScreen("setup")}
       />
     );
@@ -294,7 +308,7 @@ export default function App() {
     return (
       <Setup
         onBack={() => setScreen("home")}
-        onReady={() => api.status().then(refreshAll)}
+        onReady={() => api.status().then(openLeague)}
       />
     );
   }
