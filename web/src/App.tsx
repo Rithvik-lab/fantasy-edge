@@ -15,6 +15,7 @@ import { PickEditor } from "@/components/PickEditor";
 import { PickInput } from "@/components/PickInput";
 import { Phase, SyncDot } from "@/components/Phase";
 import { useFlight } from "@/components/Flight";
+import { Booting } from "@/components/Booting";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
 import { MyTeam } from "@/components/MyTeam";
@@ -58,6 +59,11 @@ export default function App() {
   const [ladder, setLadder] = useState<AdpLadder | null>(null);
   const [roster, setRoster] = useState<RosterView | null>(null);
   const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
+  // Held until we know WHICH app this is. setStatus lands on the first fetch
+  // and unblocks the main layout, but the mode and tab are decided several
+  // fetches later — so the live-draft interface flashed for three seconds in
+  // front of people whose draft finished in August.
+  const [booting, setBooting] = useState(true);
   const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
   const [tab, setTab] = useState<Tab>("team");
   const wasLive = useRef(false);
@@ -89,8 +95,12 @@ export default function App() {
     }
   }, []);
 
-  const refreshAll = useCallback(async (s: Status) => {
+  const open = useCallback(async (s: Status) => {
     setStatus(s);
+    // Decide the mode and tab from the status we already have, BEFORE any of
+    // this renders. Doing it in an effect afterwards is what made the app
+    // correct itself in public.
+    if (s.phase === "complete") { setMode("draft"); setTab("team"); }
     await loadList();
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
     try { setLadder(await api.adp()); } catch { /* optional */ }
@@ -98,10 +108,24 @@ export default function App() {
     setScreen("draft");
   }, [loadList]);
 
+  const refreshAll = useCallback(async (s: Status) => {
+    // finally, always. A gate that can fail to open is worse than the flash it
+    // exists to prevent -- a stuck loading screen has no way out but a reload.
+    try {
+      await open(s);
+    } finally {
+      setBooting(false);
+    }
+  }, [open]);
+
+
   useEffect(() => {
     api.status()
-      .then((s) => { if (s.configured) refreshAll(s); })
-      .catch(() => undefined);
+      .then((s) => {
+        if (s.configured) refreshAll(s);
+        else setBooting(false);      // nothing to open; the home screen is right
+      })
+      .catch(() => setBooting(false));
   }, [refreshAll]);
 
   /* -- the poll --------------------------------------------------------- */
@@ -232,14 +256,18 @@ export default function App() {
     } finally { setBusy(false); }
   }
 
-  // The draft ending is a change of question, not a caption over the old one.
-  // The moment the last pick lands the useful screen is your team, so that is
-  // where you get put -- once, and never against a deliberate move back.
+  // A draft ending WHILE YOU WATCH. Opening an already-finished league is
+  // handled in refreshAll before the first render, so this only fires for the
+  // live transition -- and only once, never against a deliberate move back.
   useEffect(() => {
-    const done = status?.phase === "complete";
-    if (done && wasLive.current) setTab("team");
     if (status?.phase === "live") wasLive.current = true;
+    if (status?.phase === "complete" && wasLive.current) {
+      wasLive.current = false;
+      setTab("team");
+    }
   }, [status?.phase]);
+
+  if (booting) return <Booting name={status?.league_name || status?.saved_name} />;
 
   if (screen === "home" && !status?.configured) {
     return (
