@@ -4,6 +4,7 @@ import { api, type TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { TeamRoster } from "@/components/TeamRoster";
 import { Standing, Improve, Sleepers } from "@/components/TeamPanels";
+import { LeagueGrid } from "@/components/LeagueGrid";
 import { cn } from "@/lib/utils";
 
 /**
@@ -147,6 +148,14 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
   );
 }
 
+/** The room, after the draft: every roster, hoverable against yours. */
+export function LeagueRoom() {
+  const [d, setD] = useState<TeamReport | null>(null);
+  useEffect(() => { api.teamReport().then(setD).catch(() => undefined); }, []);
+  if (!d || d.empty || !d.league?.length) return null;
+  return <LeagueGrid rows={d.league} names={d.team_names} />;
+}
+
 export function MyTeam() {
   const [d, setD] = useState<TeamReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -162,8 +171,27 @@ export function MyTeam() {
                          text-[11.5px] text-muted">{err}</p>;
   }
   if (!d) {
-    return <p className="rounded-lg border border-line bg-panel p-6 text-center
-                         text-[11.5px] text-muted">reading your roster…</p>;
+    // Skeleton of the actual layout rather than a sentence. It shows where
+    // things are about to be, so the page does not jump when they arrive —
+    // and it does not pretend to be a chart, which is what a fake bar would.
+    return (
+      <div className="grid animate-pulse gap-4 lg:grid-cols-[1.05fr_0.9fr_1fr]">
+        <div className="space-y-1.5 rounded-lg border border-line bg-panel p-3">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2.5">
+              <span className="h-2 w-8 rounded bg-line" />
+              <span className="h-9 w-9 rounded-md bg-line/70" />
+              <span className="h-2 flex-1 rounded bg-line/60" />
+            </div>
+          ))}
+        </div>
+        <div className="space-y-3">
+          <div className="h-24 rounded-md border border-line bg-panel" />
+          <div className="h-20 rounded-md border border-line bg-panel" />
+        </div>
+        <div className="h-56 rounded-lg border border-line bg-panel" />
+      </div>
+    );
   }
   if (d.empty) {
     return (

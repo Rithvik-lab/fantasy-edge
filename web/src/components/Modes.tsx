@@ -16,17 +16,23 @@ import { cn } from "@/lib/utils";
  */
 export type Mode = "draft" | "trade" | "waiver";
 
-const MODES: { id: Mode; label: string; hint: string }[] = [
-  { id: "draft", label: "Draft", hint: "who to take, and when" },
+const MODES: { id: Mode; label: string; done?: string; hint: string }[] = [
+  // The first mode changes NAME once the draft is done, because it changes
+  // question. "Draft" answers who to take; there is nobody left to take. What
+  // remains is the team you ended up with.
+  { id: "draft", label: "Draft", done: "My team",
+    hint: "who to take, and when" },
   { id: "trade", label: "Trade", hint: "what a deal does to your lineup" },
   { id: "waiver", label: "Waivers", hint: "who to add this week" },
 ];
 
-export function ModeSwitch({ mode, onMode, disabled }: {
+export function ModeSwitch({ mode, onMode, disabled, complete }: {
   mode: Mode;
   onMode: (m: Mode) => void;
   /** Modes that need a season in progress are dead until there is one. */
   disabled?: Mode[];
+  /** The draft is over, so the first mode is no longer about drafting. */
+  complete?: boolean;
 }) {
   return (
     <div className="flex rounded-md border border-line bg-ink/40 p-0.5">
@@ -51,7 +57,7 @@ export function ModeSwitch({ mode, onMode, disabled }: {
                 transition={{ type: "spring", stiffness: 400, damping: 32 }}
               />
             )}
-            <span className="relative z-10">{m.label}</span>
+            <span className="relative z-10">{(complete && m.done) || m.label}</span>
           </button>
         );
       })}

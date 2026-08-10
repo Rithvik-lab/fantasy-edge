@@ -91,9 +91,14 @@ export function Floating({
  * unreachable: it vanished in the gap. So the close is delayed, and entering
  * the panel cancels it.
  */
-export function useHover({ delay = 110, grace = 180 } = {}) {
+export function useHover<T extends HTMLElement = HTMLSpanElement>(
+  { delay = 110, grace = 180 } = {},
+) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const ref = useRef<HTMLSpanElement>(null);
+  // Generic, because these triggers are spans in some places and divs in
+  // others, and casting at every call site is how a ref ends up pointed at
+  // the wrong element.
+  const ref = useRef<T>(null);
   const openT = useRef<number | undefined>(undefined);
   const closeT = useRef<number | undefined>(undefined);
 

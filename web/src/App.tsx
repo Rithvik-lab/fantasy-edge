@@ -17,7 +17,7 @@ import { Phase, SyncDot } from "@/components/Phase";
 import { useFlight } from "@/components/Flight";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
-import { MyTeam } from "@/components/MyTeam";
+import { MyTeam, LeagueRoom } from "@/components/MyTeam";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -270,7 +270,8 @@ export default function App() {
           </span>
 
           <div className="ml-auto flex items-center gap-3">
-            <ModeSwitch mode={mode} onMode={setMode} disabled={["waiver"]} />
+            <ModeSwitch mode={mode} onMode={setMode} disabled={["waiver"]}
+                        complete={status.phase === "complete"} />
             <GlossaryDrawer />
             <button
               onClick={() => setEditPicks(true)}
@@ -344,6 +345,7 @@ export default function App() {
           </div>
         ) : (
         <>
+        {status.phase !== "complete" && (
         <div className="mb-3 flex rounded-md border border-line p-0.5">
           {(["team", "room"] as const).map((t) => (
             <button
@@ -358,10 +360,13 @@ export default function App() {
             </button>
           ))}
         </div>
+        )}
 
         <div key={tab} className="tick-in space-y-4">
           {tab === "team" ? (
             <MyTeam />
+          ) : status.phase === "complete" ? (
+            <LeagueRoom />
           ) : (
             <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">
               {/* Left: what you do. Right: the board itself, which is the

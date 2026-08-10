@@ -741,7 +741,8 @@ def team_report() -> dict:
         "improve": report.improvements(strength, b, st.drafted_ids, st.settings),
         "team_names": {str(k): v for k, v in STATE.team_names.items()},
         "complete": bool(st.draft_complete
-                         or st.on_the_clock()[2] > st.settings.total_picks),
+                         or st.on_the_clock()[2] > st.settings.total_picks
+                         or len(st.my_ids) >= st.settings.roster_size),
         "strengths": words["strengths"],
         "weaknesses": words["weaknesses"],
     }
@@ -1033,7 +1034,17 @@ def status() -> dict:
     rnd, pick, overall = STATE.on_the_clock()
     mine = STATE.my_picks()
     upcoming = [p for p in mine if p >= overall]
-    complete = STATE.draft_complete or overall > STATE.settings.total_picks
+    # YOUR DRAFT IS OVER WHEN YOUR TEAM IS FULL. The old test was whether the
+    # league had used all its picks, which only ever fires when every seat's
+    # picks are being recorded. Draft only your own men -- the whole point of
+    # manual mode -- and the counter reaches 17 of 192 and stops, so the app
+    # sat in a live draft forever: still offering "take these when it is your
+    # turn" to a manager with no roster spots left.
+    roster_full = (STATE.settings is not None
+                   and len(STATE.my_ids) >= STATE.settings.roster_size)
+    complete = (STATE.draft_complete
+                or overall > STATE.settings.total_picks
+                or roster_full)
 
     phase = "complete" if complete else ("live" if STATE.draft_started else "pre")
     warnings = []
