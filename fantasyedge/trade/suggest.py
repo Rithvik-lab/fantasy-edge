@@ -42,6 +42,7 @@ import polars as pl
 from fantasyedge.draft.session import optimal_lineup
 from fantasyedge.league import LeagueSettings
 from fantasyedge.trade import market
+from fantasyedge.trade.ask import Ask
 from fantasyedge.trade.evaluate import evaluate
 
 # How generous the offer has to look from across the table. Zero means "they
@@ -164,12 +165,19 @@ def _swap(roster: pl.DataFrame, out_ids: list[str], incoming: pl.DataFrame) -> p
     return pl.concat([kept.select(cols), incoming.select(cols)], how="vertical")
 
 
-def _packages(df: pl.DataFrame, max_size: int) -> list[tuple[str, ...]]:
-    ids = df["player_id"].to_list()
+def _packages(df: pl.DataFrame, max_size: int,
+              exclude: set[str] | None = None) -> list[tuple[str, ...]]:
+    ids = [i for i in df["player_id"].to_list()
+           if not exclude or i not in exclude]
     out: list[tuple[str, ...]] = [(i,) for i in ids]
     if max_size >= 2:
         out += list(combinations(ids, 2))
     return out
+
+
+def key(give, get) -> str:
+    """A stable name for a deal, so re-roll can avoid showing it twice."""
+    return "|".join(sorted(give)) + ">" + "|".join(sorted(get))
 
 
 def for_team(
@@ -182,10 +190,22 @@ def for_team(
     max_out: int = 2,
     max_in: int = 2,
     top: int = 3,
+    ask: "Ask | None" = None,
+    seen: set[str] | None = None,
 ) -> list[Offer]:
-    """Best offers to send one opponent."""
+    """Best offers to send one opponent.
+
+    `ask` is what you said was wrong with the last one -- men to hold, a
+    position you want back, a package size. It narrows the search rather than
+    re-ranking its output: a constraint applied afterwards throws away the work
+    that would have satisfied it.
+    """
     if not mine.height or not theirs.height:
         return []
+    ask = ask or Ask()
+    seen = seen or set()
+    max_out = min(max_out, ask.max_out)
+    max_in = min(max_in, ask.max_in)
 
     pv = dict(zip(board["player_id"].to_list(),
                   board["perceived_value"].fill_null(0.0).to_list()))
@@ -199,8 +219,18 @@ def for_team(
     base_ours = _fast_lineup(list(mine_rows.values()), settings)
     base_theirs = _fast_lineup(list(their_rows.values()), settings)
 
-    give_sets = _packages(mine, max_out)
+    pos = dict(zip(board["player_id"].to_list(), board["position"].to_list()))
+    give_sets = _packages(mine, max_out, exclude=set(ask.keep))
     get_sets = _packages(theirs, max_in)
+    if ask.must_get:
+        want = set(ask.must_get)
+        get_sets = [k for k in get_sets if want & set(k)]
+    if ask.want:
+        get_sets = [k for k in get_sets
+                    if {pos.get(i) for i in k} & set(ask.want)]
+    if not give_sets or not get_sets:
+        return []
+    floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)
 
     # --- pass 1 + 2: prune on their scale, rank on ours ------------------
     scored = []
@@ -241,8 +271,12 @@ def for_team(
 
     # --- pass 3: the real verdict, survivors only ------------------------
     for cheap, their_gain, g, k in scored[:SHORTLIST]:
+        if key(g, k) in seen:
+            # Re-roll means SHOW ME ANOTHER ONE. Returning the same deal with
+            # the same numbers reads as a broken button, which is what it was.
+            continue
         v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
-        if v.delta_median < OUR_MIN_GAIN:
+        if v.delta_median < floor:
             continue
         offers.append(Offer(
             team_id=team_id,
@@ -271,6 +305,8 @@ def counter(
     observed: pl.DataFrame | None = None,
     through_week: int = 0,
     top: int = 3,
+    ask: "Ask | None" = None,
+    seen: set[str] | None = None,
 ) -> list[Offer]:
     """Given a deal on the table, find nearby deals that are better.
 
@@ -288,11 +324,15 @@ def counter(
     b = market.perceived(board, observed, through_week)
     pv = dict(zip(b["player_id"].to_list(),
                   b["perceived_value"].fill_null(0.0).to_list()))
+    ask = ask or Ask()
+    seen = seen or set()
     threshold = STANCE.get(stance, THEIR_MIN_GAIN)
+    if ask.harder:
+        threshold = max(threshold, STANCE["conservative"])
 
     mine_rows = _as_rows(mine)
     their_rows = _as_rows(theirs)
-    my_ids = [p for p in mine_rows if p not in give]
+    my_ids = [p for p in mine_rows if p not in give and p not in set(ask.keep)]
     their_ids = [p for p in their_rows if p not in get]
 
     base_ours = _fast_lineup(list(mine_rows.values()), settings)
@@ -345,9 +385,12 @@ def counter(
     scored.sort(key=lambda r: -r[0])
 
     out_offers: list[Offer] = []
+    floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)
     for _, their_gain, g, k in scored[:SHORTLIST]:
+        if key(g, k) in seen:
+            continue
         v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
-        if v.delta_median < OUR_MIN_GAIN:
+        if v.delta_median < floor:
             continue
         out_offers.append(Offer(
             team_id=-1, team_name="counter", give=v.give, get=v.get,
@@ -368,6 +411,8 @@ def across_league(
     through_week: int = 0,
     per_team: int = 2,
     top: int = 10,
+    ask: "Ask | None" = None,
+    seen: set[str] | None = None,
 ) -> list[Offer]:
     """Scan every opponent. `rosters` excludes yours."""
     b = market.perceived(board, observed, through_week)
@@ -376,7 +421,8 @@ def across_league(
     out: list[Offer] = []
     for tid, roster in rosters.items():
         out += for_team(mine, roster, b, settings, tid,
-                        names.get(tid, f"Team {tid}"), top=per_team)
+                        names.get(tid, f"Team {tid}"), top=per_team,
+                        ask=ask, seen=seen)
 
     out.sort(key=lambda o: -o.our_gain)
     return out[:top]

@@ -22,6 +22,67 @@ const STEPS = [
   "working out where the draft is",
 ];
 
+/**
+ * A kick through the uprights, on a loop.
+ *
+ * Drawn rather than animated frame by frame: the ball follows a real arc
+ * (`offsetPath` along the same quadratic the goalposts are placed against), so
+ * it rises, tumbles, and clears the crossbar instead of sliding along a line
+ * and being called a kick. One kick every three seconds, with the ball resting
+ * on the tee between them — a waiting screen should breathe.
+ */
+function FieldGoal() {
+  const reduce = useReducedMotion();
+  // Tee at the left, uprights at the right, apex above the crossbar.
+  const arc = "M 14 92 Q 96 2 178 46";
+
+  return (
+    <svg viewBox="0 0 200 110" className="h-24 w-full" aria-hidden>
+      {/* Turf line and the hash the kick starts from. */}
+      <line x1="0" y1="98" x2="200" y2="98"
+            stroke="currentColor" className="text-line" strokeWidth="1.5" />
+      {[30, 60, 90, 120, 150].map((x) => (
+        <line key={x} x1={x} y1="94" x2={x} y2="98"
+              stroke="currentColor" className="text-line" strokeWidth="1" />
+      ))}
+
+      {/* The posts. Crossbar at y=62, uprights rising out of it. */}
+      <g stroke="currentColor" className="text-clock/70" strokeWidth="2.5"
+         strokeLinecap="round" fill="none">
+        <path d="M 168 98 L 168 62" />
+        <path d="M 152 62 L 184 62" />
+        <path d="M 152 62 L 152 22" />
+        <path d="M 184 62 L 184 22" />
+      </g>
+
+      {/* The flight path, faint, so the arc reads even at the start. */}
+      <path d={arc} fill="none" stroke="currentColor"
+            className="text-turf/15" strokeWidth="1" strokeDasharray="2 4" />
+
+      <motion.g
+        style={reduce ? { offsetDistance: "0%" }
+                      : { offsetPath: `path("${arc}")`, offsetRotate: "0deg" }}
+        animate={reduce ? undefined
+          : { offsetDistance: ["0%", "0%", "100%", "100%"],
+              opacity: [1, 1, 1, 0] }}
+        transition={{ duration: 3, times: [0, 0.18, 0.78, 1],
+                      repeat: Infinity, ease: "easeOut" }}
+      >
+        {/* End-over-end, which is what a kicked ball does. */}
+        <motion.g
+          animate={reduce ? undefined : { rotate: [0, 380] }}
+          transition={{ duration: 3, times: [0, 1], repeat: Infinity,
+                        ease: "linear" }}
+        >
+          <ellipse rx="5.5" ry="3.6" className="fill-clock" />
+          <line x1="-2" y1="0" x2="2" y2="0"
+                stroke="currentColor" className="text-ink" strokeWidth="0.8" />
+        </motion.g>
+      </motion.g>
+    </svg>
+  );
+}
+
 export function Booting({ name }: { name?: string }) {
   const [i, setI] = useState(0);
   const reduce = useReducedMotion();
@@ -43,10 +104,12 @@ export function Booting({ name }: { name?: string }) {
           {name && <span className="truncate text-xs text-muted">{name}</span>}
         </div>
 
+        <FieldGoal />
+
         {/* A board filling in, left to right. It is the thing being loaded, so
             it may as well be the thing on screen. */}
-        <div className="mt-4 space-y-1.5">
-          {Array.from({ length: 6 }).map((_, row) => (
+        <div className="mt-2 space-y-1.5">
+          {Array.from({ length: 4 }).map((_, row) => (
             <div key={row} className="flex items-center gap-2">
               <motion.span
                 className="h-1.5 w-5 rounded-full bg-line"

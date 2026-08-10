@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { LeagueRoster, TradePlayer } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { Term } from "@/components/Explain";
 import { LANDING, Landed } from "@/components/Flight";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +19,10 @@ import { cn } from "@/lib/utils";
  * without reading.
  */
 
-const SLOT_ORDER = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "D/ST", "K"];
+// The order a lineup card is written in — flexes after the named slots,
+// defence and kicker last, the way every platform prints it.
+const SLOT_ORDER = ["QB", "RB", "RB", "WR", "WR", "WR", "TE",
+                    "FLEX", "FLEX", "OP", "D/ST", "K"];
 
 /** ESPN-style starters table: slot on the left, the man filling it beside. */
 export function RosterPanel({
@@ -89,9 +93,11 @@ export function RosterPanel({
             </span>
           )}
         </div>
-        <span className="num shrink-0 text-[10px] text-muted">
-          {Math.round(p.projected_points ?? 0)}
-        </span>
+        <Term k="projected">
+          <span className="num shrink-0 text-[10px] text-muted">
+            {Math.round(p.projected_points ?? 0)}
+          </span>
+        </Term>
         <span className={cn("w-3 shrink-0 text-[13px] leading-none transition-opacity",
           on ? "text-turf" : "text-muted opacity-0 group-hover:opacity-100")}>
           {on ? "\u2713" : "+"}
@@ -112,14 +118,18 @@ export function RosterPanel({
   for (const p of starters) if (!used.has(p.player_id)) rows.push({ p, slot: p.lineup_slot ?? "" });
 
   return (
-    <section className="flex min-h-0 flex-col rounded-lg border border-line bg-panel">
+    // NO INNER SCROLLER. A roster is sixteen or eighteen names and the whole
+    // question is which of them to move -- half a team behind a scrollbar
+    // means comparing two rosters is a memory test. The page scrolls; the
+    // panel does not.
+    <section className="flex flex-col rounded-lg border border-line bg-panel">
       <header className="flex items-center gap-2 border-b border-line px-2.5 py-1.5">
         <span className="eyebrow">{title}</span>
-        <span className="ml-auto text-[9.5px] uppercase tracking-wider text-muted">
-          starters
+        <span className="num ml-auto text-[9.5px] text-muted">
+          {roster.players.length} players
         </span>
       </header>
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <ul>
         {rows.map(({ p, slot }) => <Line key={p.player_id} p={p} slot={slot} />)}
         {bench.length > 0 && (
           <li className="border-y border-line bg-raised/40 px-2.5 py-1">
@@ -191,16 +201,20 @@ click a name on the roster beside this, or drag one in
                     ) : <span className="h-12 w-12 shrink-0 rounded bg-panel" />}
                   </PlayerHover>
                   <div className="min-w-0 flex-1">
-                    <span className="block truncate text-[12px] font-medium leading-tight">
-                      {p.player_name}
-                    </span>
+                    <PlayerHover playerId={p.player_id}>
+                      <span className="block cursor-help truncate text-[12px] font-medium leading-tight">
+                        {p.player_name}
+                      </span>
+                    </PlayerHover>
                     <span className="text-[10px] font-bold"
                           style={{ color: POS_HUE[p.position] ?? "#8CA096" }}>
                       {p.position}
                     </span>
-                    <span className="num ml-1.5 text-[10px] text-muted">
-                      {Math.round(p.projected_points ?? 0)} proj
-                    </span>
+                    <Term k="projected" className="ml-1.5">
+                      <span className="num text-[10px] text-muted">
+                        {Math.round(p.projected_points ?? 0)} proj
+                      </span>
+                    </Term>
                   </div>
                   <button
                     onClick={() => onRemove(id)}

@@ -343,34 +343,44 @@ export default function App() {
             <ModeSwitch mode={mode} onMode={setMode} disabled={["waiver"]}
                         complete={status.phase === "complete"} />
             <GlossaryDrawer />
-            <button
-              onClick={() => setEditPicks(true)}
-              className="num rounded border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-turf/40 hover:text-chalk"
-              title="Set which picks are yours, after trades"
-            >
-              {status.picks_traded
-                ? "picks: custom"
-                : `picks ${(status.my_picks ?? []).slice(0, 3).join(" · ")}${
-                    (status.my_picks?.length ?? 0) > 3 ? " …" : ""}`}
-            </button>
-            <span className="num text-xs text-muted">
-              R{status.round} · #{status.overall}
-            </span>
+            {/* THE DRAFT CLOCK GOES AWAY WHEN THE DRAFT DOES. Round, overall
+                pick, which picks are yours and "next in one" are all answers
+                to a question nobody is asking in October, and leaving them up
+                made a finished league look like it was still on the clock. */}
+            {status.phase !== "complete" && (
+              <>
+                <button
+                  onClick={() => setEditPicks(true)}
+                  className="num rounded border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-turf/40 hover:text-chalk"
+                  title="Set which picks are yours, after trades"
+                >
+                  {status.picks_traded
+                    ? "picks: custom"
+                    : `picks ${(status.my_picks ?? []).slice(0, 3).join(" · ")}${
+                        (status.my_picks?.length ?? 0) > 3 ? " …" : ""}`}
+                </button>
+                <span className="num text-xs text-muted">
+                  R{status.round} · #{status.overall}
+                </span>
+              </>
+            )}
             {status.platform && !status.espn_connected && (
               <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted">
                 {status.platform} adp
               </span>
             )}
-            <span
-              className={cn(
-                "rounded px-2 py-0.5 text-[11px] font-semibold transition-colors",
-                myTurn ? "bg-turf text-ink" : "bg-raised text-muted"
-              )}
-            >
-              {myTurn ? "ON THE CLOCK"
-                : status.picks_until_next != null
-                  ? `next in ${status.picks_until_next}` : "waiting"}
-            </span>
+            {status.phase !== "complete" && (
+              <span
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] font-semibold transition-colors",
+                  myTurn ? "bg-turf text-ink" : "bg-raised text-muted"
+                )}
+              >
+                {myTurn ? "ON THE CLOCK"
+                  : status.picks_until_next != null
+                    ? `next in ${status.picks_until_next}` : "waiting"}
+              </span>
+            )}
             <SyncDot status={status} />
             <SaveLeague status={status} onSaved={setStatus} />
             <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"

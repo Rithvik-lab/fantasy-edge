@@ -142,6 +142,22 @@ def value_curve(board: pl.DataFrame, rank_col: str = "ecr") -> pl.DataFrame:
     )
 
 
+def _floor(expr: pl.Expr) -> pl.Expr:
+    """NOBODY IS WORTH LESS THAN NOTHING IN A TRADE.
+
+    `market_value` is fitted on VOR, so a man below replacement level carries a
+    negative one -- correct for a lineup, wrong for a negotiation. Summed across
+    a package it says the other manager GAINS by handing you two useful bench
+    players in exchange for your worst, because he sheds two negative numbers
+    and takes on one. The scan proposed exactly that: Tyler Allgeier for Kyler
+    Murray and a rookie receiver, scored as +17 in their favour.
+
+    A player you would not roster is worth zero, not less. You can always
+    decline to own him, which is the option that sets the floor.
+    """
+    return pl.max_horizontal(expr, pl.lit(0.0))
+
+
 def perceived(
     board: pl.DataFrame,
     observed: pl.DataFrame | None = None,
@@ -161,7 +177,8 @@ def perceived(
         POSITION_PREMIUM, default=1.0, return_dtype=pl.Float64)
     if observed is None or not observed.height or through_week <= 0:
         return b.with_columns(
-            (pl.col("market_value") * premium_expr).alias("perceived_value"))
+            _floor(pl.col("market_value") * premium_expr)
+            .alias("perceived_value"))
 
     j = b.join(observed, on="player_id", how="left")
 
@@ -198,7 +215,7 @@ def perceived(
         POSITION_PREMIUM, default=1.0, return_dtype=pl.Float64)
 
     return j.with_columns(
-        ((pl.col("market_value") + shift.fill_null(0.0)) * premium)
+        _floor((pl.col("market_value") + shift.fill_null(0.0)) * premium)
         .alias("perceived_value")
     ).drop([c for c in ("games", "ppg", "opp_ppg", "sd", "best3", "cv", "games_eff")
             if c in j.columns])

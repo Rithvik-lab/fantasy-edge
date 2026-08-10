@@ -106,6 +106,41 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Where he sits among players at his spot by value over replacement. This is the number that decides a pick, because you are never choosing between all players — you are choosing between the best left at each position and what the drop looks like behind him.",
   },
+  fit: {
+    title: "How well the two rosters match",
+    body:
+      "The smaller of two numbers: what their men would add to your lineup, and what yours would add to theirs. The smaller one, because a trade needs both halves — adding them together let one enormous side carry a partner who wants nothing you have, which is exactly the manager not to call.",
+  },
+  adds: {
+    title: "What he would add to your lineup",
+    body:
+      "His projection minus the man he would replace — the WEAKEST player you currently start at his position, since that is the one who actually leaves the lineup. A big name at a position you are already strong at adds very little, and this is the number that says so.",
+  },
+  our_gain: {
+    title: "What the deal is worth to you",
+    body:
+      "Points across the rest of the season, from a full simulation of the lineup you could field before and after — including the weeks somebody is hurt and the roster spots the deal costs you. It is not the two piles added up; that scale gets 4-for-1 trades backwards.",
+  },
+  their_gain: {
+    title: "What it looks like from their side",
+    body:
+      "The same deal on THEIR scale — draft capital plus an overweighted read of recent form, which is how managers actually price players. A deal has to win on your scale and read as a win on theirs, or it is not a trade, it is a wish.",
+  },
+  spare: {
+    title: "Spare",
+    body:
+      "He is not in their starting lineup and he still clears the last starting slot in this league — so he is a real asset sitting on a bench. Spare men are the easy ask: it costs them nothing they play.",
+  },
+  team_needs: {
+    title: "Where they are short",
+    body:
+      "Positions where their starters come in under the average starting lineup in this league. It is what they are shopping for, which is what makes an offer worth opening.",
+  },
+  starters_total: {
+    title: "Their projected starters",
+    body:
+      "Season points from the best legal lineup they can field today. Projected, not played — neighbouring teams are usually closer than one week's swing.",
+  },
 };
 
 /**

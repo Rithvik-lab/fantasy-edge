@@ -193,6 +193,49 @@ export interface TradeOffer {
   win_probability: number; naive_delta: number; note: string;
 }
 
+/** A player named in the league read, with what he would add to a lineup. */
+export interface Piece {
+  player_id: string; player_name: string; position: string;
+  projected_points: number; starting?: boolean;
+  adds: number; starts_for_you?: boolean; over_replacement?: number;
+}
+
+/** A roster read on its own: strong where, thin where, who is spare. */
+export interface Read {
+  team_id: number | null; team_name: string; rank?: number; starters: number;
+  strength: { position: string; edge: number; percentile: number;
+              per_starter?: number; league_median: number }[];
+  needs: string[];
+  surplus: Piece[];
+}
+
+/** An opponent, which is a read plus what could cross the table. */
+export interface TeamRead extends Read {
+  team_id: number;
+  get_from_them: Piece[];
+  they_want_from_you: Piece[];
+  fit: number;
+  note: string;
+}
+
+/** What you told it was wrong with the last offer. */
+export interface Ask {
+  stance?: string; per_team?: number; top?: number; team_id?: number | null;
+  keep?: string[]; want?: string[]; must_get?: string[];
+  fewer?: boolean; richer?: boolean; harder?: boolean;
+  seen?: string[]; note?: string;
+}
+
+export interface Scan {
+  offers: TradeOffer[];
+  keys: string[];
+  me: Read;
+  teams: TeamRead[];
+  understood: string[];
+  through_week: number;
+  note: string;
+}
+
 export interface SeasonStatus {
   synced: boolean; season?: number; week?: number | null;
   age_hours?: number; stale?: boolean;
@@ -219,6 +262,8 @@ export interface TeamReport {
   strength: { position: string; have: number; need: number; points: number;
               per_starter?: number; league_median: number; percentile: number;
               edge: number }[];
+  /** Starting slots with nobody in them, in lineup order. */
+  gaps?: { slot: string; position: string }[];
   byes: { week: number; count: number; players: string[]; points: number }[];
   draft: { picks: { overall: number; player_id: string; player_name: string;
                     position: string | null;
@@ -343,12 +388,16 @@ export const api = {
   tradeEvaluate: (give: string[], get: string[], roster: string[] = []) =>
     req<TradeVerdict>("/trade/evaluate", {
       method: "POST", body: JSON.stringify({ give, get, roster }) }),
-  tradeSuggest: (perTeam = 1, top = 8, stance = "fair") =>
-    req<{ offers: TradeOffer[]; through_week: number; note: string }>(
-      `/trade/suggest?per_team=${perTeam}&top=${top}&stance=${stance}`),
-  tradeCounter: (give: string[], get: string[], team_id: number, stance = "fair") =>
-    req<{ offers: TradeOffer[] }>("/trade/counter", {
-      method: "POST", body: JSON.stringify({ give, get, team_id, stance }) }),
+  tradeScan: (ask: Ask = {}) =>
+    req<Scan>("/trade/scan", {
+      method: "POST",
+      body: JSON.stringify({ per_team: 1, top: 8, stance: "fair", ...ask }) }),
+  tradeCounter: (give: string[], get: string[], team_id: number,
+                 ask: Ask = {}) =>
+    req<{ offers: TradeOffer[]; keys: string[]; understood: string[] }>(
+      "/trade/counter", {
+        method: "POST",
+        body: JSON.stringify({ give, get, team_id, stance: "fair", ...ask }) }),
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
   teamReport: () => req<TeamReport>("/team/report"),

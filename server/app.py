@@ -11,6 +11,7 @@ same code.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -126,6 +127,11 @@ class Draft:
         self.risk = "combined"
         self.bench_risk = "aggressive"
         self.picks: list[dict] = []          # {player_id, name, slot, overall}
+        # Who owns whom TODAY, team_id -> board ids, straight off ESPN. The
+        # pick log freezes when the draft ends and waivers, drops and trades
+        # all happen after it, so once a draft is complete this is the truth
+        # and the picks are only history.
+        self.rosters: dict[int, list[str]] = {}
         self.espn: dict | None = None        # league_id / season / cookies
         self.league_name = ""
         self.team_names: dict[int, str] = {}
@@ -180,6 +186,13 @@ class Draft:
         authoritative and handles trades for free. Off ESPN, ownership is
         whichever overall picks you say are yours.
         """
+        # ONCE THE DRAFT IS OVER, THE ROSTER IS THE TRUTH. The pick log stops
+        # the moment the draft does, so a waiver add is invisible to it and a
+        # dropped man stays on your team forever. During the draft it is the
+        # other way round -- picks land instantly, the roster view can lag --
+        # so the switch happens exactly when the draft completes.
+        if self.draft_complete and self.my_team_id in self.rosters:
+            return list(self.rosters[self.my_team_id])
         if self.my_team_id is not None:
             return [p["player_id"] for p in self.picks
                     if p.get("player_id") and p.get("team_id") == self.my_team_id]
@@ -517,6 +530,80 @@ def search(q: str, limit: int = 8) -> dict:
     return {"players": out[:limit]}
 
 
+def _name_key(s: str) -> str:
+    """Same normalisation the board uses, for matching across id systems."""
+    s = re.sub(r"\b(jr|sr|ii|iii|iv|v)\.?$", "", (s or "").lower().strip())
+    return re.sub(r"[^a-z ]", "", s).strip()
+
+
+def _resolve(board: pl.DataFrame, gsis: str | None, espn_id: str | None,
+             name: str | None) -> str | None:
+    """An ESPN player, as the board spells him.
+
+    Three keys, in falling order of trust, because the board itself is keyed
+    two different ways and the crosswalk lags a draft class:
+
+      gsis            everyone the crosswalk can place
+      espn-<id>       kickers and defences, which have no gsis and never will
+      the name        rookies the crosswalk has not caught up with yet
+
+    Returning None is a real answer -- a player genuinely off the board cannot
+    be priced -- but it must be the LAST answer, not the first. It was the
+    first, and every kicker and defence in the league quietly disappeared.
+    """
+    ids, names = _board_keys(board)
+    if gsis and gsis in ids:
+        return gsis
+    if espn_id and f"espn-{espn_id}" in ids:
+        return f"espn-{espn_id}"
+    if name:
+        return names.get(_name_key(name))
+    return None
+
+
+# Keyed on the board object, so a rebuilt board (a platform switch does that)
+# never gets answered out of the previous one's index.
+_KEYS: tuple[int, set[str], dict[str, str]] | None = None
+
+
+def _board_keys(board: pl.DataFrame) -> tuple[set[str], dict[str, str]]:
+    global _KEYS
+    if _KEYS is None or _KEYS[0] != id(board):
+        _KEYS = (
+            id(board),
+            set(board["player_id"].to_list()),
+            {_name_key(n): i for n, i in zip(board["player_name"].to_list(),
+                                             board["player_id"].to_list())},
+        )
+    return _KEYS[1], _KEYS[2]
+
+
+def _live_rosters(payload: dict, board: pl.DataFrame) -> dict[int, list[str]]:
+    """team_id -> board ids, from ESPN's current rosters.
+
+    Every id goes through `_resolve`, so a kicker keyed `espn-<id>` on the
+    board arrives spelled the way the board spells him rather than the way
+    ESPN does. Players genuinely off the board are dropped here: they cannot
+    be priced, and a roster row with no projection would be counted as a zero.
+    """
+    try:
+        r = espn_draft.rosters(payload)
+    except Exception:
+        return {}
+    if not r.height:
+        return {}
+    ids, _ = _board_keys(board)
+    out: dict[int, list[str]] = {}
+    for row in r.iter_rows(named=True):
+        pid = row.get("player_id")
+        if pid not in ids:
+            pid = _resolve(board, row.get("gsis_id"), row.get("espn_id"),
+                           row.get("player_name"))
+        if pid:
+            out.setdefault(int(row["team_id"]), []).append(pid)
+    return out
+
+
 def _ingest(payload: dict) -> None:
     """Replace local pick history with ESPN's, which is authoritative."""
     info = espn_draft.league_info(payload)
@@ -539,26 +626,29 @@ def _ingest(payload: dict) -> None:
             STATE.picks = []
         return
     b = _board()
-    known = set(b["player_id"].to_list())
     teams = STATE.settings.n_teams
 
     fresh = []
     for r in picks.iter_rows(named=True):
-        pid = r.get("gsis_id")
+        pid = _resolve(b, r.get("gsis_id"), r.get("espn_id"),
+                       r.get("player_name"))
         slot = slot_for_pick(r["round"], r["round_pick"], teams) \
             if r["round"] and r["round_pick"] else None
         if slot is None:
             slot = ((r["overall"] - 1) % teams) + 1
         fresh.append({
-            "player_id": pid if pid in known else None,
+            "player_id": pid,
             "espn_id": r.get("espn_id"),
             "name": r.get("player_name") or f"ESPN #{r.get('espn_id')}",
             "slot": slot,
             "team_id": r.get("team_id"),
             "overall": r["overall"],
         })
+    live = _live_rosters(payload, b)
     with STATE.lock:
         STATE.picks = sorted(fresh, key=lambda p: p["overall"])
+        if live:
+            STATE.rosters = live
         # Round one is the first chance to read the seat off real picks.
         if not STATE.slot_confirmed and STATE.my_team_id:
             slot = espn_draft.draft_slot(payload, STATE.my_team_id)
@@ -632,14 +722,8 @@ def season_sync(force: bool = False) -> dict:
     return refresh.describe()
 
 
-@app.get("/api/rosters")
-def league_rosters() -> dict:
-    """Who owns whom RIGHT NOW, not who was drafted.
-
-    The draft log freezes the moment the draft ends; waivers, drops and trades
-    all happen after it. Trade mode needs current ownership, and the ESPN
-    payload has carried it in `mRoster` all along.
-    """
+def _espn_rosters() -> pl.DataFrame:
+    """Current ownership, with every id spelled the way the board spells it."""
     st = _require()
     if not st.espn:
         raise HTTPException(400, "no ESPN league connected")
@@ -650,23 +734,71 @@ def league_rosters() -> dict:
 
     r = espn_draft.rosters(payload)
     if not r.height:
+        return r
+    b = _board()
+    ids, _ = _board_keys(b)
+    fixed = [pid if pid in ids
+             else (_resolve(b, row.get("gsis_id"), row.get("espn_id"),
+                            row.get("player_name")) or pid)
+             for pid, row in zip(r["player_id"].to_list(),
+                                 r.iter_rows(named=True))]
+    r = r.with_columns(pl.Series("player_id", fixed))
+    with STATE.lock:
+        STATE.rosters = {int(t): [p for p in grp["player_id"].to_list()
+                                  if p in ids]
+                         for t, grp in
+                         ((tid[0] if isinstance(tid, tuple) else tid, g)
+                          for tid, g in r.group_by("team_id"))}
+    return r
+
+
+def _team_frames(r: pl.DataFrame) -> tuple[pl.DataFrame, dict[int, pl.DataFrame]]:
+    """Board rows for my roster and for each opponent's."""
+    b = _board()
+    mine = b.filter(pl.col("player_id").is_in(
+        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
+    others: dict[int, pl.DataFrame] = {}
+    for tid, grp in r.group_by("team_id"):
+        team_id = int(tid[0] if isinstance(tid, tuple) else tid)
+        if team_id == STATE.my_team_id:
+            continue
+        sub = b.filter(pl.col("player_id").is_in(grp["player_id"].to_list()))
+        if sub.height:
+            others[team_id] = sub
+    return mine, others
+
+
+@app.get("/api/rosters")
+def league_rosters() -> dict:
+    """Who owns whom RIGHT NOW, not who was drafted.
+
+    The draft log freezes the moment the draft ends; waivers, drops and trades
+    all happen after it. Trade mode needs current ownership, and the ESPN
+    payload has carried it in `mRoster` all along.
+    """
+    r = _espn_rosters()
+    if not r.height:
         return {"teams": [], "note": "ESPN returned no rosters for this league"}
 
     b = _board()
     val = b.select(["player_id", "projected_points", "vor"])
     r = r.join(val, on="player_id", how="left")
+    shots = _headshots(b)
 
     out = []
     for tid, grp in r.group_by("team_id"):
         team_id = tid[0] if isinstance(tid, tuple) else tid
+        players = (grp.sort("projected_points", descending=True, nulls_last=True)
+                      .select(["player_id", "player_name", "position",
+                               "lineup_slot", "starting", "injury_status",
+                               "projected_points", "vor"]).to_dicts())
+        for p in players:
+            p["headshot"] = shots.get(p["player_id"])
         out.append({
             "team_id": team_id,
             "name": STATE.team_names.get(team_id, f"Team {team_id}"),
             "mine": team_id == STATE.my_team_id,
-            "players": grp.sort("projected_points", descending=True, nulls_last=True)
-                          .select(["player_id", "player_name", "position",
-                                   "lineup_slot", "starting", "injury_status",
-                                   "projected_points", "vor"]).to_dicts(),
+            "players": players,
         })
     return {"teams": sorted(out, key=lambda t: t["team_id"]),
             "as_of": time.time()}
@@ -744,7 +876,13 @@ def team_report() -> dict:
     starters, bench = optimal_lineup(mine, st.settings, pinned=STATE.pinned)
     strength = report.positional_strength(mine, b, st.settings)
     dr = report.draft_report(st.picks, b, st.my_ids)
-    words = report.summarise(strength, grade)
+    # KICKER AND DEFENCE ARE ON THE ROSTER AND OUT OF THE VERDICT. They have to
+    # be on the team -- they fill two starting slots every week -- but they are
+    # flat by construction, so "you are 12th at kicker" is a fact about the
+    # draft order and not about your team. Left in, they were also the two
+    # biggest bars on the chart, which said the opposite.
+    shape = report.tradeable(strength)
+    words = report.summarise(shape, grade)
     shots = _headshots(b)
 
     def rows(df: pl.DataFrame, starting: bool) -> list[dict]:
@@ -766,14 +904,21 @@ def team_report() -> dict:
                   if k not in ("lineup", "bench")},
         "starters": rows(starters, True),
         "bench": rows(bench, False),
-        "strength": strength,
+        "strength": shape,
+        # Which starting slots are still empty. The shape panel no longer
+        # mentions kicker and defence, so this is where a missing one shows up
+        # -- and it shows up as an empty slot on the lineup card, which is
+        # where you would look for it anyway.
+        "gaps": report.unfilled(starters, st.settings),
         "byes": report.bye_conflicts(
             report.with_byes(mine, config.PRODUCTION_TARGET_SEASON),
             st.settings),
         "draft": dr,
         "pinned": dict(STATE.pinned),
         "league": report.league_comparison(b, st.picks, st.settings,
-                                          st.my_ids, st.my_slot),
+                                          st.my_ids, st.my_slot,
+                                          rosters=STATE.rosters,
+                                          my_team_id=STATE.my_team_id),
         "sleepers": report.sleepers(b, st.my_ids),
         "improve": report.improvements(strength, b, st.drafted_ids,
                                        st.settings, roster=mine),
@@ -942,56 +1087,109 @@ def trade_evaluate(t: TradeIn) -> dict:
     return d
 
 
-@app.get("/api/trade/suggest")
-def trade_suggest(per_team: int = 1, top: int = 8,
-                  stance: str = "fair") -> dict:
-    """Scan the league for deals that win for us and read as wins for them."""
+class ScanIn(BaseModel):
+    """A scan, plus whatever you said was wrong with the last one."""
+    stance: str = "fair"
+    per_team: int = 1
+    top: int = 8
+    # Narrow it to one manager. The league read still comes back whole -- you
+    # picked that manager for a reason and the reason is on the other rosters.
+    team_id: int | None = None
+    keep: list[str] = Field(default_factory=list)
+    want: list[str] = Field(default_factory=list)
+    must_get: list[str] = Field(default_factory=list)
+    fewer: bool = False        # send fewer players
+    richer: bool = False       # I need more back
+    harder: bool = False       # they would never accept that
+    seen: list[str] = Field(default_factory=list)
+    note: str = ""             # free text, read by keyword and reported back
+
+
+@app.post("/api/trade/scan")
+def trade_scan(s: ScanIn) -> dict:
+    """Read the whole league, then find the deals worth sending.
+
+    Two answers in one call because they are one question. Offers alone say
+    what to send and never say WHO TO TALK TO, and that is what people ask
+    first -- the best deal in the league is worthless with a manager who has
+    nothing you need. So every roster comes back read the same way (strong
+    where, thin where, who is spare) beside the offers themselves.
+    """
     st = _require()
-    if not STATE.espn:
-        raise HTTPException(400, "connect an ESPN league to see other rosters")
-
-    try:
-        payload = espn_draft.fetch(**{k: v for k, v in STATE.espn.items()})
-    except espn_draft.DraftUnavailable as exc:
-        raise HTTPException(502, str(exc))
-
-    r = espn_draft.rosters(payload)
+    r = _espn_rosters()
     if not r.height:
-        return {"offers": [], "note": "ESPN returned no rosters for this league"}
+        return {"offers": [], "teams": [],
+                "note": "ESPN returned no rosters for this league"}
 
     b = _board()
-    mine = b.filter(pl.col("player_id").is_in(
-        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
+    mine, others = _team_frames(r)
     if not mine.height:
         raise HTTPException(400, "could not identify your roster")
 
-    others = {}
-    for tid, grp in r.group_by("team_id"):
-        team_id = tid[0] if isinstance(tid, tuple) else tid
-        if team_id == STATE.my_team_id:
-            continue
-        sub = b.filter(pl.col("player_id").is_in(grp["player_id"].to_list()))
-        if sub.height:
-            others[team_id] = sub
+    read = trade.league.scan(mine, others, b, st.settings,
+                             names=STATE.team_names,
+                             my_team_id=STATE.my_team_id)
+
+    # What you asked for, from the chips and from the sentence. Both land in
+    # the same object and the object is returned, so the interface can show
+    # what was understood rather than claim it understood.
+    names_mine = dict(zip(mine["player_id"].to_list(),
+                          mine["player_name"].to_list()))
+    theirs_all = {}
+    for sub in others.values():
+        theirs_all.update(dict(zip(sub["player_id"].to_list(),
+                                   sub["player_name"].to_list())))
+    a = trade.ask.Ask(keep=list(s.keep), want=list(s.want),
+                      must_get=list(s.must_get),
+                      max_out=1 if s.fewer else 2,
+                      richer=s.richer, harder=s.harder)
+    a.read = ([f"keep {names_mine.get(p, p)}" for p in s.keep]
+              + [f"you want a {p}" for p in s.want]
+              + [f"target {theirs_all.get(p, p)}" for p in s.must_get]
+              + (["send fewer players"] if s.fewer else [])
+              + (["get more back"] if s.richer else [])
+              + (["make it easier for them to say yes"] if s.harder else []))
+    a = trade.ask.parse(s.note, names_mine, theirs_all, base=a)
 
     stamp = refresh.read_stamp()
     obs = refresh.observed() if stamp.got_stats else None
     week = stamp.week or 0
 
+    pool = ({s.team_id: others[s.team_id]}
+            if s.team_id is not None and s.team_id in others else others)
+
+    stance = "conservative" if a.harder else s.stance
     prev = trade.suggest.THEIR_MIN_GAIN
     trade.suggest.THEIR_MIN_GAIN = trade.suggest.STANCE.get(stance, prev)
     try:
         offers = trade.suggest.across_league(
-            mine, others, b, st.settings, names=STATE.team_names,
-            observed=obs, through_week=week, per_team=per_team, top=top)
+            mine, pool, b, st.settings, names=STATE.team_names,
+            observed=obs, through_week=week, per_team=s.per_team, top=s.top,
+            ask=a, seen=set(s.seen))
     finally:
         trade.suggest.THEIR_MIN_GAIN = prev
 
-    return {"offers": [_with_faces(o.as_dict(), b) for o in offers],
-            "through_week": week,
-            "note": "" if offers else
-                    "Nothing worth offering right now — every roster is priced "
-                    "about right against yours."}
+    return {
+        "offers": [_with_faces(o.as_dict(), b) for o in offers],
+        "keys": [trade.suggest.key([p["player_id"] for p in o.give],
+                                   [p["player_id"] for p in o.get])
+                 for o in offers],
+        "me": read["me"],
+        "teams": read["teams"],
+        "understood": a.read,
+        "through_week": week,
+        "note": "" if offers else _nothing_found(a),
+    }
+
+
+def _nothing_found(a) -> str:
+    """Why the search came back empty, which is never just 'no results'."""
+    if a.read:
+        return ("Nothing fits that. Loosen one of the conditions above — "
+                "each one cuts the search, and together they can cut all of it.")
+    return ("Nothing worth offering right now — every roster is priced about "
+            "right against yours, or the deals that help you would not read "
+            "as wins for them.")
 
 
 class CounterIn(BaseModel):
@@ -999,6 +1197,13 @@ class CounterIn(BaseModel):
     get: list[str] = Field(default_factory=list)
     team_id: int | None = None
     stance: str = "fair"
+    keep: list[str] = Field(default_factory=list)
+    want: list[str] = Field(default_factory=list)
+    fewer: bool = False
+    richer: bool = False
+    harder: bool = False
+    seen: list[str] = Field(default_factory=list)
+    note: str = ""
 
 
 @app.post("/api/trade/counter")
@@ -1010,31 +1215,35 @@ def trade_counter(c: CounterIn) -> dict:
     spot and starts for nobody.
     """
     st = _require()
-    if not STATE.espn:
-        raise HTTPException(400, "connect an ESPN league to build counters")
-    try:
-        payload = espn_draft.fetch(**{k: v for k, v in STATE.espn.items()})
-    except espn_draft.DraftUnavailable as exc:
-        raise HTTPException(502, str(exc))
-
-    r = espn_draft.rosters(payload)
+    r = _espn_rosters()
     b = _board()
-    mine = b.filter(pl.col("player_id").is_in(
-        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
     tid = c.team_id
     if tid is None:
         raise HTTPException(400, "which team are you trading with?")
-    theirs = b.filter(pl.col("player_id").is_in(
-        r.filter(pl.col("team_id") == tid)["player_id"].to_list()))
+    mine, others = _team_frames(r)
+    theirs = others.get(int(tid), b.head(0))
     if not mine.height or not theirs.height:
         raise HTTPException(400, "could not read both rosters")
+
+    a = trade.ask.Ask(keep=list(c.keep), want=list(c.want),
+                      max_out=1 if c.fewer else 2,
+                      richer=c.richer, harder=c.harder)
+    a = trade.ask.parse(
+        c.note,
+        dict(zip(mine["player_id"].to_list(), mine["player_name"].to_list())),
+        dict(zip(theirs["player_id"].to_list(), theirs["player_name"].to_list())),
+        base=a)
 
     stamp = refresh.read_stamp()
     obs = refresh.observed() if stamp.got_stats else None
     offers = trade.suggest.counter(
         mine, theirs, b, st.settings, c.give, c.get, stance=c.stance,
-        observed=obs, through_week=stamp.week or 0)
-    return {"offers": [_with_faces(o.as_dict(), b) for o in offers]}
+        observed=obs, through_week=stamp.week or 0, ask=a, seen=set(c.seen))
+    return {"offers": [_with_faces(o.as_dict(), b) for o in offers],
+            "keys": [trade.suggest.key([p["player_id"] for p in o.give],
+                                       [p["player_id"] for p in o.get])
+                     for o in offers],
+            "understood": a.read}
 
 
 # ---------------------------------------------------------------------------

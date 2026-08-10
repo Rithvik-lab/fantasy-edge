@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * describes the roster; the roster is the thing.
  */
 const ORDER = ["QB", "RB1", "RB2", "RB", "WR1", "WR2", "WR3", "WR",
-               "TE", "FLEX", "K", "DST", "D/ST"];
+               "TE", "FLEX", "FLEX1", "FLEX2", "DST", "D/ST", "K"];
 
 function rank(slot: string | undefined, position: string): number {
   const i = ORDER.indexOf(slot ?? "");
@@ -125,7 +125,25 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, busy }: {
         </span>
       </header>
 
-      <ul>{starters.map((p) => <Row key={p.player_id} p={p} slot={p.slot} />)}</ul>
+      <ul>
+        {starters.map((p) => <Row key={p.player_id} p={p} slot={p.slot} />)}
+        {/* An unfilled slot is a fact about your team and the only honest
+            place to show it is the lineup card, where the hole is. It used to
+            surface as "K: −143 against the league", which is a strange way to
+            say you have not got a kicker. */}
+        {(d.gaps ?? []).map((g) => (
+          <li key={g.slot}
+              className="flex items-center gap-2.5 border-b border-line/40 px-3 py-2 last:border-0">
+            <span className="num w-10 shrink-0 text-[10px] uppercase tracking-wider text-clock">
+              {g.slot}
+            </span>
+            <span className="h-9 w-9 shrink-0 rounded-md border border-dashed border-line" />
+            <span className="flex-1 text-[11.5px] italic text-muted">
+              nobody here — you start this slot empty
+            </span>
+          </li>
+        ))}
+      </ul>
 
       {d.bench.length > 0 && (
         <>

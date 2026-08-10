@@ -81,10 +81,11 @@ function Edges({ rows }: { rows: TeamReport["strength"] }) {
         })}
       </div>
 
-      <p className="mt-2.5 border-t border-line pt-2 text-[10px] text-muted">
+      <p className="mt-2.5 border-t border-line pt-2 text-[10px] leading-snug text-muted">
         Right of the line is ahead of the league. The percentage is where your
         average starter sits inside the pool of players who actually start at
-        that position.
+        that position. Kicker and defence are left out — both are flat enough
+        that the gap between the best and the worst is about who drafted last.
       </p>
     </section>
   );

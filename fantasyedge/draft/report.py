@@ -222,6 +222,13 @@ def draft_report(picks: list[dict], board: pl.DataFrame,
     }
 
 
+def _ordinal(pct: float) -> str:
+    n = round(pct * 100)
+    suffix = "th" if 11 <= n % 100 <= 13 else \
+        {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def summarise(strength: list[dict], grade: dict) -> dict[str, list[str]]:
     """Two or three sentences each way, from the numbers above."""
     strong = [r for r in strength if r["edge"] >= 12]
@@ -231,10 +238,10 @@ def summarise(strength: list[dict], grade: dict) -> dict[str, list[str]]:
     good, bad = [], []
     for r in strong[:3]:
         good.append(f"{r['position']}: {round(r['edge']):+d} points on the "
-                    f"average team, {round(r['percentile'] * 100)}th percentile.")
+                    f"average team, {_ordinal(r['percentile'])} percentile.")
     for r in reversed(weak[-3:]):
         bad.append(f"{r['position']}: {round(r['edge']):+d} against the average "
-                   f"team, {round(r['percentile'] * 100)}th percentile.")
+                   f"team, {_ordinal(r['percentile'])} percentile.")
     for r in holes:
         bad.append(f"{r['position']}: you have {r['have']} for "
                    f"{r['need']} starting slot(s).")
@@ -262,17 +269,37 @@ def league_comparison(board: pl.DataFrame, picks: list[dict],
                       settings: LeagueSettings,
                       my_ids: list[str],
                       my_slot: int | None = None,
-                      with_shape: bool = True) -> list[dict]:
+                      with_shape: bool = True,
+                      rosters: dict[int, list[str]] | None = None,
+                      my_team_id: int | None = None) -> list[dict]:
     """Every team's starting strength, so yours has something to stand next to.
 
     A grade in isolation is a number you cannot act on. The same number beside
     eleven others is a standing, and standing is the only thing that decides
     whether to push or hold.
+
+    `rosters` is who owns whom today. When it is available it wins outright --
+    the pick log cannot see a waiver add or a trade, so after week one it
+    describes a league that no longer exists.
     """
-    if not picks:
-        return []
     mine = set(my_ids)
     by_slot: dict[int, list[str]] = {}
+
+    if rosters:
+        for tid, ids in rosters.items():
+            if my_team_id is not None and int(tid) == int(my_team_id):
+                continue
+            by_slot[int(tid)] = list(ids)
+        if mine:
+            by_slot[-1] = list(mine)
+        # Labelled by TEAM id here, not draft seat, because that is what the
+        # bucket keys are and what team names are keyed by.
+        return _rate(by_slot, board, settings,
+                     my_team_id if my_team_id is not None else my_slot,
+                     with_shape)
+
+    if not picks:
+        return []
     for p in picks:
         pid = p.get("player_id")
         if not pid or pid in mine:
@@ -291,6 +318,13 @@ def league_comparison(board: pl.DataFrame, picks: list[dict],
         by_slot.pop(int(my_slot), None)
     if mine:
         by_slot[-1] = list(mine)
+    return _rate(by_slot, board, settings, my_slot, with_shape)
+
+
+def _rate(by_slot: dict[int, list[str]], board: pl.DataFrame,
+          settings: LeagueSettings, my_slot: int | None,
+          with_shape: bool) -> list[dict]:
+    """Score each bucket of ids as a starting lineup. Slot -1 means yours."""
 
     out = []
     for slot, ids in sorted(by_slot.items()):
@@ -332,6 +366,47 @@ def league_comparison(board: pl.DataFrame, picks: list[dict],
 # at kicker costs about a point a week and there is nothing to do about it that
 # is worth a roster move. Listing them as things to fix buries the one that is.
 NOT_WORTH_FIXING = frozenset({"K", "DST"})
+
+# The order a lineup card is written in, which is not the order anything sorts
+# in. Sorting these by size answers "which number is biggest"; nobody reads a
+# roster that way, and a chart that reorders itself between two visits is
+# unreadable even when every bar is correct.
+LINEUP_ORDER = ("QB", "RB", "WR", "TE", "FLEX", "DST", "K")
+
+
+def in_lineup_order(rows: list[dict], key: str = "position") -> list[dict]:
+    return sorted(rows, key=lambda r: (
+        LINEUP_ORDER.index(r[key]) if r[key] in LINEUP_ORDER
+        else len(LINEUP_ORDER)))
+
+
+def tradeable(strength: list[dict]) -> list[dict]:
+    """The positions worth arguing about, in lineup order.
+
+    Kicker and defence come out. They are two thirds of the chart's height and
+    none of its meaning: the curve at both is close to flat, so the gap between
+    the best and worst is a fact about who drafted last, not about whose team is
+    better. They stay on the roster, where they belong -- something has to fill
+    the slot -- and out of every judgement about the team.
+    """
+    return in_lineup_order([r for r in strength
+                            if r["position"] not in NOT_WORTH_FIXING])
+
+
+def unfilled(starters: pl.DataFrame, settings: LeagueSettings) -> list[dict]:
+    """Starting slots with nobody in them, in lineup order."""
+    have: dict[str, int] = {}
+    if starters.height and "slot" in starters.columns:
+        for s in starters["slot"].to_list():
+            base = (s or "").rstrip("0123456789") or (s or "")
+            have[base] = have.get(base, 0) + 1
+    out = []
+    for slot, count in settings.lineup.items():
+        missing = count - have.get(slot, 0)
+        for i in range(max(missing, 0)):
+            out.append({"slot": slot if count == 1 else f"{slot}{have.get(slot, 0) + i + 1}",
+                        "position": slot})
+    return in_lineup_order(out)
 
 # A suggestion has to beat what you already start there. Otherwise the answer
 # to "my receivers are weak" is a list of worse receivers, which is how a

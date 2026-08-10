@@ -295,6 +295,15 @@ def rosters(payload: dict) -> pl.DataFrame:
 
     # Keep the ESPN id when the crosswalk has no gsis for him. A roster with a
     # hole in it is worse than one with an id we cannot join on elsewhere.
+    #
+    # PREFIXED, because that is the key the board uses for exactly the same
+    # players. Kickers and defences have no gsis and never will -- a defence is
+    # a team, not a person -- so `models/kdst` keys them `espn-<id>`. Falling
+    # back to the BARE id here produced a roster whose kicker and defence
+    # matched nothing on the board, and they then vanished from My Team, from
+    # every lineup, and from both sides of every trade. Same player, two
+    # spellings of his id.
     return df.with_columns(
-        pl.coalesce([pl.col("gsis_id"), pl.col("espn_id")]).alias("player_id")
+        pl.coalesce([pl.col("gsis_id"),
+                     pl.lit("espn-") + pl.col("espn_id")]).alias("player_id")
     )
