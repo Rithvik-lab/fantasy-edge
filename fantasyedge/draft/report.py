@@ -260,7 +260,8 @@ def summarise(strength: list[dict], grade: dict) -> dict[str, list[str]]:
 def league_comparison(board: pl.DataFrame, picks: list[dict],
                       settings: LeagueSettings,
                       my_ids: list[str],
-                      my_slot: int | None = None) -> list[dict]:
+                      my_slot: int | None = None,
+                      with_shape: bool = True) -> list[dict]:
     """Every team's starting strength, so yours has something to stand next to.
 
     A grade in isolation is a number you cannot act on. The same number beside
@@ -317,41 +318,102 @@ def league_comparison(board: pl.DataFrame, picks: list[dict],
             "lineup": (starters.select(keep).to_dicts()
                        if starters.height else []),
         })
+        if with_shape:
+            out[-1]["shape"] = team_shape(out[-1]["lineup"], board, settings)
     out.sort(key=lambda r: -r["starters"])
     for i, r in enumerate(out):
         r["rank"] = i + 1
     return out
 
 
+# Positions where "you are below the league" is not a problem worth acting on.
+# Kicker and defence are nearly flat by construction -- being 30th percentile
+# at kicker costs about a point a week and there is nothing to do about it that
+# is worth a roster move. Listing them as things to fix buries the one that is.
+NOT_WORTH_FIXING = frozenset({"K", "DST"})
+
+# A suggestion has to beat what you already start there. Otherwise the answer
+# to "my receivers are weak" is a list of worse receivers, which is how a
+# panel ends up recommending a washed veteran nobody would take.
+MIN_UPGRADE = 15.0
+
+
 def improvements(strength: list[dict], board: pl.DataFrame,
                  drafted: list[str], settings: LeagueSettings,
+                 roster: pl.DataFrame | None = None,
                  top: int = 3) -> list[dict]:
-    """What to do about the weak spots, not just where they are.
+    """What to do about the weak spots, and only where there is something to do.
 
-    A weakness with no move attached is a complaint. Each one comes back with
-    the best men still unowned at that position, because in the week after a
-    draft that is exactly the question -- who can I actually get.
+    Two filters, both learned from the first version recommending a kicker
+    upgrade and a receiver who is worse than the one already starting:
+
+      the position has to matter -- K and DST are flat, so being behind there
+      costs about a point a week and no move fixes it
+
+      the player has to be an UPGRADE on your current starter at that slot,
+      by a margin big enough to be worth a waiver claim
     """
-    weak = [r for r in strength if r["edge"] < 0][:top]
+    weak = [r for r in strength
+            if r["edge"] < 0 and r["position"] not in NOT_WORTH_FIXING][:top]
     if not weak:
         return []
+
+    # What you currently start at each position, to measure an upgrade against.
+    have: dict[str, float] = {}
+    if roster is not None and roster.height:
+        starters, _ = optimal_lineup(roster, settings)
+        for r in starters.iter_rows(named=True):
+            pos = r["position"]
+            pts = float(r.get("projected_points") or 0.0)
+            have[pos] = min(have.get(pos, pts), pts)   # your WEAKEST there
+
     free = board.filter(~pl.col("player_id").is_in(drafted))
     out = []
     for w in weak:
-        pool = (free.filter(pl.col("position") == w["position"])
+        floor = have.get(w["position"], 0.0) + MIN_UPGRADE
+        pool = (free.filter((pl.col("position") == w["position"])
+                            & (pl.col("projected_points") > floor))
                     .sort("projected_points", descending=True, nulls_last=True)
                     .head(3))
+        if not pool.height:
+            continue
         out.append({
             "position": w["position"],
             "edge": w["edge"],
             "percentile": w["percentile"],
-            "gap_to_median": round(w["league_median"] - (w.get("per_starter") or 0), 1),
+            "replaces": round(have.get(w["position"], 0.0), 1),
             "available": pool.select(
                 [c for c in ("player_id", "player_name", "position", "ecr",
                              "projected_points", "vor") if c in pool.columns]
-            ).to_dicts() if pool.height else [],
+            ).to_dicts(),
         })
     return out
+
+
+def team_shape(lineup: list[dict], board: pl.DataFrame,
+               settings: LeagueSettings) -> list[dict]:
+    """Why a team is where it is: its slots against the league's startable pool.
+
+    Derived, so the sentence and the standing can never disagree. The first
+    version of this screen described teams in prose nobody computed.
+    """
+    if not lineup:
+        return []
+    by: dict[str, float] = {}
+    for p in lineup:
+        by[p["position"]] = by.get(p["position"], 0.0) + float(
+            p.get("projected_points") or 0.0)
+
+    out = []
+    for pos, pts in by.items():
+        pool = _league_starters(board, settings, pos)
+        if not pool.len():
+            continue
+        n = sum(1 for p in lineup if p["position"] == pos)
+        med = float(pool.median() or 0) * max(n, 1)
+        out.append({"position": pos, "points": round(pts, 1),
+                    "league": round(med, 1), "edge": round(pts - med, 1)})
+    return sorted(out, key=lambda r: -r["edge"])
 
 
 def sleepers(board: pl.DataFrame, my_ids: list[str], top: int = 5) -> list[dict]:

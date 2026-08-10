@@ -4,6 +4,7 @@ import type { TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
 import { AddByName } from "@/components/TradeDeck";
+import { Term } from "@/components/Explain";
 import { cn } from "@/lib/utils";
 
 /**
@@ -91,9 +92,11 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, busy }: {
           {p.position}
         </span>
       </div>
-      <span className="num shrink-0 text-[11px] text-muted">
-        {Math.round(p.projected_points ?? 0)}
-      </span>
+      <Term k="projected">
+        <span className="num shrink-0 text-[11px] text-muted">
+          {Math.round(p.projected_points ?? 0)}
+        </span>
+      </Term>
       {onDrop && (
         <button
           onClick={(e) => { e.stopPropagation(); onDrop(p.player_id, p.player_name); }}

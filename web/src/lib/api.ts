@@ -229,9 +229,11 @@ export interface TeamReport {
              floor: number | null; ceiling: number | null;
              players: number; rank: number;
              lineup?: { player_id: string; player_name: string;
-                        position: string; projected_points?: number }[] }[];
+                        position: string; projected_points?: number }[];
+             shape?: { position: string; points: number; league: number;
+                       edge: number }[] }[];
   improve?: { position: string; edge: number; percentile: number;
-              gap_to_median: number;
+              replaces: number;
               available: { player_id: string; player_name: string;
                            position: string; ecr?: number | null;
                            projected_points?: number | null;

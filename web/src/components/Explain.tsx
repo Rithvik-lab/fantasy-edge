@@ -61,6 +61,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Every name that has left the board, yours in green and everyone else's in grey. In a manual draft most picks are not yours — eleven of every twelve — so marking them is the work. Double-click a player on the board to take him yourself; hold SHIFT and double-click when somebody else does. Both remove him from the board; only the first puts him on your team.",
   },
+  projected: {
+    title: "Projected points, whole season",
+    body:
+      "What this player is expected to score across the season in your scoring, folding in both how well he plays and how many games he is likely to be available for. Not per game and not a ranking — it is the number the lineup solver adds up, so two players are directly comparable by it regardless of position. A starting QB and a starting RB really do land near the same figure; that is the format, not a mistake.",
+  },
   season_total: {
     title: "Season points, along the bottom",
     body:

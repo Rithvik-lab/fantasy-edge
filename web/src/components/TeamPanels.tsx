@@ -6,51 +6,59 @@ import { PlayerHover } from "@/components/PlayerHover";
 import { cn } from "@/lib/utils";
 
 /**
- * WHERE YOU STAND, by seat, with the evidence one hover away.
+ * One team in the standings.
  *
- * Ordered by draft slot rather than by rank, so the column reads as the room
- * you sat in — pick 1 through pick 12 — and your position inside it is spatial
- * rather than something you have to look up. Rank is still stated; it is just
- * not what the list is sorted on.
- *
- * Hovering a team shows who they actually start. A bar saying someone is ahead
- * of you is an assertion; their lineup is the evidence, and it is the next
- * thing you would go looking for anyway.
+ * Ranked best to worst, because the question is who is ahead of me. Named,
+ * because "pick 4" is a seat and a league is people. And the score explains
+ * itself from the model rather than from prose someone wrote: hovering it
+ * gives the slots that put the team where it is, measured against what the
+ * league starts at each.
  */
-function TeamBar({ t, max, name }: {
+function TeamRow({ t, max, name }: {
   t: NonNullable<TeamReport["league"]>[0]; max: number; name: string;
 }) {
-  const { ref, anchor, show, hide, keep } = useHover({ delay: 120, grace: 160 });
+  const lineup = useHover<HTMLSpanElement>({ delay: 120, grace: 160 });
+  const why = useHover<HTMLSpanElement>({ delay: 120, grace: 160 });
+  const shape = t.shape ?? [];
+  const best = shape.filter((x) => x.edge > 8).slice(0, 2);
+  const worst = shape.filter((x) => x.edge < -8).slice(-2).reverse();
+
   return (
-    <span ref={ref} onMouseEnter={show} onMouseLeave={hide}
-          className="flex cursor-help items-center gap-2">
-      <span className={cn("num w-11 shrink-0 text-[10px]",
+    <div className={cn("flex items-center gap-2.5 px-3 py-1.5",
+      t.mine && "bg-turf/[0.07]")}>
+      <span className={cn("num w-4 shrink-0 text-[10.5px]",
         t.mine ? "font-semibold text-turf" : "text-muted")}>
-        {t.mine ? "you" : `pick ${t.slot}`}
+        {t.rank}
       </span>
-      <span className="relative h-3.5 flex-1 overflow-hidden rounded-[2px] bg-ink">
+
+      <span ref={lineup.ref} onMouseEnter={lineup.show} onMouseLeave={lineup.hide}
+            className={cn("w-[92px] shrink-0 cursor-help truncate text-[11.5px]",
+              t.mine ? "font-semibold text-turf" : "text-chalk/85")}>
+        {t.mine ? "You" : name}
+      </span>
+
+      <span className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-ink">
         <motion.span
-          className={cn("absolute inset-y-0 left-0 block rounded-[2px]",
+          className={cn("absolute inset-y-0 left-0 block rounded-full",
             t.mine ? "bg-turf" : "bg-muted/35")}
           initial={{ width: 0 }}
           animate={{ width: `${(t.starters / max) * 100}%` }}
           transition={{ type: "spring", stiffness: 190, damping: 26 }}
         />
       </span>
-      <span className={cn("num w-11 shrink-0 text-right text-[10.5px]",
-        t.mine ? "font-semibold text-chalk" : "text-muted")}>
+
+      <span ref={why.ref} onMouseEnter={why.show} onMouseLeave={why.hide}
+            className={cn("num w-11 shrink-0 cursor-help text-right text-[11px]",
+              t.mine ? "font-semibold text-chalk" : "text-muted")}>
         {Math.round(t.starters)}
       </span>
-      {anchor && (
-        <Floating anchor={anchor} width={252} interactive onEnter={keep} onLeave={hide}>
+
+      {lineup.anchor && (
+        <Floating anchor={lineup.anchor} width={246} interactive
+                  onEnter={lineup.keep} onLeave={lineup.hide}>
           <div className="overflow-hidden rounded-lg border border-line bg-raised shadow-2xl">
-            <div className="flex items-baseline gap-2 border-b border-line px-2.5 py-1.5">
-              <span className="text-[11.5px] font-semibold">
-                {t.mine ? "Your team" : name}
-              </span>
-              <span className="num ml-auto text-[10px] text-muted">
-                #{t.rank} · {Math.round(t.starters)}
-              </span>
+            <div className="border-b border-line px-2.5 py-1.5 text-[11.5px] font-semibold">
+              {t.mine ? "Your team" : name}
             </div>
             <ul className="p-1.5">
               {(t.lineup ?? []).map((p) => (
@@ -66,15 +74,52 @@ function TeamBar({ t, max, name }: {
                 </li>
               ))}
             </ul>
-            {t.floor != null && (
-              <p className="num border-t border-line px-2.5 py-1 text-[10px] text-muted">
-                season {Math.round(t.floor)}–{Math.round(t.ceiling ?? 0)}
+          </div>
+        </Floating>
+      )}
+
+      {why.anchor && (
+        <Floating anchor={why.anchor} width={268} interactive
+                  onEnter={why.keep} onLeave={why.hide}>
+          <div className="rounded-lg border border-line bg-raised p-2.5 shadow-2xl">
+            <p className="text-[11px] leading-snug text-chalk/85">
+              <span className="num font-semibold text-chalk">
+                {Math.round(t.starters)}
+              </span>{" "}
+              projected points from their best legal lineup, {t.rank}
+              {t.rank === 1 ? "st" : t.rank === 2 ? "nd"
+                : t.rank === 3 ? "rd" : "th"} in the league.
+            </p>
+            {(best.length > 0 || worst.length > 0) && (
+              <div className="mt-2 space-y-1 border-t border-line pt-2">
+                <span className="eyebrow">against what the league starts</span>
+                {[...best, ...worst].map((x) => (
+                  <div key={x.position} className="flex items-baseline gap-2">
+                    <span className="w-7 shrink-0 text-[10px] font-bold"
+                          style={{ color: POS_HUE[x.position] ?? "#8CA096" }}>
+                      {x.position}
+                    </span>
+                    <span className={cn("num w-11 text-right text-[10.5px]",
+                      x.edge > 0 ? "text-turf" : "text-alarm")}>
+                      {x.edge > 0 ? "+" : ""}{Math.round(x.edge)}
+                    </span>
+                    <span className="num text-[10px] text-muted">
+                      {Math.round(x.points)} vs {Math.round(x.league)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {best.length === 0 && worst.length === 0 && (
+              <p className="mt-1.5 text-[10.5px] text-muted">
+                No slot is far from the league average — this team is where it
+                is on balance rather than on any one position.
               </p>
             )}
           </div>
         </Floating>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -85,34 +130,34 @@ export function Standing({ rows, names }: {
   if (rows.length < 2) return null;
   const max = Math.max(...rows.map((r) => r.starters), 1);
   const me = rows.find((r) => r.mine);
-  const bySeat = [...rows].sort((a, b) => a.slot - b.slot);
 
   return (
-    <section className="rounded-lg border border-line bg-panel p-3">
-      <header className="mb-2.5">
-        <span className="eyebrow">Where you stand</span>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
-          {me && <>You are <span className="font-semibold text-chalk">
-            {me.rank}{me.rank === 1 ? "st" : me.rank === 2 ? "nd"
-              : me.rank === 3 ? "rd" : "th"}</span> of {rows.length}. </>}
-          Hover a team to see who they start.
-        </p>
+    <section className="rounded-lg border border-line bg-panel">
+      <header className="border-b border-line px-3 py-2">
+        <div className="flex items-baseline gap-2">
+          <span className="eyebrow">Where you stand</span>
+          {me && (
+            <span className="num ml-auto text-[11px] text-muted">
+              <span className="font-semibold text-chalk">{me.rank}</span>
+              {" of "}{rows.length}
+            </span>
+          )}
+        </div>
       </header>
 
-      <div className="space-y-1">
-        {bySeat.map((t) => (
-          <TeamBar key={t.slot} t={t} max={max}
-                   name={names?.[String(t.slot)] ?? `Team ${t.slot}`} />
+      <ol className="divide-y divide-line/40">
+        {rows.map((t) => (
+          <li key={t.slot}>
+            <TeamRow t={t} max={max}
+                     name={names?.[String(t.slot)] ?? `Team ${t.slot}`} />
+          </li>
         ))}
-      </div>
+      </ol>
 
-      {/* The number is a projection, and projections at this range are close
-          together. Saying so is the difference between a standing and a
-          scoreboard. */}
-      <p className="mt-2.5 border-t border-line pt-2 text-[10px] leading-snug text-muted">
-        Projected, not played. These are pre-season expectations and the gaps
-        between neighbouring teams are usually smaller than a single week&rsquo;s
-        swing — treat the order as a guide, not a table.
+      <p className="border-t border-line px-3 py-2 text-[10px] leading-snug text-muted">
+        Projected, not played. Neighbouring teams here are usually closer than
+        one week&rsquo;s swing — read the order as a guide, not a table. Hover a
+        name for their lineup, or a score for why it lands there.
       </p>
     </section>
   );

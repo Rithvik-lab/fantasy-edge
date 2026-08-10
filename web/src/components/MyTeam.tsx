@@ -247,27 +247,42 @@ export function MyTeam() {
 
         <div className="space-y-4">
           {d.improve && d.improve.length > 0 && <Improve rows={d.improve} />}
-          <section className="rounded-md border border-turf/25 p-3">
-            <div className="mb-2 flex items-baseline gap-2">
-              <span className="h-px w-3 bg-turf" />
-              <span className="eyebrow">what this team does well</span>
+
+          {/* One panel, two columns, a hairline between. Three stacked boxes
+              with coloured borders was the app shouting; the reader can tell
+              a gain from a cost without being told twice. */}
+          <section className="rounded-lg border border-line bg-panel">
+            <header className="border-b border-line px-3 py-2">
+              <span className="eyebrow">The shape of this team</span>
+            </header>
+            <div className="grid divide-y divide-line/50 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+              <div className="p-3">
+                <div className="mb-1.5 flex items-baseline gap-1.5">
+                  <span className="h-px w-3 bg-turf" />
+                  <span className="eyebrow">strengths</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {d.strengths.map((t, i) => (
+                    <li key={i} className="text-[11.5px] leading-snug text-chalk/80">
+                      {t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="p-3">
+                <div className="mb-1.5 flex items-baseline gap-1.5">
+                  <span className="h-px w-3 bg-alarm" />
+                  <span className="eyebrow">weaknesses</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {d.weaknesses.map((t, i) => (
+                    <li key={i} className="text-[11.5px] leading-snug text-chalk/80">
+                      {t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-            <ul className="space-y-1.5">
-              {d.strengths.map((t, i) => (
-                <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
-              ))}
-            </ul>
-          </section>
-          <section className="rounded-md border border-alarm/25 p-3">
-            <div className="mb-2 flex items-baseline gap-2">
-              <span className="h-px w-3 bg-alarm" />
-              <span className="eyebrow">where it will lose weeks</span>
-            </div>
-            <ul className="space-y-1.5">
-              {d.weaknesses.map((t, i) => (
-                <li key={i} className="text-[11.5px] leading-snug text-chalk/80">{t}</li>
-              ))}
-            </ul>
           </section>
         </div>
 
@@ -291,6 +306,10 @@ export function MyTeam() {
             ))}
           </ul>
         </section>
+      )}
+
+      {d.league && d.league.length > 1 && (
+        <LeagueGrid rows={d.league} names={d.team_names} />
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
