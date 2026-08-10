@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type SavedLeague, type Status } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -27,11 +27,34 @@ export function Home({ onOpen, onNew }: {
   const [leagues, setLeagues] = useState<SavedLeague[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  /**
+   * A FAILED FETCH IS NOT AN EMPTY LIST.
+   *
+   * This used to `.catch(() => setLeagues([]))`, so any moment the engine was
+   * not answering, the screen said you had no leagues and offered to set up
+   * your first draft. Your saved leagues looked deleted. They were on disk the
+   * whole time -- nothing had asked for them successfully.
+   *
+   * Losing work is the one thing this screen must never appear to have done,
+   * so a failure now says so and offers to try again.
+   */
+  const load = useCallback(async () => {
+    try {
+      const r = await api.leagues();
+      setLeagues(r.leagues);
+      setFailed(false);
+    } catch (e) {
+      setFailed(true);
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
   useEffect(() => {
-    api.leagues().then((r) => setLeagues(r.leagues)).catch(() => setLeagues([]));
-  }, []);
+    load();
+  }, [load]);
 
   async function open(id: string) {
     setBusy(id); setErr(null);
@@ -63,7 +86,19 @@ export function Home({ onOpen, onNew }: {
 
       <div className="my-6 h-px bg-gradient-to-r from-turf/40 via-line to-transparent" />
 
-      {leagues === null ? (
+      {failed ? (
+        <div className="rounded-lg border border-alarm/30 bg-alarm/10 p-4">
+          <p className="text-sm text-alarm">Could not read your saved leagues.</p>
+          <p className="mt-1 text-[11px] leading-snug text-muted">
+            {err} Nothing has been lost — they are files on this machine, and
+            this screen simply could not ask for them.
+          </p>
+          <Button size="sm" variant="outline" className="mt-2.5"
+                  onClick={() => { setErr(null); load(); }}>
+            Try again
+          </Button>
+        </div>
+      ) : leagues === null ? (
         <p className="text-xs text-muted">Loading your leagues…</p>
       ) : (
         <div className="tick-in space-y-3">
