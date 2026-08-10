@@ -38,9 +38,13 @@ export function Performance() {
     <section className="rounded-lg border border-line bg-panel">
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="eyebrow">Performance</span>
-        {d?.ready && d.week ? (
-          <span className="num text-[10.5px] text-muted">through week {d.week}</span>
-        ) : null}
+        {/* Always say WHEN. A performance panel with no period on it is a
+            number floating in nothing — and before kickoff the honest label is
+            not "week 0", it is that the season has not started. */}
+        <span className={cn("num rounded px-1.5 py-0.5 text-[10px]",
+          d?.ready ? "bg-raised text-chalk" : "bg-raised text-muted")}>
+          {d?.ready && d.week ? `week ${d.week}` : "pre-season"}
+        </span>
         <div className="ml-auto flex rounded border border-line p-0.5">
           {(["mine", "league"] as const).map((s) => (
             <button
