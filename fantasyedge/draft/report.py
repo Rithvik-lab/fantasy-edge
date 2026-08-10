@@ -205,6 +205,7 @@ def draft_report(picks: list[dict], board: pl.DataFrame,
         edge += d
         rows.append({
             "overall": int(where),
+            "player_id": pid,
             "player_name": names.get(pid, "?"),
             "position": pos.get(pid),
             "adp": round(float(market), 1),

@@ -226,7 +226,9 @@ def observed(target: int | None = None, through_week: int | None = None) -> pl.D
     if "season" not in d.columns:
         d = d.with_columns(pl.lit(target).alias("season"))
 
-    return inseason.observe(d, target, through_week)
+    # The detailed roll-up: adds the spread of his weeks, so the panel can
+    # separate a steady producer from a man with one enormous Sunday.
+    return inseason.observe_detailed(d, target, through_week)
 
 
 def kickoff(target: int | None = None) -> str | None:

@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { api, type TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
+import { PlayerHover } from "@/components/PlayerHover";
 import { TeamRoster } from "@/components/TeamRoster";
 import { Standing, Improve, Sleepers } from "@/components/TeamPanels";
-import { LeagueGrid } from "@/components/LeagueGrid";
+import { Performance } from "@/components/Performance";
 import { cn } from "@/lib/utils";
 
 /**
@@ -120,9 +121,11 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
               <span className="num w-8 shrink-0 text-[10px] text-muted">
                 #{p.overall}
               </span>
-              <span className="w-[104px] shrink-0 truncate text-[11px]">
-                {p.player_name}
-              </span>
+              <PlayerHover playerId={p.player_id} className="w-[104px] min-w-0 shrink-0">
+                <span className="block cursor-help truncate text-[11px]">
+                  {p.player_name}
+                </span>
+              </PlayerHover>
               <span className="w-6 shrink-0 text-[9.5px] font-bold"
                     style={{ color: POS_HUE[p.position ?? ""] ?? "#8CA096" }}>
                 {p.position}
@@ -146,14 +149,6 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
       </ul>
     </section>
   );
-}
-
-/** The room, after the draft: every roster, hoverable against yours. */
-export function LeagueRoom() {
-  const [d, setD] = useState<TeamReport | null>(null);
-  useEffect(() => { api.teamReport().then(setD).catch(() => undefined); }, []);
-  if (!d || d.empty || !d.league?.length) return null;
-  return <LeagueGrid rows={d.league} names={d.team_names} />;
 }
 
 export function MyTeam() {
@@ -284,6 +279,8 @@ export function MyTeam() {
               </div>
             </div>
           </section>
+
+          <Performance />
         </div>
 
         <div className="space-y-4">
@@ -306,10 +303,6 @@ export function MyTeam() {
             ))}
           </ul>
         </section>
-      )}
-
-      {d.league && d.league.length > 1 && (
-        <LeagueGrid rows={d.league} names={d.team_names} />
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">

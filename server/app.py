@@ -786,6 +786,68 @@ def team_report() -> dict:
     }
 
 
+@app.get("/api/performance")
+def performance(scope: str = "mine", top: int = 12) -> dict:
+    """Projected against actual, once games have been played.
+
+    Two scopes and they answer different questions. `mine` is whether MY men
+    are doing what I drafted them to do -- the only version that changes a
+    lineup. `league` is who is beating their price anywhere, which is where a
+    waiver claim or a buy-low comes from.
+
+    Before week one this returns nothing and says why. A performance panel that
+    invents numbers out of an unplayed season is worse than an empty one.
+    """
+    st = _require()
+    stamp = refresh.read_stamp()
+    if not stamp.got_stats:
+        return {"ready": False, "week": 0,
+                "kickoff": refresh.kickoff(config.PRODUCTION_TARGET_SEASON),
+                "note": "No games have been played yet. This fills in from "
+                        "week one.",
+                "rows": []}
+
+    obs = refresh.observed()
+    if not obs.height:
+        return {"ready": False, "week": stamp.week or 0, "rows": [],
+                "note": "No player results in the latest pull."}
+
+    b = _board()
+    j = b.join(obs, on="player_id", how="inner")
+    if not j.height:
+        return {"ready": False, "week": stamp.week or 0, "rows": [],
+                "note": "Results are in but none of them match the board."}
+
+    # Expected per game from the pre-season projection, against what he has
+    # actually averaged. Per GAME, so a man who missed three weeks is judged on
+    # the football he played rather than punished twice for the injury.
+    j = j.with_columns([
+        (pl.col("projected_points") / pl.col("expected_games").clip(1.0, None))
+        .alias("expected_ppg"),
+    ]).with_columns([
+        (pl.col("ppg") - pl.col("expected_ppg")).alias("delta"),
+    ])
+
+    if scope == "mine":
+        j = j.filter(pl.col("player_id").is_in(st.my_ids))
+        j = j.sort("delta", descending=True)
+    else:
+        # League-wide: only men with enough games for the number to mean
+        # something, ranked by how far past their price they are running.
+        j = j.filter(pl.col("games") >= 3).sort("delta", descending=True).head(top)
+
+    shots = _headshots(b)
+    keep = [c for c in ("player_id", "player_name", "position", "ecr",
+                        "projected_points", "expected_ppg", "ppg", "games",
+                        "delta", "cv") if c in j.columns]
+    rows = j.select(keep).to_dicts()
+    for r in rows:
+        r["headshot"] = shots.get(r["player_id"])
+        r["mine"] = r["player_id"] in set(st.my_ids)
+    return {"ready": True, "week": stamp.week or 0, "scope": scope,
+            "rows": rows, "note": ""}
+
+
 # ---------------------------------------------------------------------------
 # Trade
 # ---------------------------------------------------------------------------

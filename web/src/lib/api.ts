@@ -220,7 +220,8 @@ export interface TeamReport {
               per_starter?: number; league_median: number; percentile: number;
               edge: number }[];
   byes: { week: number; count: number; players: string[]; points: number }[];
-  draft: { picks: { overall: number; player_name: string; position: string | null;
+  draft: { picks: { overall: number; player_id: string; player_name: string;
+                    position: string | null;
                     adp: number; edge: number; verdict: string }[];
            total_edge: number; steals: number; reaches: number };
   pinned?: Record<string, string>;
@@ -245,6 +246,19 @@ export interface TeamReport {
                season_p20?: number | null; season_p80?: number | null }[];
   strengths: string[];
   weaknesses: string[];
+}
+
+export interface Performance {
+  ready: boolean;
+  week: number;
+  scope?: string;
+  kickoff?: string;
+  note: string;
+  rows: { player_id: string; player_name: string; position: string;
+          ecr?: number | null; projected_points?: number | null;
+          expected_ppg?: number | null; ppg?: number | null;
+          games?: number | null; delta: number; cv?: number | null;
+          headshot?: string | null; mine?: boolean }[];
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -338,6 +352,8 @@ export const api = {
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
   teamReport: () => req<TeamReport>("/team/report"),
+  performance: (scope: "mine" | "league" = "mine") =>
+    req<Performance>(`/performance?scope=${scope}`),
   rosterSwap: (a: string, b: string) =>
     req<{ pinned: Record<string, string> }>("/roster/swap", {
       method: "POST", body: JSON.stringify({ a, b }) }),
