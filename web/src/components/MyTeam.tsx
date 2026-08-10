@@ -151,15 +151,18 @@ function DraftReport({ d }: { d: TeamReport["draft"] }) {
   );
 }
 
-export function MyTeam() {
-  const [d, setD] = useState<TeamReport | null>(null);
+export function MyTeam({ initial }: { initial?: TeamReport | null }) {
+  // Handed in when the app already fetched it during boot, so landing here
+  // shows a finished page instead of a skeleton that resolves a second later.
+  const [d, setD] = useState<TeamReport | null>(initial ?? null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (initial) return;
     api.teamReport().then(setD)
        .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [initial]);
 
   if (err) {
     return <p className="rounded-lg border border-line bg-panel p-6 text-center

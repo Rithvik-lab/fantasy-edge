@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  api, type AdpLadder, type RosterView,
+  api, type AdpLadder, type RosterView, type TeamReport,
   type Shortlist as ShortlistData, type Status, type TeamRow,
 } from "@/lib/api";
 import { Home } from "@/components/Home";
@@ -58,6 +58,7 @@ export default function App() {
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [ladder, setLadder] = useState<AdpLadder | null>(null);
   const [roster, setRoster] = useState<RosterView | null>(null);
+  const [report, setReport] = useState<TeamReport | null>(null);
   const [screen, setScreen] = useState<"home" | "setup" | "draft">("home");
   // Held until we know WHICH app this is. setStatus lands on the first fetch
   // and unblocks the main layout, but the mode and tab are decided several
@@ -65,7 +66,11 @@ export default function App() {
   // front of people whose draft finished in August.
   const [booting, setBooting] = useState(true);
   const [lastSkip, setLastSkip] = useState<{ id: string; name: string } | null>(null);
-  const [tab, setTab] = useState<Tab>("team");
+  // Defaults to the room, because that is what a LIVE draft is for. It only
+  // becomes My team once the draft is done -- set in open() from the phase we
+  // already have, rather than as a blanket default that was wrong for anyone
+  // mid-draft.
+  const [tab, setTab] = useState<Tab>("room");
   const wasLive = useRef(false);
   const [mode, setMode] = useState<Mode>("draft");
   const [side, setSide] = useState<"feed" | "room">("feed");
@@ -100,11 +105,19 @@ export default function App() {
     // Decide the mode and tab from the status we already have, BEFORE any of
     // this renders. Doing it in an effect afterwards is what made the app
     // correct itself in public.
-    if (s.phase === "complete") { setMode("draft"); setTab("team"); }
+    const done = s.phase === "complete";
+    setTab(done ? "team" : "room");
     await loadList();
     try { setTeams((await api.teams()).teams); } catch { /* optional */ }
     try { setLadder(await api.adp()); } catch { /* optional */ }
     try { setRoster(await api.roster()); } catch { /* optional */ }
+    // The team report is 1.4s cold and MyTeam fetched it on its own, so the
+    // boot gate lifted onto a page of grey bars. Fetched HERE when it is the
+    // screen you are about to land on, so the gate covers it and the first
+    // thing you see is finished.
+    if (done) {
+      try { setReport(await api.teamReport()); } catch { /* optional */ }
+    }
     setScreen("draft");
   }, [loadList]);
 
@@ -392,7 +405,7 @@ export default function App() {
 
         <div key={tab} className="tick-in space-y-4">
           {tab === "team" ? (
-            <MyTeam />
+            <MyTeam initial={report} />
           ) : (
             <div className="grid gap-4 lg:grid-cols-[1fr_1.15fr]">
               {/* Left: what you do. Right: the board itself, which is the
