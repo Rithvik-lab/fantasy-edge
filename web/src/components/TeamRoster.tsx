@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import type { TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { AddByName } from "@/components/TradeDeck";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,10 +27,15 @@ function rank(slot: string | undefined, position: string): number {
   return j >= 0 ? j : ORDER.length;
 }
 
-export function TeamRoster({ d, onSwap, onReset, busy }: {
+export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, busy }: {
   d: TeamReport;
   onSwap: (a: string, b: string) => void;
   onReset: () => void;
+  /** Type a name to put him on your team. Dragging is for rearranging what is
+   *  already here; typing is how something gets here in the first place, and
+   *  a roster you can only reorder is not a roster you can fix. */
+  onAdd?: (playerId: string) => void;
+  onDrop?: (playerId: string, name: string) => void;
   busy: boolean;
 }) {
   const [over, setOver] = useState<string | null>(null);
@@ -57,7 +63,7 @@ export function TeamRoster({ d, onSwap, onReset, busy }: {
       }}
       title="drag onto another of your players to swap where they play"
       className={cn(
-        "flex cursor-grab select-none items-center gap-2.5 border-b border-line/40 px-3 py-2 transition-colors last:border-0 active:cursor-grabbing",
+        "group flex cursor-grab select-none items-center gap-2.5 border-b border-line/40 px-3 py-2 transition-colors last:border-0 active:cursor-grabbing",
         over === p.player_id && "bg-turf/12",
         bench && "opacity-70",
         pinned[p.player_id] && "border-l-2 border-l-clock"
@@ -88,6 +94,16 @@ export function TeamRoster({ d, onSwap, onReset, busy }: {
       <span className="num shrink-0 text-[11px] text-muted">
         {Math.round(p.projected_points ?? 0)}
       </span>
+      {onDrop && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDrop(p.player_id, p.player_name); }}
+          disabled={busy}
+          title={`Drop ${p.player_name}`}
+          className="shrink-0 px-1 text-[13px] leading-none text-muted opacity-0 transition-opacity hover:text-alarm group-hover:opacity-100 disabled:opacity-30"
+        >
+          &times;
+        </button>
+      )}
     </motion.li>
   );
 
@@ -117,9 +133,15 @@ export function TeamRoster({ d, onSwap, onReset, busy }: {
         </>
       )}
 
-      <p className="border-t border-line px-3 py-1.5 text-[10px] text-muted">
-        Drag one onto another to swap where they play.
-      </p>
+      {onAdd && (
+        <div className="space-y-1 border-t border-line p-2">
+          <AddByName placeholder="add a player by name…" restrictTo={null}
+                     onAdd={(h) => onAdd(h.player_id)} />
+          <p className="text-[10px] leading-snug text-muted">
+            Drag one onto another to swap where they play.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

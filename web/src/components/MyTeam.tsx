@@ -207,6 +207,29 @@ export function MyTeam() {
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   };
+  /** Put a man on your team by name. Same call the board makes. */
+  const add = async (playerId: string) => {
+    setBusy(true);
+    try {
+      await api.pick({ player_id: playerId, mine: true });
+      setD(await api.teamReport());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  const dropPlayer = async (playerId: string) => {
+    setBusy(true);
+    try {
+      await api.removePick(playerId);
+      setD(await api.teamReport());
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
   const reset = async () => {
     setBusy(true);
     try { await api.rosterUnpin(); setD(await api.teamReport()); }
@@ -219,7 +242,8 @@ export function MyTeam() {
           The roster is the biggest thing on the page because everything else
           here describes it. */}
       <div className="grid gap-4 lg:grid-cols-[1.05fr_0.9fr_1fr]">
-        <TeamRoster d={d} onSwap={swap} onReset={reset} busy={busy} />
+        <TeamRoster d={d} onSwap={swap} onReset={reset} busy={busy}
+                    onAdd={add} onDrop={dropPlayer} />
 
         <div className="space-y-4">
           {d.improve && d.improve.length > 0 && <Improve rows={d.improve} />}
