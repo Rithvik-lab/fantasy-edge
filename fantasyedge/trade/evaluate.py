@@ -47,7 +47,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import polars as pl
 
-from fantasyedge import config
 from fantasyedge.league import LeagueSettings
 from fantasyedge.models.season_sim import (
     DEFAULT_WEEKLY_CV,

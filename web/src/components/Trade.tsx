@@ -127,15 +127,24 @@ export function Trade() {
     if (cur.includes(id)) drop(side, id); else add(side, id);
   };
 
-  /** Read every roster in the league and show what came back. */
-  async function runScan(a: Ask = {}) {
+  /**
+   * Read every roster in the league and show what came back.
+   *
+   * `fresh` is the difference between the two ways in. Scanning again is a new
+   * read and should return the best deals there are; "try again" after saying
+   * what was wrong is a re-roll and must not hand back the ones you have just
+   * rejected. Same call, opposite expectation, so the caller says which.
+   */
+  async function runScan(a: Ask = {}, fresh = false) {
     setScanning(true);
     setCounters(null);
     setView("build");
+    if (fresh) setSeen([]);
     try {
-      const s = await api.tradeScan({ stance, ...a, seen: a.seen ?? seen });
+      const s = await api.tradeScan({ stance, ...a,
+                                      seen: fresh ? [] : (a.seen ?? seen) });
       setScan(s);
-      setSeen((prev) => [...new Set([...prev, ...s.keys])]);
+      setSeen((prev) => [...new Set([...(fresh ? [] : prev), ...s.keys])]);
       setErr(null);
       // THE SCAN LANDS ON THE LEAGUE, not on one manager. Opening the best
       // offer for you skipped the question the scan exists to answer -- who
@@ -341,8 +350,8 @@ export function Trade() {
         <StancePicker value={stance} onChange={setStance} />
         {auto && (
           <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                  onClick={() => runScan()} disabled={scanning}
-                  title="read all twelve rosters and put the best deal on the board">
+                  onClick={() => runScan({}, true)} disabled={scanning}
+                  title="read all twelve rosters, strengths, holes and the deals worth sending">
             {scanning ? "reading the league…"
                       : scan ? "Scan again" : "Scan the league"}
           </Button>

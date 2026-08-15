@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import polars as pl
 
-from fantasyedge import config
 from fantasyedge.draft.session import optimal_lineup
 from fantasyedge.league import LeagueSettings
 
