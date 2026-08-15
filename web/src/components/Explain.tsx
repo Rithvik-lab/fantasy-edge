@@ -136,6 +136,31 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Positions where their starters come in under the average starting lineup in this league. It is what they are shopping for, which is what makes an offer worth opening.",
   },
+  floor_delta: {
+    title: "The bad-season case",
+    body:
+      "How the 20th-percentile season moves — the years where things go wrong. A trade can be level in the middle and move this a lot, which is the difference between a player with a record and a player with a projection. An unproven man's whole penalty lives here: the same total spread, roughly twice the bust rate at the top of the board, and no extra ceiling paying for it.",
+  },
+  ceiling_delta: {
+    title: "The good-season case",
+    body:
+      "How the 80th-percentile season moves. Worth chasing when you are behind and need the swing, and worth selling when you are ahead and need the floor — which is why it sits next to the floor rather than being averaged into one number with it.",
+  },
+  mean_delta: {
+    title: "Average season, not the middle one",
+    body:
+      "The mean across every simulated season. It differs from the median only when a tail moved: a fat downside drags the mean and leaves the middle where it was. When these two numbers disagree, the disagreement is the story — the median says the typical season, the mean says what you would collect over many of them.",
+  },
+  win_prob: {
+    title: "How often it lands better",
+    body:
+      "The share of simulated seasons where your lineup scores more after the trade than before. Both sides are played out with the same random draws, so a player on both sides has the same season in each — the difference is the swap, not sampling noise. Near 50% means the two paths genuinely cross.",
+  },
+  roster_spots: {
+    title: "Bodies before and after",
+    body:
+      "How many players you would hold. This is the number a value calculator ignores: taking three men for one only works if you have three spots, and if you do not, the deal quietly cuts whoever is last on your bench.",
+  },
   starters_total: {
     title: "Their projected starters",
     body:

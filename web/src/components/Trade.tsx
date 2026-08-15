@@ -30,6 +30,10 @@ import { cn } from "@/lib/utils";
  * about, and the answer flickered while you were still deciding.
  */
 
+/** A deal named by what is in it, so "has this been priced" is one compare. */
+const dealKey = (g: string[], k: string[]) =>
+  [...g].sort().join("|") + ">" + [...k].sort().join("|");
+
 export function Trade() {
   const [rosters, setRosters] = useState<LeagueRoster[] | null>(null);
   const [entry, setEntry] = useState<"auto" | "manual" | null>(null);
@@ -48,6 +52,9 @@ export function Trade() {
   const [seen, setSeen] = useState<string[]>([]);
   const [counters, setCounters] = useState<TradeOffer[] | null>(null);
   const [scanning, setScanning] = useState(false);
+  // Which manager is open. null means the grid of all of them.
+  const [focus, setFocus] = useState<number | null>(null);
+  const [priced, setPriced] = useState<string | null>(null);
   // Manual mode has nothing to read, so the rosters are typed. They are also
   // the hypothetical: any roster, real or not, can be priced against.
   const [myManual, setMyManual] = useState<string[]>([]);
@@ -77,10 +84,17 @@ export function Trade() {
 
   const price = useCallback(async (g: string[], k: string[],
                                   roster: string[] = []) => {
-    if (!g.length && !k.length) { setV(null); setCounters(null); return; }
+    if (!g.length && !k.length) {
+      setV(null); setCounters(null); setPriced(null); return;
+    }
     setBusy(true);
     try {
       setV(await api.tradeEvaluate(g, k, roster));
+      // What is on the board AT THE MOMENT IT WAS PRICED. The Analyse button
+      // exists only while those two differ -- after a scan the deal arrives
+      // already priced, and a button offering to compute what is already on
+      // screen is just something else to click.
+      setPriced(dealKey(g, k));
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -117,10 +131,49 @@ export function Trade() {
       setScan(s);
       setSeen((prev) => [...new Set([...prev, ...s.keys])]);
       setErr(null);
-      if (s.offers.length) load(s.offers[0], s);
+      if (s.offers.length) { setFocus(s.offers[0].team_id); load(s.offers[0], s); }
+      else setFocus(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setScanning(false); }
+  }
+
+  /**
+   * Open one manager: their best deal on the board, priced, ready to edit.
+   *
+   * Clicking a team used to select them and nothing else, which left you
+   * staring at two rosters with the answer three screens up. The deal it found
+   * for THEM goes straight into the piles; if it found none, the read still
+   * knows who to ask for and who they want back, so that pairing is the
+   * opening offer -- labelled as a starting point rather than a
+   * recommendation, because it has not been through the acceptance test.
+   */
+  function openTeam(t: TeamRead) {
+    setFocus(t.team_id);
+    setThem(t.team_id);
+    setCounters(null);
+    const found = scan?.offers.find((o) => o.team_id === t.team_id);
+    if (found) { load(found); return; }
+
+    const wants = t.they_want_from_you[0];
+    const gets = t.get_from_them[0];
+    if (!wants && !gets) { setGive([]); setGet([]); setV(null); return; }
+    setExtra((m) => {
+      const n = new Map(m);
+      for (const p of [wants, gets]) {
+        if (p) n.set(p.player_id, {
+          player_id: p.player_id, player_name: p.player_name,
+          position: p.position, headshot: null,
+          projected_points: p.projected_points,
+        });
+      }
+      return n;
+    });
+    const g = wants ? [wants.player_id] : [];
+    const k = gets ? [gets.player_id] : [];
+    setGive(g);
+    setGet(k);
+    price(g, k, auto ? [] : myManual);
   }
 
   async function askCounter() {
@@ -189,6 +242,8 @@ export function Trade() {
   const theirIds = auto && other ? new Set(other.players.map((p) => p.player_id)) : null;
   const empty = give.length === 0 && get.length === 0;
   const theirRead = scan?.teams.find((t) => t.team_id === them) ?? null;
+  // The board has been edited since the verdict on screen was computed.
+  const dirty = !empty && dealKey(give, get) !== priced;
 
   return (
     <div className="space-y-3">
@@ -220,30 +275,37 @@ export function Trade() {
                       : scan ? "Scan again" : "Scan the league"}
           </Button>
         )}
+        {focus != null && scan && (
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]"
+                  onClick={() => { setFocus(null); setCounters(null); }}
+                  title="back to every roster in the league">
+            &larr; all teams
+          </Button>
+        )}
         {!empty && (
           <Button size="sm" variant="ghost" className="h-7 text-[11px]"
                   onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null); }}>
             Clear
           </Button>
         )}
-        {/* A disabled button with no reason is a dead end. The commonest
-            confusion here is putting names on a ROSTER and expecting that to
-            be the trade, so say the missing step rather than just greying
-            out. */}
+        {/* ANALYSE APPEARS ONLY WHEN THERE IS SOMETHING UNPRICED. A deal that
+            arrived from the scan is already priced, so the button would be
+            offering to recompute what is on the screen. It comes back the
+            moment you change the piles, and says so. */}
         <div className="ml-auto flex items-center gap-2">
           {empty && (
             <span className="text-[11px] text-clock">
               click a player on either roster to put him in the trade
             </span>
           )}
-          <Button size="sm" className="h-8 px-6 text-[12px]"
-                  onClick={() => price(give, get, auto ? [] : myManual)}
-                  disabled={busy || empty}
-                  title={empty
-                    ? "Nothing is in the trade yet — click a name on a roster, or drag it into a pile"
-                    : "Price this deal"}>
-            {busy ? "Analysing…" : "Analyse"}
-          </Button>
+          {(dirty || busy) && (
+            <Button size="sm" className="h-8 px-6 text-[12px]"
+                    onClick={() => price(give, get, auto ? [] : myManual)}
+                    disabled={busy}
+                    title="Price this deal">
+              {busy ? "Analysing…" : v ? "Re-analyse" : "Analyse"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -259,13 +321,14 @@ export function Trade() {
         {scan && (
           <TradeScan
             scan={scan} busy={scanning} give={give} players={known}
-            activeTeam={them}
-            onOpenTeam={(t) => { setThem(t.team_id); setGet([]); setV(null); }}
-            onLoadOffer={(o) => load(o)}
+            activeTeam={them} focus={focus}
+            onOpenTeam={openTeam}
+            onBack={() => { setFocus(null); setCounters(null); }}
+            onLoadOffer={(o) => { setFocus(o.team_id); load(o); }}
             onTake={(t, p) => fromRead(t, p, "get")}
             onSend={(t, p) => fromRead(t, p, "give")}
             onAgain={(a) => runScan(a)}
-            onClose={() => setScan(null)}
+            onClose={() => { setScan(null); setFocus(null); }}
           />
         )}
       </AnimatePresence>

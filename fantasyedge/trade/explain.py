@@ -199,7 +199,55 @@ def headline(verdict: dict) -> tuple[str, str]:
                         f"and only comes out ahead in {round(p * 100)}% of "
                         f"seasons.{same}")
     return "fair", (f"This is about fair — {round(d):+d} points, "
-                    f"{pct:+.1f}% of your season, {wk:+.1f} a week. It lands "
-                    f"better in {round(p * 100)}% of seasons, near enough a "
-                    f"coin flip that the tiebreaker is what you need rather "
-                    f"than what it is worth.{same}")
+                    f"{pct:+.1f}% of your season, {wk:+.1f} a week."
+                    f"{_tiebreak(verdict)}{same}")
+
+
+# How much bigger the tail move has to be than the middle before it decides a
+# level trade. Two to one: below that the two numbers are saying the same thing
+# with different rounding. The move also has to clear MATERIAL on its own --
+# the same bar every other reason on this page has to clear, rather than a
+# second threshold invented for this one sentence.
+TAIL_DECIDES = 2.0
+
+
+def _tiebreak(verdict: dict) -> str:
+    """What settles a level trade, when the middle of it is level.
+
+    A FAIR CALL IS THE ONE THAT NEEDS THIS MOST. The median is the middle of
+    the distribution and says nothing about its shape, so two players with the
+    same projection and completely different downside come back as a coin flip
+    -- which is precisely the rookie-for-veteran case, where the entire
+    measured difference lives in the left tail (`models/rookie_risk`: same
+    total spread, 1.8x the bust rate at the top of the board).
+
+    So when the tails have moved and the middle has not, the tails decide, and
+    the sentence says which one and by how much rather than leaving you to
+    read it off a chart.
+    """
+    d = verdict.get("delta_median", 0.0)
+    fl = verdict.get("delta_floor", 0.0)
+    ce = verdict.get("delta_ceiling", 0.0)
+    p = verdict.get("win_probability", 0.5)
+    edge = max(MATERIAL, abs(d) * TAIL_DECIDES)
+
+    safer = fl >= edge
+    riskier = fl <= -edge
+    if safer and ce < 0:
+        return (f" The middle is level, so the shape decides it: floor "
+                f"{round(fl):+d}, ceiling {round(ce):+d}. You are buying the "
+                f"safer season and selling the upside.")
+    if riskier and ce > 0:
+        return (f" The middle is level, so the shape decides it: floor "
+                f"{round(fl):+d}, ceiling {round(ce):+d}. You are selling the "
+                f"safer season and buying the swing — right only if you need "
+                f"the ceiling.")
+    if safer:
+        return (f" The middle is level and the floor is {round(fl):+d}, so it "
+                f"is the same season with less that can go wrong.")
+    if riskier:
+        return (f" The middle is level and the floor is {round(fl):+d}, so you "
+                f"are taking on the downside for nothing in the middle.")
+    return (f" It lands better in {round(p * 100)}% of seasons, near enough a "
+            f"coin flip that the tiebreaker is what you need rather than what "
+            f"it is worth.")

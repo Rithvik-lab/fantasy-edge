@@ -160,6 +160,9 @@ export interface TradePlayer {
 
 export interface TradeVerdict {
   delta_median: number;
+  /** The average season rather than the middle one. They disagree exactly
+   *  where a tail moved, which is the whole of the rookie penalty. */
+  delta_mean?: number;
   delta_floor: number;
   delta_ceiling: number;
   win_probability: number;

@@ -41,6 +41,7 @@ sampling noise. Without this, a 5-point edge is indistinguishable from jitter.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -89,8 +90,20 @@ def magnitudes(delta: float, before_median: float) -> tuple[float, float]:
 
 
 def _seed_for(player_id: str) -> int:
-    """Stable per-player seed, so a player draws the same season on both sides."""
-    return abs(hash(("fantasyedge-trade", player_id))) % (2**31 - 1)
+    """Stable per-player seed, so a player draws the same season on both sides.
+
+    STABLE ACROSS PROCESSES, not merely within one. `hash()` on a string is
+    salted per interpreter, so every restart of the engine dealt every player a
+    different season and the same trade came back with a different verdict --
+    Jeremiyah Love for Chase Brown priced at -0.5, -3.6 and -8.4 points on
+    three consecutive runs of identical code. Common random numbers held inside
+    a single answer, which hid it: both sides moved together, so the arithmetic
+    was always self-consistent and never twice the same.
+
+    crc32 is not a hash function anyone should use for security. It is exactly
+    right here: fixed by the standard, identical everywhere, and fast.
+    """
+    return zlib.crc32(f"fantasyedge-trade/{player_id}".encode()) % (2**31 - 1)
 
 
 def _player_weeks(row: dict, n_sims: int) -> np.ndarray:
@@ -224,6 +237,14 @@ class TradeVerdict:
     def as_dict(self) -> dict:
         return {
             "delta_median": round(self.delta_median, 1),
+            # THE MEAN AND THE MEDIAN DISAGREE WHENEVER A TAIL IS INVOLVED, and
+            # a tail is exactly where an unproven player differs from a proven
+            # one -- `models/rookie_risk` measured the whole rookie penalty as
+            # a left-tail effect and nothing else. A verdict quoting only the
+            # median is structurally blind to it, which is how a rookie for a
+            # veteran at the same projection reads as a coin flip.
+            "delta_mean": round(self.after.get("mean", 0.0)
+                                - self.before.get("mean", 0.0), 1),
             "delta_floor": round(self.delta_floor, 1),
             "delta_ceiling": round(self.delta_ceiling, 1),
             "win_probability": round(self.win_probability, 3),

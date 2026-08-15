@@ -206,11 +206,97 @@ export function TradeVerdict({ v }: { v: Verdict }) {
         </p>
       )}
 
-      <p className="text-[10.5px] text-muted">
-        roster {v.roster_before} &rarr; {v.roster_after} &middot; floor{" "}
-        {v.delta_floor > 0 ? "+" : ""}{Math.round(v.delta_floor)} &middot; ceiling{" "}
-        {v.delta_ceiling > 0 ? "+" : ""}{Math.round(v.delta_ceiling)}
-      </p>
+      <Shape v={v} />
     </motion.section>
+  );
+}
+
+/**
+ * THE SHAPE OF THE MOVE, which one number cannot carry.
+ *
+ * Floor, middle and ceiling on a shared scale, so a deal that is level in the
+ * middle and enormous in the tails looks like what it is at a glance. That
+ * case is not exotic — it is every unproven player for a proven one, where the
+ * measured difference is ENTIRELY in the left tail and a median-only verdict
+ * reports a coin flip.
+ *
+ * Diverging, and turf/alarm mean better/worse here rather than identity: this
+ * is a polarity question, which is the one place those colours are allowed to
+ * carry meaning.
+ */
+function Shape({ v }: { v: Verdict }) {
+  const rows = [
+    { k: "floor_delta", label: "bad season", value: v.delta_floor },
+    { k: "range", label: "middle", value: v.delta_median },
+    { k: "ceiling_delta", label: "good season", value: v.delta_ceiling },
+  ];
+  const max = Math.max(...rows.map((r) => Math.abs(r.value)), 12);
+
+  return (
+    <div className="border-t border-line pt-2.5">
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <span className="eyebrow">the shape of it</span>
+        <span className="text-[10px] text-muted">
+          how the whole season moves, not just the middle of it
+        </span>
+        <Term k="roster_spots" className="ml-auto">
+          <span className="num text-[10px] text-muted">
+            roster {v.roster_before} &rarr; {v.roster_after}
+          </span>
+        </Term>
+      </div>
+
+      <div className="space-y-1">
+        {rows.map((r) => {
+          const w = (Math.abs(r.value) / max) * 50;
+          const good = r.value >= 0;
+          return (
+            <div key={r.label} className="flex items-center gap-2">
+              <Term k={r.k} className="w-[74px] shrink-0">
+                <span className="text-[10px] text-muted">{r.label}</span>
+              </Term>
+              <div className="relative h-3 flex-1">
+                <div className="absolute inset-y-0 left-1/2 w-px bg-line" />
+                <motion.div
+                  className={cn("absolute top-1/2 h-2 -translate-y-1/2 rounded-[2px]",
+                    good ? "bg-turf/80" : "bg-alarm/80")}
+                  style={good ? { left: "50%" } : { right: "50%" }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${w}%` }}
+                  transition={{ type: "spring", stiffness: 200, damping: 26 }}
+                />
+              </div>
+              <span className={cn("num w-10 shrink-0 text-right text-[11px]",
+                good ? "text-turf" : "text-alarm")}>
+                {good ? "+" : ""}{Math.round(r.value)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="mt-1.5 flex flex-wrap gap-x-3 text-[10px] text-muted">
+        {v.delta_mean != null && (
+          <Term k="mean_delta">
+            <span className="num">
+              average season {v.delta_mean > 0 ? "+" : ""}
+              {Math.round(v.delta_mean)}
+            </span>
+          </Term>
+        )}
+        <Term k="win_prob">
+          <span className="num">
+            better in {Math.round(v.win_probability * 100)}% of seasons
+          </span>
+        </Term>
+        {v.overlap?.overlap != null && (
+          <Term k="overlap">
+            <span className="num">
+              {Math.round(v.overlap.overlap * 100)}% overlap
+            </span>
+          </Term>
+        )}
+      </p>
+    </div>
   );
 }

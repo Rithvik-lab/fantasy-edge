@@ -336,15 +336,18 @@ function WhatsWrong({ give, players, onGo, busy, understood }: {
 }
 
 export function TradeScan({
-  scan, busy, give, players, activeTeam,
-  onOpenTeam, onLoadOffer, onTake, onSend, onAgain, onClose,
+  scan, busy, give, players, activeTeam, focus,
+  onOpenTeam, onBack, onLoadOffer, onTake, onSend, onAgain, onClose,
 }: {
   scan: Scan;
   busy: boolean;
   give: string[];
   players: Map<string, TradePlayer>;
   activeTeam: number | null;
+  /** The manager currently open, or null for the grid of all of them. */
+  focus: number | null;
   onOpenTeam: (t: TeamRead) => void;
+  onBack: () => void;
   onLoadOffer: (o: TradeOffer) => void;
   onTake: (t: TeamRead, p: Piece) => void;
   onSend: (t: TeamRead, p: Piece) => void;
@@ -352,6 +355,85 @@ export function TradeScan({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(true);
+  const one = focus != null
+    ? scan.teams.find((t) => t.team_id === focus) ?? null
+    : null;
+
+  // ONE MANAGER AT A TIME once you have picked one. Eleven cards is the right
+  // answer to "who should I call" and the wrong one to "is this offer worth
+  // sending" -- so the grid gets out of the way and leaves the door open.
+  if (one) {
+    return (
+      <motion.section
+        layout
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-lg border border-line bg-panel"
+      >
+        <header className="flex flex-wrap items-baseline gap-2 border-b border-line px-3 py-2">
+          <button onClick={onBack}
+                  className="text-[11px] text-muted transition-colors hover:text-chalk">
+            &larr; all teams
+          </button>
+          <span className="text-[12.5px] font-medium">{one.team_name}</span>
+          {one.rank != null && (
+            <span className="num text-[10px] text-muted">#{one.rank}</span>
+          )}
+          <Term k="fit">
+            <span className="num text-[10.5px] text-muted">fit {Math.round(one.fit)}</span>
+          </Term>
+          <button onClick={onClose}
+                  className="ml-auto text-[11px] text-muted hover:text-chalk">
+            close
+          </button>
+        </header>
+
+        <div className="grid gap-3 p-3 lg:grid-cols-[1fr_1fr]">
+          <div className="space-y-2">
+            <p className="text-[11px] leading-snug text-muted">{one.note}</p>
+            <Bars rows={one.strength} />
+            <div className="grid gap-x-3 gap-y-0.5 border-t border-line/60 pt-1.5 sm:grid-cols-2">
+              <div>
+                <span className="eyebrow text-turf/70">ask them for</span>
+                {one.get_from_them.map((p) => (
+                  <Name key={p.player_id} p={p} tone="turf"
+                        onClick={() => onTake(one, p)} />
+                ))}
+              </div>
+              <div>
+                <span className="eyebrow text-alarm/70">they would want</span>
+                {one.they_want_from_you.map((p) => (
+                  <Name key={p.player_id} p={p} tone="alarm"
+                        onClick={() => onSend(one, p)} />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-line">
+            <header className="border-b border-line px-3 py-1.5">
+              <span className="eyebrow">other offers to this team</span>
+            </header>
+            {scan.offers.filter((o) => o.team_id === one.team_id).length === 0 ? (
+              <p className="px-3 py-4 text-center text-[11px] leading-snug text-muted">
+                Nothing here clears both tests at once — it has to win on your
+                lineup and read as a win on theirs. The pair on the left is a
+                starting point, not a recommendation.
+              </p>
+            ) : (
+              <ul className="divide-y divide-line/60">
+                {scan.offers.filter((o) => o.team_id === one.team_id).map((o, i) => (
+                  <OfferRow key={i} o={o} onLoad={() => onLoadOffer(o)} />
+                ))}
+              </ul>
+            )}
+            <WhatsWrong give={give} players={players} onGo={onAgain} busy={busy}
+                        understood={scan.understood} />
+          </div>
+        </div>
+      </motion.section>
+    );
+  }
 
   return (
     <motion.section
