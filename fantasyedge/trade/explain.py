@@ -204,15 +204,30 @@ def reasons(
     # detail, it is the entire trade, and it was the fourth con on the list.
     empties = [s for s in _unfilled(after, settings)
                if s not in _unfilled(before, settings)]
+    streamed = {f["slot"]: f for f in (verdict.get("streamed") or [])}
     for slot in empties:
         word = POS_WORD.get(slot, slot)
-        # What it cost is the man who left that slot, which is on the table.
         lost = max((float(p.get("projected_points") or 0.0) for p in give
                     if p.get("position") == slot), default=0.0)
-        con(f"-{round(lost)}" if lost else "empty",
-            f"You would have no {word} at all. That slot scores ZERO every "
-            f"week until you replace him, and it is where most of this number "
-            f"comes from.")
+        fill = streamed.get(slot)
+        if fill:
+            # HOW BAD DEPENDS ENTIRELY ON THE POSITION, and the wire says which
+            # rather than a rule about streaming. The gap between the man you
+            # send and the best one nobody owns IS the cost of emptying the
+            # slot -- small at quarterback, brutal at running back.
+            gap = round(lost - fill["points"])
+            ease = ("and that is close enough that the slot is not really the "
+                    "problem" if gap <= MATERIAL * 2 else
+                    "which is most of what this trade costs you")
+            con(f"-{gap}" if gap > 0 else "0",
+                f"No {word} left, so you would be starting {fill['player_name']} "
+                f"off waivers at {round(fill['points'])} against "
+                f"{round(lost)} — {ease}. Pick him up the moment this goes "
+                f"through.")
+        else:
+            con(f"-{round(lost)}" if lost else "empty",
+                f"You would have no {word} at all and nobody on the wire to "
+                f"fill the slot, so it scores ZERO every week.")
 
     # --- what happened to the lineup ---------------------------------------
     # Slot by slot used to be four separate reasons here. It is one cascade and
@@ -363,10 +378,17 @@ def headline(verdict: dict) -> tuple[str, str]:
             f"so most years you would not feel it.") if ov is not None and ov > 0.8 else ""
 
     empty = verdict.get("empties") or []
+    fills = {f["slot"]: f for f in (verdict.get("streamed") or [])}
     if empty:
-        words = " or ".join(POS_WORD.get(s, s) for s in empty)
-        gone = (f" You would be left with no {words} at all — that slot scores "
-                f"zero every week, which is where this number comes from.")
+        bits = []
+        for slot in empty:
+            word = POS_WORD.get(slot, slot)
+            f = fills.get(slot)
+            bits.append(f"you would be starting {f['player_name']} at {word}, "
+                        f"off waivers, for {round(f['points'])}" if f
+                        else f"you would have no {word} at all and nothing on "
+                             f"the wire to cover it")
+        gone = " And " + "; ".join(bits) + "."
     else:
         gone = ""
 

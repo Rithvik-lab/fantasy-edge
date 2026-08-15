@@ -231,6 +231,9 @@ class TradeVerdict:
     roster_before: int = 0
     roster_after: int = 0
     slots_changed: list[dict] = field(default_factory=list)
+    # Slots this trade leaves you filling off waivers, and by whom. Empty for
+    # a trade that leaves your lineup whole.
+    streamed: list[dict] = field(default_factory=list)
     note: str = ""
 
     def as_dict(self) -> dict:
@@ -261,8 +264,62 @@ class TradeVerdict:
             "roster_before": self.roster_before,
             "roster_after": self.roster_after,
             "slots_changed": self.slots_changed,
+            "streamed": [{k: v for k, v in f.items() if k != "row"}
+                         for f in self.streamed],
             "note": self.note,
         }
+
+
+def _waiver_fill(roster: pl.DataFrame, settings: LeagueSettings,
+                 pool: pl.DataFrame | None) -> list[dict]:
+    """The free agents you would be starting, for slots this roster cannot fill.
+
+    AN EMPTY SLOT IS NOT WORTH ZERO. Nobody plays a week with an empty
+    quarterback slot -- they add the best one left on the wire, and how much
+    that costs depends entirely on the position. In a 12-team league starting
+    one quarterback, the best free agent is roughly the 13th best quarterback
+    in football and barely worse than the 12th. At running back the wire is
+    picked clean by September and the drop is enormous.
+
+    So the cost of emptying a slot is measured rather than assumed: the best
+    unowned man at that position, from the same board everything else is priced
+    on. No list of "streamable positions" is needed and none is used -- the
+    pool says which is which, in this league, at this moment.
+    """
+    if pool is None or not pool.height or not roster.height:
+        return []
+    have: dict[str, int] = {}
+    for pos in roster["position"].to_list():
+        have[pos] = have.get(pos, 0) + 1
+    fills = []
+    for slot, count in settings.lineup.items():
+        if slot in ("FLEX", "SUPERFLEX"):
+            continue
+        short = count - have.get(slot, 0)
+        if short <= 0:
+            continue
+        best = (pool.filter(pl.col("position") == slot)
+                    .sort("projected_points", descending=True, nulls_last=True)
+                    .head(short))
+        for r in best.iter_rows(named=True):
+            fills.append({
+                "slot": slot,
+                "player_id": r["player_id"],
+                "player_name": r["player_name"],
+                "position": r["position"],
+                "points": round(float(r.get("projected_points") or 0.0), 1),
+                "row": r,
+            })
+    return fills
+
+
+def _with(roster: pl.DataFrame, fills: list[dict]) -> pl.DataFrame:
+    """The roster plus the men you would have to add to field a lineup."""
+    if not fills:
+        return roster
+    add = pl.DataFrame([f["row"] for f in fills])
+    cols = [c for c in roster.columns if c in add.columns]
+    return pl.concat([roster.select(cols), add.select(cols)], how="vertical")
 
 
 def _summary(totals: np.ndarray) -> dict[str, float]:
@@ -291,6 +348,7 @@ def evaluate(
     settings: LeagueSettings,
     board: pl.DataFrame,
     n_sims: int = N_SIMS,
+    free_agents: pl.DataFrame | None = None,
 ) -> TradeVerdict:
     """Price a trade by what it does to your startable season.
 
@@ -299,6 +357,14 @@ def evaluate(
     value total beside it so the gap between the two is visible -- that gap IS
     the opportunity cost, and it is the number that makes a three-for-one look
     fair right up until you have to bench two of them.
+
+    `free_agents` is everyone nobody owns. Without it an emptied slot scores
+    ZERO, which is wrong and wrong by a lot: trading your only quarterback does
+    not mean starting nobody, it means starting whoever is on waivers, and at
+    quarterback that man is nearly as good as the one you sent. The same trade
+    at running back really is close to catastrophic, because the waiver wire
+    there is empty. That difference is the whole point and it falls out of the
+    pool rather than out of a rule about which positions are streamable.
     """
     give = set(give_ids)
     kept = roster.filter(~pl.col("player_id").is_in(list(give)))
@@ -311,9 +377,11 @@ def evaluate(
         after_full = kept
 
     after, dropped = _trim_to_limit(after_full, settings)
+    before_fill = _waiver_fill(roster, settings, free_agents)
+    after_fill = _waiver_fill(after, settings, free_agents)
 
-    before_totals = simulate_lineup(roster, settings, n_sims)
-    after_totals = simulate_lineup(after, settings, n_sims)
+    before_totals = simulate_lineup(_with(roster, before_fill), settings, n_sims)
+    after_totals = simulate_lineup(_with(after, after_fill), settings, n_sims)
 
     b, a = _summary(before_totals), _summary(after_totals)
 
@@ -328,6 +396,12 @@ def evaluate(
         names = ", ".join(dropped["player_name"].to_list())
         note = (f"Over the {settings.roster_size}-man limit, so this trade also "
                 f"costs you {names}. That is part of the price.")
+
+    # Slots this trade leaves you filling off the wire, and by whom. The
+    # difference between the two lists is the honest version of "you would have
+    # nobody there" -- it names the man you would actually start.
+    had = {f["slot"] for f in before_fill}
+    streamed = [f for f in after_fill if f["slot"] not in had]
 
     return TradeVerdict(
         overlap=distribution_overlap(before_totals, after_totals),
@@ -350,6 +424,7 @@ def evaluate(
         opportunity_gap=naive - real,
         roster_before=roster.height,
         roster_after=after.height,
+        streamed=streamed,
         note=note,
     )
 

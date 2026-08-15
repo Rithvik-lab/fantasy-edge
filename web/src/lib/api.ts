@@ -196,7 +196,10 @@ export interface TradeVerdict {
   moves?: { slot: string; position: string | null;
             out: string | null; out_id: string | null; out_points: number;
             in: string | null; in_id: string | null; in_points: number;
-            delta: number }[];
+            waiver?: boolean; delta: number }[];
+  /** Slots this trade leaves you filling off waivers, and by whom. */
+  streamed?: { slot: string; player_id: string; player_name: string;
+               position: string; points: number }[];
   note: string;
 }
 

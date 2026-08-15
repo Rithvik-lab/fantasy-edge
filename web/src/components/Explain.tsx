@@ -131,6 +131,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Where the depth chart lists him, and who is ahead of him. On its own that is not a warning: a committee is usually already in the price — a WR2 goes where he goes in drafts precisely because everybody knows he is a WR2. It only becomes news when the chart DISAGREES with what the board assumed, and then the projection here is already cut by the difference rather than left for you to discount twice.",
   },
+  waiver: {
+    title: "Filled off the wire",
+    body:
+      "This trade leaves the slot empty, so the lineup is completed with the best player nobody in your league owns. That is what actually happens — nobody starts a week with an empty slot — and it is why emptying one position is survivable and another is not. At quarterback the best free agent is usually close to the man you sent; at running back the wire is picked clean by September. The gap is measured from your league's own pool, not from a rule about which positions are streamable.",
+  },
   cascade: {
     title: "Why more slots move than players",
     body:

@@ -230,6 +230,7 @@ def for_team(
     top: int = 3,
     ask: "Ask | None" = None,
     seen: set[str] | None = None,
+    free_agents: pl.DataFrame | None = None,
 ) -> list[Offer]:
     """Best offers to send one opponent.
 
@@ -328,7 +329,8 @@ def for_team(
             # Re-roll means SHOW ME ANOTHER ONE. Returning the same deal with
             # the same numbers reads as a broken button, which is what it was.
             continue
-        v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
+        v = evaluate(mine, list(g), list(k), settings, board,
+                     n_sims=SCAN_SIMS, free_agents=free_agents)
         if v.delta_median < floor:
             continue
         offers.append(Offer(
@@ -361,6 +363,7 @@ def counter(
     top: int = 3,
     ask: "Ask | None" = None,
     seen: set[str] | None = None,
+    free_agents: pl.DataFrame | None = None,
 ) -> list[Offer]:
     """Given a deal on the table, find nearby deals that are better.
 
@@ -448,7 +451,8 @@ def counter(
     for _, their_gain, g, k, theirs_lineup in scored[:SHORTLIST]:
         if key(g, k) in seen:
             continue
-        v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
+        v = evaluate(mine, list(g), list(k), settings, board,
+                     n_sims=SCAN_SIMS, free_agents=free_agents)
         if v.delta_median < floor:
             continue
         out_offers.append(Offer(
@@ -472,6 +476,7 @@ def balance(
     through_week: int = 0,
     max_add: int = 2,
     top: int = 3,
+    free_agents: pl.DataFrame | None = None,
 ) -> list[Offer]:
     """Keep this trade and even it out.
 
@@ -559,7 +564,8 @@ def balance(
 
     out: list[Offer] = []
     for _, _, _, capital, theirs_lineup, g, k in scored[:SHORTLIST]:
-        v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
+        v = evaluate(mine, list(g), list(k), settings, board,
+                     n_sims=SCAN_SIMS, free_agents=free_agents)
         out.append(Offer(
             team_id=-1, team_name="balanced", give=v.give, get=v.get,
             our_gain=v.delta_median, their_gain=capital,
@@ -588,6 +594,7 @@ def across_league(
     top: int = 10,
     ask: "Ask | None" = None,
     seen: set[str] | None = None,
+    free_agents: pl.DataFrame | None = None,
 ) -> list[Offer]:
     """Scan every opponent. `rosters` excludes yours."""
     b = market.perceived(board, observed, through_week)
@@ -597,7 +604,7 @@ def across_league(
     for tid, roster in rosters.items():
         out += for_team(mine, roster, b, settings, tid,
                         names.get(tid, f"Team {tid}"), top=per_team,
-                        ask=ask, seen=seen)
+                        ask=ask, seen=seen, free_agents=free_agents)
 
     out.sort(key=lambda o: -o.our_gain)
     return out[:top]

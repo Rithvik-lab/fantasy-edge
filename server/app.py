@@ -789,6 +789,27 @@ def _espn_rosters() -> pl.DataFrame:
     return r
 
 
+def _free_agents(board: pl.DataFrame) -> pl.DataFrame:
+    """Everyone nobody in this league owns.
+
+    THE PRICE OF AN EMPTY SLOT. Trading your only quarterback does not mean
+    starting nobody there; it means starting whoever is left on the wire, and
+    at quarterback that man is nearly as good as the one you sent. At running
+    back the wire is bare and the same trade is close to ruinous. Which is
+    which is a fact about this league right now, not a rule about positions --
+    so it is read off the pool.
+
+    Falls back to the draft log when live rosters are not available, which is
+    the manual case: a player nobody drafted is a free agent there too.
+    """
+    owned: set[str] = set()
+    for ids in (STATE.rosters or {}).values():
+        owned.update(ids)
+    if not owned:
+        owned = set(STATE.drafted_ids)
+    return board.filter(~pl.col("player_id").is_in(list(owned)))
+
+
 def _team_frames(r: pl.DataFrame) -> tuple[pl.DataFrame, dict[int, pl.DataFrame]]:
     """Board rows for my roster and for each opponent's."""
     b = _board()
@@ -1108,7 +1129,8 @@ def trade_evaluate(t: TradeIn) -> dict:
         d.update({"call": call, "summary": line, "pros": [], "cons": []})
         return d
 
-    v = trade.evaluate(mine, t.give, t.get, st.settings, b)
+    v = trade.evaluate(mine, t.give, t.get, st.settings, b,
+                       free_agents=_free_agents(b))
     d = _with_faces(v.as_dict(), b)
 
     # The roster as it would be afterwards, so the reasons are computed from
@@ -1123,6 +1145,15 @@ def trade_evaluate(t: TradeIn) -> dict:
     # better" reasons described one cascade as if it were four events, which
     # reads as a bug -- one receiver arrived, so how did three slots improve?
     d["moves"] = trade.explain.lineup_moves(mine, after, st.settings)
+    # A slot the trade empties is filled off the wire, not left blank -- so the
+    # card names the man you would actually be starting there.
+    fills = {f["slot"]: f for f in d.get("streamed") or []}
+    for m in d["moves"]:
+        if m["in"] is None and m["slot"].rstrip("0123456789") in fills:
+            f = fills[m["slot"].rstrip("0123456789")]
+            m.update({"in": f["player_name"], "in_id": f["player_id"],
+                      "in_points": f["points"], "waiver": True,
+                      "delta": round(f["points"] - m["out_points"], 1)})
     # WHO THE MEN YOU ARE BUYING SHARE A JOB WITH. Facts, not an adjustment:
     # a committee is usually already in the price, and saying so is more use
     # than a warning that double-counts what the market settled in July.
@@ -1215,7 +1246,7 @@ def trade_scan(s: ScanIn) -> dict:
         offers = trade.suggest.across_league(
             mine, pool, b, st.settings, names=STATE.team_names,
             observed=obs, through_week=week, per_team=s.per_team, top=s.top,
-            ask=a, seen=set(s.seen))
+            ask=a, seen=set(s.seen), free_agents=_free_agents(b))
     finally:
         trade.suggest.THEIR_MIN_GAIN = prev
 
@@ -1291,9 +1322,11 @@ def trade_balance(c: CounterIn) -> dict:
     # What it is worth now, so the answer can say what changed rather than
     # simply asserting the new one is better.
     now = trade.evaluate(mine, c.give, c.get, st.settings, b,
-                         n_sims=trade.suggest.SCAN_SIMS)
+                         n_sims=trade.suggest.SCAN_SIMS,
+                         free_agents=_free_agents(b))
     offers = trade.suggest.balance(mine, theirs, b, st.settings, c.give, c.get,
-                                   observed=obs, through_week=stamp.week or 0)
+                                   observed=obs, through_week=stamp.week or 0,
+                                   free_agents=_free_agents(b))
 
     core = set(c.give) | set(c.get)
     out = []
@@ -1391,7 +1424,8 @@ def trade_counter(c: CounterIn) -> dict:
     obs = refresh.observed() if stamp.got_stats else None
     offers = trade.suggest.counter(
         mine, theirs, b, st.settings, c.give, c.get, stance=c.stance,
-        observed=obs, through_week=stamp.week or 0, ask=a, seen=set(c.seen))
+        observed=obs, through_week=stamp.week or 0, ask=a, seen=set(c.seen),
+        free_agents=_free_agents(b))
     return {"offers": [_with_faces(o.as_dict(), b) for o in offers],
             "keys": [trade.suggest.key([p["player_id"] for p in o.give],
                                        [p["player_id"] for p in o.get])

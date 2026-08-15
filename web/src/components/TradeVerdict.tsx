@@ -307,6 +307,13 @@ function Cascade({ moves }: { moves: NonNullable<Verdict["moves"]> }) {
             <span className={cn("min-w-0 flex-1 truncate",
               m.in ? "text-chalk" : "text-alarm/80")}>
               {m.in ?? "nobody"}
+              {m.waiver && (
+                <Term k="waiver">
+                  <span className="ml-1 text-[9px] uppercase tracking-wider text-clock">
+                    waivers
+                  </span>
+                </Term>
+              )}
             </span>
             <span className={cn("num w-11 shrink-0 text-right text-[10.5px]",
               m.delta >= 0 ? "text-turf" : "text-alarm")}>
