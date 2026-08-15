@@ -50,6 +50,45 @@ def _depth_after(roster: pl.DataFrame, position: str,
     return have - need
 
 
+def _starters(roster: pl.DataFrame, settings: LeagueSettings) -> dict[str, dict]:
+    """player_id -> his row, for whoever is in the best legal lineup."""
+    if not roster.height:
+        return {}
+    starters, _ = optimal_lineup(roster, settings)
+    return {r["player_id"]: r for r in starters.iter_rows(named=True)} \
+        if starters.height else {}
+
+
+def promotions(before: pl.DataFrame, after: pl.DataFrame,
+               settings: LeagueSettings, incoming: set[str]) -> list[dict]:
+    """WHO STARTS INSTEAD. The question a trade actually turns on.
+
+    Giving up a receiver does not cost you that receiver's points. It costs you
+    the difference between him and whoever moves up -- which is why the same
+    player is expensive to trade off a thin roster and nearly free off a deep
+    one, and why "is there anyone worth starting behind him" is the question to
+    ask before agreeing to anything.
+
+    Computed by re-solving the lineup, not asserted: the men here are the ones
+    who are in the best legal lineup afterwards and were not in it before, with
+    the players arriving in the trade excluded -- they are the trade, not a
+    consequence of it.
+    """
+    was, now = _starters(before, settings), _starters(after, settings)
+    out = []
+    for pid, row in now.items():
+        if pid in was or pid in incoming:
+            continue
+        out.append({
+            "player_id": pid,
+            "player_name": row.get("player_name"),
+            "position": row.get("position"),
+            "slot": row.get("slot") or row.get("position"),
+            "points": round(float(row.get("projected_points") or 0.0), 1),
+        })
+    return sorted(out, key=lambda r: -r["points"])
+
+
 def reasons(
     before: pl.DataFrame,
     after: pl.DataFrame,
@@ -88,6 +127,31 @@ def reasons(
             pro(f"+{round(d)}", f"Your {slot} slot gets better.")
         else:
             con(f"-{abs(round(d))}", f"Your {slot} slot gets worse.")
+
+    # --- who steps up, which is what the deal really costs ----------------
+    stepped = promotions(before, after, settings,
+                         {p.get("player_id") for p in get})
+    for p in stepped[:2]:
+        # Measured against the WEAKEST man you send at that position, because
+        # that is the slot he actually inherits -- the others move up ahead of
+        # him. Against the best one the number was bigger and disagreed with
+        # the slot line printed directly above it.
+        gone = sorted((q for q in give if q.get("position") == p["position"]),
+                      key=lambda q: float(q.get("projected_points") or 0.0))
+        if gone:
+            gap = round(float(gone[0].get("projected_points") or 0.0)
+                        - p["points"])
+            if gap >= MATERIAL:
+                con(f"-{gap}", f"{p['player_name']} takes the {p['slot']} slot "
+                    f"and he is {gap} points behind {gone[0]['player_name']}. "
+                    f"That gap is the real price, not the man you send.")
+            else:
+                pro(f"{round(p['points'])}", f"{p['player_name']} steps into "
+                    f"{p['slot']} and barely loses you anything — the depth "
+                    f"was already there.")
+        else:
+            pro(f"{round(p['points'])}", f"{p['player_name']} moves into your "
+                f"lineup at {p['slot']}, so a bench spot starts earning.")
 
     # --- the shape of the season, not just its middle ---------------------
     df, dc = verdict.get("delta_floor", 0.0), verdict.get("delta_ceiling", 0.0)

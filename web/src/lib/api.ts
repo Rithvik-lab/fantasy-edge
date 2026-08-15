@@ -193,6 +193,9 @@ export interface TradeOffer {
   team_id: number; team_name: string;
   give: TradePlayer[]; get: TradePlayer[];
   our_gain: number; their_gain: number;
+  /** What it does to THEIR starting lineup — the half of acceptance that
+   *  understands a fourth receiver is worth less to a team starting three. */
+  their_lineup?: number;
   win_probability: number; naive_delta: number; note: string;
 }
 

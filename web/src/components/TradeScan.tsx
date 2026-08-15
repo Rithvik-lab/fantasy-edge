@@ -228,12 +228,20 @@ function OfferRow({ o, onLoad }: { o: TradeOffer; onLoad: () => void }) {
             {o.get.map((p) => p.player_name).join(", ") || "nothing"}
           </span>
         </p>
-        <p className="mt-0.5 text-[10.5px] text-muted">
+        <p className="mt-0.5 flex flex-wrap gap-x-2 text-[10.5px] text-muted">
           <Term k="their_gain">
             <span>they read it as +{Math.round(o.their_gain)} their way</span>
           </Term>
-          {" · "}
-          {Math.round(o.win_probability * 100)}% of simulated seasons
+          {o.their_lineup != null && (
+            <Term k="their_lineup">
+              <span>
+                {o.their_lineup > 0
+                  ? `fixes +${Math.round(o.their_lineup)} in their lineup`
+                  : "fixes nothing for them"}
+              </span>
+            </Term>
+          )}
+          <span>{Math.round(o.win_probability * 100)}% of seasons</span>
         </p>
       </button>
     </li>

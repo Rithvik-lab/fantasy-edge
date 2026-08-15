@@ -126,6 +126,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "The same deal on THEIR scale — draft capital plus an overweighted read of recent form, which is how managers actually price players. A deal has to win on your scale and read as a win on theirs, or it is not a trade, it is a wish.",
   },
+  their_lineup: {
+    title: "What it fixes for them",
+    body:
+      "Points added to THEIR best legal lineup. It is the half of the decision the capital number cannot see: a fourth receiver dropped on a team already starting three moves this by nothing, and a starter dropped into a hole moves it a lot. A manager says yes on the two together — what he thinks he gained, plus what it actually fixes — so a deal that plugs his weakest slot does not have to flatter him as much.",
+  },
   spare: {
     title: "Spare",
     body:

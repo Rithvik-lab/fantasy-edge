@@ -64,6 +64,29 @@ STANCE: dict[str, float] = {
 }
 # Ours, on the honest scale. Below this it is not worth the message.
 OUR_MIN_GAIN = 6.0
+
+# WHAT MAKES THEM SAY YES IS BOTH THINGS AT ONCE.
+#
+# A manager with three good receivers does not want a fourth, and one starting
+# a waiver-wire back will overpay for any back at all. The capital number knows
+# none of that -- it prices a player the same wherever he lands. Their LINEUP
+# knows it exactly: a fourth receiver dropped on a deep team moves their best
+# legal eleven by nothing, and a starter dropped into a hole moves it a lot.
+#
+# So acceptance is the sum of the two, both in points: what they think they
+# gained, plus what it actually fixes. A deal handing them a name they love
+# needs to fix nothing; a deal that plugs their weakest slot does not have to
+# flatter them as much. Requiring each SEPARATELY was the first version and it
+# was far too strict -- of 20,808 candidate deals against one opponent, 448
+# improved our lineup and 0 cleared a separate six-point bar on theirs. Ten of
+# eleven managers became untradeable with, which is not a league anyone has
+# ever played in.
+#
+# Weight one, because both are season points measured the same way. There is no
+# tuned coefficient here and there should not be one without trade data to fit
+# it against.
+def acceptance(capital: float, lineup: float) -> float:
+    return capital + max(lineup, 0.0)
 # How many survive the cheap pass and get simulated properly.
 SHORTLIST = 24
 # Fewer sims than a single reported verdict: this is ranking, not the answer.
@@ -80,6 +103,11 @@ class Offer:
     their_gain: float        # on their scale, which is what gets it accepted
     win_probability: float
     naive_delta: float
+    # What it does to THEIR starting lineup. The capital number says whether
+    # they like the names; this says whether the deal fixes anything for them,
+    # and it is the half that understands a fourth receiver is worth less to a
+    # team that already starts three.
+    their_lineup: float = 0.0
     note: str = ""
 
     def as_dict(self) -> dict:
@@ -90,6 +118,7 @@ class Offer:
             "get": self.get,
             "our_gain": round(self.our_gain, 1),
             "their_gain": round(self.their_gain, 1),
+            "their_lineup": round(self.their_lineup, 1),
             "win_probability": round(self.win_probability, 3),
             "naive_delta": round(self.naive_delta, 1),
             "note": self.note,
@@ -242,8 +271,11 @@ def for_team(
         for k in get_sets:
             # What they gain, as they see it: they receive our package and
             # give up theirs. Checked first because it is one subtraction and
-            # it eliminates most of the space.
-            if g_pv - sum(pv.get(i, 0.0) for i in k) < THEIR_MIN_GAIN:
+            # it eliminates most of the space -- but only at zero, because a
+            # deal that fixes their lineup can be worth taking at a small
+            # capital loss and the lineup is not computed yet here.
+            capital = g_pv - sum(pv.get(i, 0.0) for i in k)
+            if capital < 0:
                 continue
 
             in_rows = [their_rows[i] for i in k if i in their_rows]
@@ -255,13 +287,20 @@ def for_team(
                 continue
 
             # Their roster has to actually work afterwards, or they will see
-            # the hole even if the arithmetic flatters them.
+            # the hole even if the arithmetic flatters them -- and it has to
+            # work BETTER by enough to be worth their trouble, which is where
+            # positional scarcity enters on their side.
             after_theirs = [v for pid, v in their_rows.items()
                             if pid not in k] + out_rows
-            if _fast_lineup(after_theirs, settings) < base_theirs:
+            theirs_lineup = _fast_lineup(after_theirs, settings) - base_theirs
+            # Never propose something that makes their team worse -- they can
+            # see that too -- and clear the bar on the two together.
+            if theirs_lineup < 0:
+                continue
+            if acceptance(capital, theirs_lineup) < THEIR_MIN_GAIN:
                 continue
 
-            scored.append((cheap, g_pv - sum(pv.get(i, 0.0) for i in k), g, k))
+            scored.append((cheap, capital, g, k, theirs_lineup))
 
     if not scored:
         return []
@@ -270,7 +309,7 @@ def for_team(
     offers: list[Offer] = []
 
     # --- pass 3: the real verdict, survivors only ------------------------
-    for cheap, their_gain, g, k in scored[:SHORTLIST]:
+    for cheap, their_gain, g, k, theirs_lineup in scored[:SHORTLIST]:
         if key(g, k) in seen:
             # Re-roll means SHOW ME ANOTHER ONE. Returning the same deal with
             # the same numbers reads as a broken button, which is what it was.
@@ -285,6 +324,7 @@ def for_team(
             get=v.get,
             our_gain=v.delta_median,
             their_gain=their_gain,
+            their_lineup=theirs_lineup,
             win_probability=v.win_probability,
             naive_delta=v.naive_value_delta,
             note=v.note,
@@ -364,7 +404,7 @@ def counter(
             continue
         their_gain = (sum(pv.get(i, 0.0) for i in g)
                       - sum(pv.get(i, 0.0) for i in k))
-        if their_gain < threshold:
+        if their_gain < 0:
             continue
         kept = [v for pid, v in mine_rows.items() if pid not in g]
         incoming = [their_rows[i] for i in k if i in their_rows]
@@ -376,9 +416,12 @@ def counter(
             continue
         after_theirs = ([v for pid, v in their_rows.items() if pid not in k]
                         + [mine_rows[i] for i in g if i in mine_rows])
-        if _fast_lineup(after_theirs, settings) < base_theirs:
+        theirs_lineup = _fast_lineup(after_theirs, settings) - base_theirs
+        if theirs_lineup < 0:
             continue
-        scored.append((cheap, their_gain, g, k))
+        if acceptance(their_gain, theirs_lineup) < threshold:
+            continue
+        scored.append((cheap, their_gain, g, k, theirs_lineup))
 
     if not scored:
         return []
@@ -386,7 +429,7 @@ def counter(
 
     out_offers: list[Offer] = []
     floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)
-    for _, their_gain, g, k in scored[:SHORTLIST]:
+    for _, their_gain, g, k, theirs_lineup in scored[:SHORTLIST]:
         if key(g, k) in seen:
             continue
         v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
@@ -395,6 +438,7 @@ def counter(
         out_offers.append(Offer(
             team_id=-1, team_name="counter", give=v.give, get=v.get,
             our_gain=v.delta_median, their_gain=their_gain,
+            their_lineup=theirs_lineup,
             win_probability=v.win_probability, naive_delta=v.naive_value_delta,
             note=v.note))
     out_offers.sort(key=lambda o: -o.our_gain)

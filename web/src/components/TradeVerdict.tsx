@@ -104,50 +104,63 @@ export function TradeVerdict({ v }: { v: Verdict }) {
   // deal — the classic three-for-one that ignores your bench.
   const gap = v.opportunity_gap;
 
+  const tone = verdict === "win" ? "turf" : verdict === "loss" ? "alarm" : "clock";
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="space-y-3 rounded-lg border border-line bg-panel p-4"
+      className="overflow-hidden rounded-lg border border-line bg-panel"
     >
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span className={cn("num text-3xl font-bold leading-none",
-          good ? "text-turf" : "text-alarm")}>
-          {good ? "+" : ""}{Math.round(v.delta_median)}
-        </span>
-        <div className="min-w-0">
+      {/* THE RULING, ACROSS THE TOP. This screen used to open with the same
+          panels as the one you build a trade on, so arriving at the answer
+          looked like not having moved. It opens on the two sides facing each
+          other under a band in the colour of the call — a page you can tell
+          apart from a glance at its top edge. */}
+      <div className={cn("border-b px-4 py-3",
+        tone === "turf" ? "border-turf/30 bg-turf/[0.07]"
+          : tone === "alarm" ? "border-alarm/30 bg-alarm/[0.07]"
+          : "border-clock/30 bg-clock/[0.06]")}>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span aria-live="polite"
+                className={cn("select-none text-sm font-bold uppercase tracking-[0.14em]",
+                  tone === "turf" ? "text-turf"
+                    : tone === "alarm" ? "text-alarm" : "text-clock")}>
+            {verdict === "win" ? "you win this"
+              : verdict === "loss" ? "you lose this" : "about fair"}
+          </span>
+          <span className={cn("num text-3xl font-bold leading-none",
+            good ? "text-turf" : "text-alarm")}>
+            {good ? "+" : ""}{Math.round(v.delta_median)}
+          </span>
           <Term k="range">
-            <span className="text-xs text-chalk">
-              {v.roster_priced ? "points to your starting lineup"
-                               : "points, comparing the two sides only"}
+            <span className="text-[11px] text-chalk/80">
+              {v.roster_priced ? "to your starting lineup"
+                               : "comparing the two sides only"}
             </span>
           </Term>
           {/* The same move said three ways. A season total is hard to feel;
               a percentage and a weekly figure are not, and both are plain
               division rather than a score. */}
-          <p className="num text-[11px] text-muted">
+          <p className="num ml-auto text-[11px] text-muted">
             {v.pct_change != null && (
               <>{v.pct_change > 0 ? "+" : ""}{v.pct_change.toFixed(1)}% of your season</>
             )}
             {v.per_week != null && (
               <> &middot; {v.per_week > 0 ? "+" : ""}{v.per_week.toFixed(1)} a week</>
             )}
-            <> &middot; better in {Math.round(v.win_probability * 100)}% of seasons</>
           </p>
         </div>
-        <span
-          aria-live="polite"
-          className={cn(
-            "ml-auto select-none border-l-4 py-0.5 pl-2.5 text-sm font-bold uppercase tracking-[0.14em]",
-            verdict === "win" ? "border-turf text-turf"
-              : verdict === "loss" ? "border-alarm text-alarm"
-              : "border-clock text-clock")}
-        >
-          {verdict === "win" ? "you win" : verdict === "loss" ? "you lose" : "fair"}
-        </span>
+
+        <div className="mt-3 flex gap-4">
+          <Side label="you give" players={v.give} tone="alarm" />
+          <div className="self-center text-lg text-muted">&rarr;</div>
+          <Side label="you get" players={v.get} tone="turf" />
+        </div>
       </div>
 
+      <div className="space-y-3 p-4">
       {v.summary && (
         <p className="text-[12px] leading-snug text-chalk/85">{v.summary}</p>
       )}
@@ -164,12 +177,6 @@ export function TradeVerdict({ v }: { v: Verdict }) {
           <Ledger label="what it costs" tone="alarm" items={v.cons ?? []} />
         </div>
       )}
-
-      <div className="flex gap-4 border-y border-line py-3">
-        <Side label="you give" players={v.give} tone="alarm" />
-        <div className="self-center text-muted">&rarr;</div>
-        <Side label="you get" players={v.get} tone="turf" />
-      </div>
 
       {/* The argument. Two scales, and the space between them. */}
       <div className="rounded-md border border-line bg-raised/60 p-2.5">
@@ -207,6 +214,7 @@ export function TradeVerdict({ v }: { v: Verdict }) {
       )}
 
       <Shape v={v} />
+      </div>
     </motion.section>
   );
 }

@@ -127,13 +127,7 @@ export function Trade() {
     if (cur.includes(id)) drop(side, id); else add(side, id);
   };
 
-  /**
-   * Read the league and load the best deal it finds.
-   *
-   * The scan ends with the offer ON THE BOARD and priced, not sitting in a
-   * list waiting to be clicked: the question was "find me a trade", and an
-   * answer you still have to assemble by hand is half an answer.
-   */
+  /** Read every roster in the league and show what came back. */
   async function runScan(a: Ask = {}) {
     setScanning(true);
     setCounters(null);
@@ -143,8 +137,11 @@ export function Trade() {
       setScan(s);
       setSeen((prev) => [...new Set([...prev, ...s.keys])]);
       setErr(null);
-      if (s.offers.length) { setFocus(s.offers[0].team_id); load(s.offers[0], s); }
-      else setFocus(null);
+      // THE SCAN LANDS ON THE LEAGUE, not on one manager. Opening the best
+      // offer for you skipped the question the scan exists to answer -- who
+      // to talk to -- and buried the other ten reads under a deal you had not
+      // asked about yet. Click a team and it opens with its deal ready.
+      setFocus(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setScanning(false); }
@@ -350,13 +347,6 @@ export function Trade() {
                       : scan ? "Scan again" : "Scan the league"}
           </Button>
         )}
-        {focus != null && scan && (
-          <Button size="sm" variant="ghost" className="h-7 text-[11px]"
-                  onClick={() => { setFocus(null); setCounters(null); }}
-                  title="back to every roster in the league">
-            &larr; all teams
-          </Button>
-        )}
         {!empty && (
           <Button size="sm" variant="ghost" className="h-7 text-[11px]"
                   onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null); }}>
@@ -373,16 +363,9 @@ export function Trade() {
               click a player on either roster to put him in the trade
             </span>
           )}
-          {!reading && v && !dirty && (
-            /* Edited nothing after backing out of the answer, so the way back
-               is the answer itself rather than an Analyse that would recompute
-               a verdict we are still holding. */
-            <Button size="sm" variant="outline" className="h-8 px-4 text-[12px]"
-                    onClick={() => setView("verdict")}>
-              Back to the analysis
-            </Button>
-          )}
-          {(dirty || busy) && !reading && (
+          {/* Hidden while you are reading the answer, and inside an open
+              team, where the deal arrived already priced. */}
+          {!reading && !empty && (dirty || focus == null) && (
             <Button size="sm" className="h-8 px-6 text-[12px]"
                     onClick={() => price(give, get, auto ? [] : myManual,
                                          focus == null)}
