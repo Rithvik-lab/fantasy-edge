@@ -5,10 +5,12 @@ from fantasyedge.trade.evaluate import (
     compare_packages,
     distribution_overlap,
     evaluate,
+    for_everyone,
     simulate_lineup,
 )
 from fantasyedge.trade import ask, explain, league, market, suggest
 
 __all__ = ["TradeVerdict", "evaluate", "compare_packages",
-           "distribution_overlap", "simulate_lineup", "ask", "explain",
+           "distribution_overlap", "for_everyone", "simulate_lineup", "ask",
+           "explain",
            "league", "market", "suggest"]

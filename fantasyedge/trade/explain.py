@@ -357,6 +357,34 @@ def reasons(
     return {"pros": pros[:6], "cons": cons[:6], "empties": empties}
 
 
+def fit(verdict: dict) -> str:
+    """Is this a good trade, or a good trade FOR YOU? They are not the same.
+
+    The gap between what the deal does to a typical roster in this league and
+    what it does to yours is the difference between a steal and a fit -- and
+    the second one is the mistake that costs people leagues: a package everyone
+    else would take, landing on the one roster that cannot use it.
+    """
+    g = verdict.get("general") or {}
+    if not g or g.get("median") is None:
+        return ""
+    mine = verdict.get("delta_median", 0.0)
+    typical = float(g["median"])
+    gap = mine - typical
+    if abs(gap) < MATERIAL:
+        return (f"Worth about the same to you as to anyone — {round(typical):+d} "
+                f"on a typical roster in this league, {round(mine):+d} on yours.")
+    if gap > 0:
+        return (f"Worth {round(gap)} points MORE to you than to a typical team "
+                f"in this league ({round(typical):+d} for them, {round(mine):+d} "
+                f"for you). It fits what your roster is short of, which is the "
+                f"kind of trade only you should be making.")
+    return (f"Worth {round(abs(gap))} points LESS to you than to a typical team "
+            f"in this league ({round(typical):+d} for them, {round(mine):+d} for "
+            f"you). The deal is fine; the fit is not — you are paying from a "
+            f"position you need and buying one you already have.")
+
+
 def headline(verdict: dict) -> tuple[str, str]:
     """(call, sentence). The call is one of win / fair / loss.
 

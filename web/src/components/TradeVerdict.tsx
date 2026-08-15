@@ -181,23 +181,45 @@ export function TradeVerdict({ v }: { v: Verdict }) {
         </div>
       )}
 
-      {/* The argument. Two scales, and the space between them. */}
+      {/* THREE SCALES, and the space between them is the argument. What a
+          calculator says, what the deal is worth to anybody, and what it is
+          worth to you — the last two differ by FIT, which is the number only
+          this app can compute because it has read every roster. */}
       <div className="rounded-md border border-line bg-raised/60 p-2.5">
-        <div className="grid grid-cols-2 gap-3 text-[11px]">
+        <div className={cn("grid gap-3 text-[11px]",
+          v.general?.median != null ? "grid-cols-3" : "grid-cols-2")}>
           <div>
             <span className="block text-muted">On value totals</span>
             <span className="num text-sm text-muted">
               {v.naive_value_delta > 0 ? "+" : ""}{Math.round(v.naive_value_delta)}
             </span>
           </div>
+          {v.general?.median != null && (
+            <div>
+              <Term k="general_value">
+                <span className="block text-muted">To a typical team</span>
+              </Term>
+              <span className="num text-sm text-muted">
+                {v.general.median > 0 ? "+" : ""}{Math.round(v.general.median)}
+              </span>
+              <span className="num ml-1 text-[9.5px] text-muted/70">
+                {Math.round(v.general.low)} to {Math.round(v.general.high)}
+              </span>
+            </div>
+          )}
           <div>
-            <Term k="vor"><span className="block text-muted">On your lineup</span></Term>
+            <Term k="vor"><span className="block text-muted">To your team</span></Term>
             <span className={cn("num text-sm font-semibold",
               good ? "text-turf" : "text-alarm")}>
               {good ? "+" : ""}{Math.round(v.delta_median)}
             </span>
           </div>
         </div>
+        {v.fit && (
+          <p className="mt-2 border-t border-line pt-2 text-[11px] leading-snug text-chalk/80">
+            {v.fit}
+          </p>
+        )}
         {v.roster_priced && Math.abs(gap) >= 5 && (
           <p className="mt-2 border-t border-line pt-2 text-[11px] leading-snug text-muted">
             <span className="font-semibold text-chalk">

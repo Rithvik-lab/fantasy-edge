@@ -1163,6 +1163,16 @@ def trade_evaluate(t: TradeIn) -> dict:
                                  config.PRODUCTION_TARGET_SEASON)
     except Exception:
         d["roles"] = []
+    # WHAT IT IS WORTH IN GENERAL, beside what it is worth to you. The gap
+    # between the two is the difference between a steal and a fit, and it is
+    # only answerable because every roster in the league is already read.
+    if STATE.rosters:
+        others = {tid: b.filter(pl.col("player_id").is_in(ids))
+                  for tid, ids in STATE.rosters.items()
+                  if tid != STATE.my_team_id}
+        d["general"] = trade.for_everyone(others, t.give, t.get, st.settings, b,
+                                          free_agents=_free_agents(b))
+        d["fit"] = trade.explain.fit(d)
     call, line = trade.explain.headline(d)
     d.update({"call": call, "summary": line})
     return d

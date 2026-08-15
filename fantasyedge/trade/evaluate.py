@@ -429,6 +429,63 @@ def evaluate(
     )
 
 
+def for_everyone(
+    rosters: dict[int, pl.DataFrame],
+    give_ids: list[str],
+    get_ids: list[str],
+    settings: LeagueSettings,
+    board: pl.DataFrame,
+    n_sims: int = 1500,
+    free_agents: pl.DataFrame | None = None,
+) -> dict:
+    """What this same swap would be worth to every other team in the league.
+
+    TWO NUMBERS, AND THE GAP BETWEEN THEM IS THE POINT.
+
+    "Is this a good trade" and "is this a good trade FOR ME" are different
+    questions and the difference is the entire reason this app exists. A deal
+    that is worth +12 to a typical roster and +70 to yours is not a steal, it
+    is a FIT -- you happen to be thin exactly where it helps. The reverse is
+    the one that costs people leagues: a package everyone else would love,
+    landing on the one roster that cannot use it.
+
+    Both numbers come from the same simulation. Each opponent is handed the men
+    you would send -- they have to hold them before they can trade them -- and
+    then makes the swap on their own roster, with their own holes, their own
+    depth and the same waiver wire. The median across the league is what the
+    deal is worth in general; yours is what it is worth to you.
+
+    Teams already holding somebody on the incoming side are skipped: you cannot
+    trade for a player you own, and pretending otherwise doubles him up in the
+    lineup.
+    """
+    incoming = set(get_ids)
+    deltas: list[tuple[int, float]] = []
+    for tid, roster in rosters.items():
+        if not roster.height or incoming & set(roster["player_id"].to_list()):
+            continue
+        held = board.filter(pl.col("player_id").is_in(give_ids))
+        cols = [c for c in roster.columns if c in held.columns]
+        theirs = pl.concat([roster.select(cols), held.select(cols)],
+                           how="vertical") if held.height else roster
+        v = evaluate(theirs, give_ids, get_ids, settings, board,
+                     n_sims=n_sims, free_agents=free_agents)
+        deltas.append((int(tid), round(v.delta_median, 1)))
+
+    if not deltas:
+        return {}
+    vals = sorted(d for _, d in deltas)
+    mid = vals[len(vals) // 2] if len(vals) % 2 else \
+        (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
+    return {
+        "median": round(float(mid), 1),
+        "low": vals[0],
+        "high": vals[-1],
+        "teams": len(vals),
+        "by_team": dict(deltas),
+    }
+
+
 def compare_packages(
     board: pl.DataFrame,
     give_ids: list[str],

@@ -197,6 +197,11 @@ export interface TradeVerdict {
             out: string | null; out_id: string | null; out_points: number;
             in: string | null; in_id: string | null; in_points: number;
             waiver?: boolean; delta: number }[];
+  /** What the same swap does to every other roster in the league. */
+  general?: { median: number; low: number; high: number; teams: number;
+              by_team?: Record<string, number> };
+  /** Good trade, or good trade for YOU — the sentence for the gap. */
+  fit?: string;
   /** Slots this trade leaves you filling off waivers, and by whom. */
   streamed?: { slot: string; player_id: string; player_name: string;
                position: string; points: number }[];
