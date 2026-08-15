@@ -55,6 +55,10 @@ export function Trade() {
   // Which manager is open. null means the grid of all of them.
   const [focus, setFocus] = useState<number | null>(null);
   const [priced, setPriced] = useState<string | null>(null);
+  // Building the trade, or reading the answer. The scan keeps its own layout:
+  // there the board and the read belong together, and he asked for that one
+  // to stay exactly as it is.
+  const [view, setView] = useState<"build" | "verdict">("build");
   // Manual mode has nothing to read, so the rosters are typed. They are also
   // the hypothetical: any roster, real or not, can be priced against.
   const [myManual, setMyManual] = useState<string[]>([]);
@@ -83,10 +87,17 @@ export function Trade() {
   }, [rosters, extra]);
 
   const price = useCallback(async (g: string[], k: string[],
-                                  roster: string[] = []) => {
+                                  roster: string[] = [],
+                                  centre = false) => {
     if (!g.length && !k.length) {
       setV(null); setCounters(null); setPriced(null); return;
     }
+    // THE ANSWER TAKES THE PAGE. Pressing Analyse used to leave both rosters
+    // and both piles sitting there and drop the verdict underneath them, so
+    // the thing you asked for arrived below the fold, half-width, under the
+    // controls you had finished with. Building a trade and reading one are two
+    // different screens; `Edit trade` goes back.
+    if (centre) setView("verdict");
     setBusy(true);
     try {
       setV(await api.tradeEvaluate(g, k, roster));
@@ -126,6 +137,7 @@ export function Trade() {
   async function runScan(a: Ask = {}) {
     setScanning(true);
     setCounters(null);
+    setView("build");
     try {
       const s = await api.tradeScan({ stance, ...a, seen: a.seen ?? seen });
       setScan(s);
@@ -149,6 +161,7 @@ export function Trade() {
    * recommendation, because it has not been through the acceptance test.
    */
   function openTeam(t: TeamRead) {
+    setView("build");
     setFocus(t.team_id);
     setThem(t.team_id);
     setCounters(null);
@@ -177,12 +190,17 @@ export function Trade() {
   }
 
   async function askCounter() {
-    if (them == null) return;
     setScanning(true);
     try {
-      const c = await api.tradeCounter(give, get, them, { stance, seen });
+      // Manual mode counters against the two rosters you typed. It is the same
+      // search either way; only where the rosters come from changes.
+      const c = await api.tradeCounter(give, get, auto ? them : null, {
+        stance, seen,
+        ...(auto ? {} : { roster: myManual, their_roster: theirManual }),
+      });
       setCounters(c.offers);
       setSeen((prev) => [...new Set([...prev, ...c.keys])]);
+      setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setScanning(false); }
@@ -244,6 +262,63 @@ export function Trade() {
   const theirRead = scan?.teams.find((t) => t.team_id === them) ?? null;
   // The board has been edited since the verdict on screen was computed.
   const dirty = !empty && dealKey(give, get) !== priced;
+  const reading = view === "verdict" && (busy || !!v);
+
+  /** Better versions of what is on the table. */
+  const countersPanel = (
+    <AnimatePresence>
+      {counters && (
+        <motion.section
+          initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className="rounded-lg border border-line bg-panel"
+        >
+          <header className="flex items-center gap-2 border-b border-line px-3 py-2">
+            <span className="eyebrow">Better versions of this deal</span>
+            <button onClick={() => setCounters(null)}
+                    className="ml-auto text-[11px] text-muted hover:text-chalk">
+              close
+            </button>
+          </header>
+          {counters.length === 0 ? (
+            <p className="px-3 py-6 text-center text-[11.5px] leading-snug text-muted">
+              No nearby version does better while they would still accept. Scan
+              the league for a different partner, or say what is wrong with
+              this one.
+            </p>
+          ) : (
+            <ul className="divide-y divide-line/60">
+              {counters.map((o, i) => (
+                <li key={i}>
+                  <button onClick={() => load(o)}
+                          className="w-full px-3 py-2 text-left transition-colors hover:bg-raised/60">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-medium">{o.team_name}</span>
+                      <span className="num ml-auto text-xs font-semibold text-turf">
+                        +{Math.round(o.our_gain)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                      <span className="text-alarm/80">
+                        {o.give.map((p) => p.player_name).join(", ") || "nothing"}
+                      </span>
+                      {" → "}
+                      <span className="text-turf/80">
+                        {o.get.map((p) => p.player_name).join(", ") || "nothing"}
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-[10.5px] text-muted">
+                      they read it as +{Math.round(o.their_gain)} in their favour
+                    </p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </motion.section>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <div className="space-y-3">
@@ -253,7 +328,7 @@ export function Trade() {
           {(["auto", "manual"] as const).map((e) => (
             <button
               key={e}
-              onClick={() => setEntry(e)}
+              onClick={() => { setEntry(e); setView("build"); }}
               disabled={e === "auto" && !mine}
               title={e === "auto"
                 ? "your synced rosters, with offers found for you"
@@ -298,12 +373,22 @@ export function Trade() {
               click a player on either roster to put him in the trade
             </span>
           )}
-          {(dirty || busy) && (
+          {!reading && v && !dirty && (
+            /* Edited nothing after backing out of the answer, so the way back
+               is the answer itself rather than an Analyse that would recompute
+               a verdict we are still holding. */
+            <Button size="sm" variant="outline" className="h-8 px-4 text-[12px]"
+                    onClick={() => setView("verdict")}>
+              Back to the analysis
+            </Button>
+          )}
+          {(dirty || busy) && !reading && (
             <Button size="sm" className="h-8 px-6 text-[12px]"
-                    onClick={() => price(give, get, auto ? [] : myManual)}
+                    onClick={() => price(give, get, auto ? [] : myManual,
+                                         focus == null)}
                     disabled={busy}
                     title="Price this deal">
-              {busy ? "Analysing…" : v ? "Re-analyse" : "Analyse"}
+              {busy ? "Analysing…" : v ? "Re-analyse" : "Analyse this trade"}
             </Button>
           )}
         </div>
@@ -317,6 +402,34 @@ export function Trade() {
         <Simulating label="reading every roster in the league" />
       )}
 
+      {/* THE ANSWER, ALONE AND IN THE MIDDLE. Everything used to build it is
+          one button away and comes back exactly as it was. */}
+      {reading ? (
+        <div className="mx-auto w-full max-w-3xl space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                    onClick={() => { setView("build"); setCounters(null); }}>
+              &larr; Edit trade
+            </Button>
+            {!busy && (auto || (myManual.length > 0 && theirManual.length > 0)) && (
+              <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                      onClick={askCounter} disabled={scanning}>
+                {scanning ? "looking for a better version…" : "Counter this trade"}
+              </Button>
+            )}
+            <span className="ml-auto truncate text-[11px] text-muted">
+              {give.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
+                || "nothing"}
+              {" → "}
+              {get.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
+                || "nothing"}
+            </span>
+          </div>
+          {countersPanel}
+          {busy ? <Simulating /> : v ? <TradeVerdict v={v} /> : null}
+        </div>
+      ) : (
+      <>
       <AnimatePresence>
         {scan && (
           <TradeScan
@@ -418,6 +531,8 @@ export function Trade() {
         </div>
       </div>
 
+      {/* In the scan's own layout the board and the answer belong together --
+          you are reading the roster beside the ruling and editing both. */}
       {busy && <Simulating />}
 
       {v && !busy && (
@@ -430,58 +545,7 @@ export function Trade() {
                 {scanning ? "looking for a better version…" : "Counter this trade"}
               </Button>
             )}
-            <AnimatePresence>
-              {counters && (
-                <motion.section
-                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="rounded-lg border border-line bg-panel"
-                >
-                  <header className="flex items-center gap-2 border-b border-line px-3 py-2">
-                    <span className="eyebrow">Better versions of this deal</span>
-                    <button onClick={() => setCounters(null)}
-                            className="ml-auto text-[11px] text-muted hover:text-chalk">
-                      close
-                    </button>
-                  </header>
-                  {counters.length === 0 ? (
-                    <p className="px-3 py-6 text-center text-[11.5px] leading-snug text-muted">
-                      No nearby version does better while they would still
-                      accept. Scan the league for a different partner, or say
-                      what is wrong with this one.
-                    </p>
-                  ) : (
-                    <ul className="divide-y divide-line/60">
-                      {counters.map((o, i) => (
-                        <li key={i}>
-                          <button onClick={() => load(o)}
-                                  className="w-full px-3 py-2 text-left transition-colors hover:bg-raised/60">
-                            <div className="flex items-baseline gap-2">
-                              <span className="text-xs font-medium">{o.team_name}</span>
-                              <span className="num ml-auto text-xs font-semibold text-turf">
-                                +{Math.round(o.our_gain)}
-                              </span>
-                            </div>
-                            <p className="mt-0.5 text-[11px] leading-snug text-muted">
-                              <span className="text-alarm/80">
-                                {o.give.map((p) => p.player_name).join(", ") || "nothing"}
-                              </span>
-                              {" → "}
-                              <span className="text-turf/80">
-                                {o.get.map((p) => p.player_name).join(", ") || "nothing"}
-                              </span>
-                            </p>
-                            <p className="mt-0.5 text-[10.5px] text-muted">
-                              they read it as +{Math.round(o.their_gain)} in their favour
-                            </p>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </motion.section>
-              )}
-            </AnimatePresence>
+            {countersPanel}
           </div>
         </div>
       )}
@@ -506,6 +570,8 @@ export function Trade() {
             not what the two piles add up to.
           </p>
         </div>
+      )}
+      </>
       )}
 
       {err && (

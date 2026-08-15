@@ -395,8 +395,8 @@ export const api = {
     req<Scan>("/trade/scan", {
       method: "POST",
       body: JSON.stringify({ per_team: 1, top: 8, stance: "fair", ...ask }) }),
-  tradeCounter: (give: string[], get: string[], team_id: number,
-                 ask: Ask = {}) =>
+  tradeCounter: (give: string[], get: string[], team_id: number | null,
+                 ask: Ask & { roster?: string[]; their_roster?: string[] } = {}) =>
     req<{ offers: TradeOffer[]; keys: string[]; understood: string[] }>(
       "/trade/counter", {
         method: "POST",

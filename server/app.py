@@ -1233,6 +1233,13 @@ class CounterIn(BaseModel):
     give: list[str] = Field(default_factory=list)
     get: list[str] = Field(default_factory=list)
     team_id: int | None = None
+    # The two rosters, when you typed them. Manual mode has no sync and no
+    # counterparty to look up, and "find me a better version of this" is if
+    # anything MORE useful there -- you are speculating, so every version is
+    # equally hypothetical. Refusing to answer without ESPN made the button
+    # vanish exactly where the search is cheapest to trust.
+    roster: list[str] = Field(default_factory=list)
+    their_roster: list[str] = Field(default_factory=list)
     stance: str = "fair"
     keep: list[str] = Field(default_factory=list)
     want: list[str] = Field(default_factory=list)
@@ -1252,15 +1259,26 @@ def trade_counter(c: CounterIn) -> dict:
     spot and starts for nobody.
     """
     st = _require()
-    r = _espn_rosters()
     b = _board()
-    tid = c.team_id
-    if tid is None:
-        raise HTTPException(400, "which team are you trading with?")
-    mine, others = _team_frames(r)
-    theirs = others.get(int(tid), b.head(0))
+
+    # EITHER list means you typed them, so answer on what you typed. Requiring
+    # both non-empty sent a half-filled manual trade down the ESPN path, where
+    # it came back asking which team you were trading with -- a question manual
+    # mode does not have an answer to.
+    if c.roster or c.their_roster:
+        mine = b.filter(pl.col("player_id").is_in(c.roster))
+        theirs = b.filter(pl.col("player_id").is_in(c.their_roster))
+    else:
+        r = _espn_rosters()
+        tid = c.team_id
+        if tid is None:
+            raise HTTPException(400, "which team are you trading with?")
+        mine, others = _team_frames(r)
+        theirs = others.get(int(tid), b.head(0))
     if not mine.height or not theirs.height:
-        raise HTTPException(400, "could not read both rosters")
+        raise HTTPException(
+            400, "I need both rosters to look for a better version — in "
+                 "manual mode, type the other side's players in too.")
 
     a = trade.ask.Ask(keep=list(c.keep), want=list(c.want),
                       max_out=1 if c.fewer else 2,

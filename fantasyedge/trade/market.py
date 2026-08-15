@@ -143,19 +143,28 @@ def value_curve(board: pl.DataFrame, rank_col: str = "ecr") -> pl.DataFrame:
 
 
 def _floor(expr: pl.Expr) -> pl.Expr:
-    """NOBODY IS WORTH LESS THAN NOTHING IN A TRADE.
+    """NOBODY IS WORTH LESS THAN NOTHING IN A TRADE, AND NOBODY IS FREE.
 
     `market_value` is fitted on VOR, so a man below replacement level carries a
     negative one -- correct for a lineup, wrong for a negotiation. Summed across
-    a package it says the other manager GAINS by handing you two useful bench
-    players in exchange for your worst, because he sheds two negative numbers
-    and takes on one. The scan proposed exactly that: Tyler Allgeier for Kyler
-    Murray and a rookie receiver, scored as +17 in their favour.
+    a package it said the other manager GAINS by handing you two useful bench
+    players for your worst, because he sheds two negative numbers and takes on
+    one. The scan proposed exactly that: Tyler Allgeier for Kyler Murray and a
+    rookie receiver, scored +17 in their favour.
 
-    A player you would not roster is worth zero, not less. You can always
-    decline to own him, which is the option that sets the floor.
+    Clipping at zero fixed the sign and left a second bug behind it: every
+    below-replacement player was then worth EXACTLY nothing, so asking for one
+    more body cost the other manager nothing at all and the counter search
+    turned into "ask them to throw in a tight end". Same mistake in a new
+    place -- pricing a player at zero is what makes an uneven package look free.
+
+    So the scale is shifted rather than clipped: the least valuable man on the
+    board is the zero, and everyone above him is worth something. That is also
+    the more honest anchor. A negotiation is about who is more desirable, not
+    about who beats a waiver-wire baseline, and the last rostered player is
+    where desirability actually runs out.
     """
-    return pl.max_horizontal(expr, pl.lit(0.0))
+    return pl.max_horizontal(expr - expr.min(), pl.lit(0.0))
 
 
 def perceived(
