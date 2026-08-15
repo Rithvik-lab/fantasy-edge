@@ -134,16 +134,6 @@ class Offer:
         }
 
 
-def _lineup_points(roster: pl.DataFrame, settings: LeagueSettings) -> float:
-    """Deterministic best-lineup total, via the shared slotting rules."""
-    if not roster.height:
-        return 0.0
-    starters, _ = optimal_lineup(roster, settings)
-    if not starters.height:
-        return 0.0
-    return float(starters["projected_points"].fill_null(0.0).sum())
-
-
 def _fast_lineup(players: list[tuple[str, float]], settings: LeagueSettings) -> float:
     """The same answer as `_lineup_points`, in microseconds instead of millis.
 
@@ -158,8 +148,9 @@ def _fast_lineup(players: list[tuple[str, float]], settings: LeagueSettings) -> 
     of sixteen rows -- the wrong tool at this size, where the whole roster fits
     in a python list and the fill is a sort and a couple of slices.
 
-    It has to agree with `optimal_lineup` exactly or the shortlist is ranked on
-    one rule and reported on another; `tests/test_suggest.py` checks that.
+    It has to agree with `draft.session.optimal_lineup` exactly or the
+    shortlist is ranked on one rule and reported on another;
+    `tests/test_suggest.py` checks that on forty random rosters.
     """
     by_pos: dict[str, list[float]] = {}
     for pos, pts in players:
@@ -193,14 +184,6 @@ def _as_rows(df: pl.DataFrame) -> dict[str, tuple[str, float]]:
         for r in df.select(["player_id", "position", "projected_points"])
                    .iter_rows(named=True)
     }
-
-
-def _swap(roster: pl.DataFrame, out_ids: list[str], incoming: pl.DataFrame) -> pl.DataFrame:
-    kept = roster.filter(~pl.col("player_id").is_in(out_ids))
-    if not incoming.height:
-        return kept
-    cols = [c for c in kept.columns if c in incoming.columns]
-    return pl.concat([kept.select(cols), incoming.select(cols)], how="vertical")
 
 
 def _packages(df: pl.DataFrame, max_size: int,

@@ -230,7 +230,6 @@ class TradeVerdict:
     per_week: float = 0.0
     roster_before: int = 0
     roster_after: int = 0
-    slots_changed: list[dict] = field(default_factory=list)
     # Slots this trade leaves you filling off waivers, and by whom. Empty for
     # a trade that leaves your lineup whole.
     streamed: list[dict] = field(default_factory=list)
@@ -263,7 +262,6 @@ class TradeVerdict:
             "per_week": round(self.per_week, 2),
             "roster_before": self.roster_before,
             "roster_after": self.roster_after,
-            "slots_changed": self.slots_changed,
             "streamed": [{k: v for k, v in f.items() if k != "row"}
                          for f in self.streamed],
             "note": self.note,
