@@ -1490,15 +1490,62 @@ def status() -> dict:
 # The shortlist
 # ---------------------------------------------------------------------------
 
+def _logos() -> dict[str, str]:
+    """Team nickname -> its logo. Loaded once; the badges do not change.
+
+    A DEFENCE HAS NO FACE. It is a team, so its picture is a team logo, and
+    nflverse publishes one per franchise. Relocations put three rows under
+    "Rams" (STL, LA, LAR) and they all point at the same badge, so matching on
+    the nickname is unambiguous even though the abbreviation is not.
+    """
+    global _LOGOS
+    if _LOGOS is None:
+        try:
+            import nflreadpy as nfl
+
+            t = nfl.load_teams()
+            _LOGOS = {r["team_nick"].lower(): r["team_logo_espn"]
+                      for r in t.iter_rows(named=True)
+                      if r.get("team_nick") and r.get("team_logo_espn")}
+        except Exception:
+            _LOGOS = {}
+    return _LOGOS
+
+
+_LOGOS: dict[str, str] | None = None
+
+
 def _headshots(b: pl.DataFrame) -> dict[str, str]:
-    """gsis_id -> ESPN headshot url, via the crosswalk already in the board."""
+    """Board id -> a picture of him. Three kinds of id, three sources.
+
+    Skill players are keyed on gsis and ESPN serves portraits by ESPN id, so
+    the URL cannot be built in the browser without shipping the crosswalk.
+    Kickers and defences are keyed `espn-<id>` because neither has a gsis --
+    which also means the ESPN id is right there in the key, and a kicker's
+    portrait needs no crosswalk at all. Both were simply missing before: the
+    map only ever had gsis keys, so every kicker and every defence in the app
+    drew an empty grey square.
+    """
+    out: dict[str, str] = {}
     try:
         from fantasyedge.data import espn as espn_adp
         m = espn_adp.load().select(["gsis_id", "espn_id"]).drop_nulls()
-        return {r["gsis_id"]: HEADSHOT.format(espn_id=r["espn_id"])
-                for r in m.iter_rows(named=True)}
+        out = {r["gsis_id"]: HEADSHOT.format(espn_id=r["espn_id"])
+               for r in m.iter_rows(named=True)}
     except Exception:
-        return {}
+        pass
+
+    logos = _logos()
+    for r in b.filter(pl.col("player_id").str.starts_with("espn-")).iter_rows(
+            named=True):
+        pid = r["player_id"]
+        if r["position"] == "DST":
+            nick = (r["player_name"] or "").replace("D/ST", "").strip().lower()
+            if nick in logos:
+                out[pid] = logos[nick]
+        else:
+            out[pid] = HEADSHOT.format(espn_id=pid.removeprefix("espn-"))
+    return out
 
 
 @app.get("/api/suggestions")
