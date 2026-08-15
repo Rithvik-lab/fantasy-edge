@@ -50,6 +50,22 @@ def _depth_after(roster: pl.DataFrame, position: str,
     return have - need
 
 
+def _unfilled(roster: pl.DataFrame, settings: LeagueSettings) -> list[str]:
+    """Starting slots this roster cannot fill.
+
+    A slot with nobody in it scores zero every week, which is a different kind
+    of fact from "your WR2 got worse" and belongs above it.
+    """
+    if not roster.height:
+        return list(s for s in settings.lineup if s not in ("FLEX", "SUPERFLEX"))
+    starters, _ = optimal_lineup(roster, settings)
+    have: dict[str, int] = {}
+    for r in starters.iter_rows(named=True):
+        have[r["position"]] = have.get(r["position"], 0) + 1
+    return [slot for slot, count in settings.lineup.items()
+            if slot not in ("FLEX", "SUPERFLEX") and count - have.get(slot, 0) > 0]
+
+
 def _starters(roster: pl.DataFrame, settings: LeagueSettings) -> dict[str, dict]:
     """player_id -> his row, for whoever is in the best legal lineup."""
     if not roster.height:
@@ -181,6 +197,23 @@ def reasons(
     get = verdict.get("get") or []
     dropped = verdict.get("dropped") or []
 
+    # --- A SLOT WITH NOBODY IN IT COMES FIRST -----------------------------
+    # Trading your only quarterback for a running back reads as "you lose this
+    # by 113" and looks like a broken model until you notice the QB slot is
+    # empty every week for the rest of the season. That is not a supporting
+    # detail, it is the entire trade, and it was the fourth con on the list.
+    empties = [s for s in _unfilled(after, settings)
+               if s not in _unfilled(before, settings)]
+    for slot in empties:
+        word = POS_WORD.get(slot, slot)
+        # What it cost is the man who left that slot, which is on the table.
+        lost = max((float(p.get("projected_points") or 0.0) for p in give
+                    if p.get("position") == slot), default=0.0)
+        con(f"-{round(lost)}" if lost else "empty",
+            f"You would have no {word} at all. That slot scores ZERO every "
+            f"week until you replace him, and it is where most of this number "
+            f"comes from.")
+
     # --- what happened to the lineup ---------------------------------------
     # Slot by slot used to be four separate reasons here. It is one cascade and
     # it is now drawn as a before/after card by `lineup_moves`; repeating it as
@@ -306,7 +339,7 @@ def reasons(
         pro(None, "Nothing here improves your starting lineup.")
     if not cons:
         con(None, "No material downside. This is close to free.")
-    return {"pros": pros[:6], "cons": cons[:6]}
+    return {"pros": pros[:6], "cons": cons[:6], "empties": empties}
 
 
 def headline(verdict: dict) -> tuple[str, str]:
@@ -329,17 +362,25 @@ def headline(verdict: dict) -> tuple[str, str]:
     same = (f" The two seasons still overlap {round(ov * 100)}% of the time, "
             f"so most years you would not feel it.") if ov is not None and ov > 0.8 else ""
 
+    empty = verdict.get("empties") or []
+    if empty:
+        words = " or ".join(POS_WORD.get(s, s) for s in empty)
+        gone = (f" You would be left with no {words} at all — that slot scores "
+                f"zero every week, which is where this number comes from.")
+    else:
+        gone = ""
+
     if d >= 15 and p >= 0.58:
         return "win", (f"You win this trade. It adds {size} to your {where}, "
                        f"and comes out ahead in {round(p * 100)}% of simulated "
-                       f"seasons.{same}")
+                       f"seasons.{gone}{same}")
     if d <= -15 or p < 0.42:
         return "loss", (f"You lose this trade. It costs your {where} {size}, "
                         f"and only comes out ahead in {round(p * 100)}% of "
-                        f"seasons.{same}")
+                        f"seasons.{gone}{same}")
     return "fair", (f"This is about fair — {round(d):+d} points, "
                     f"{pct:+.1f}% of your season, {wk:+.1f} a week."
-                    f"{_tiebreak(verdict)}{same}")
+                    f"{gone}{_tiebreak(verdict)}{same}")
 
 
 # How much bigger the tail move has to be than the middle before it decides a

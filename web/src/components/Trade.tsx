@@ -161,7 +161,7 @@ export function Trade() {
   }
 
   /**
-   * Open one manager: their best deal on the board, priced, ready to edit.
+   * Open one manager: their best deal staged on the board, ready to edit.
    *
    * Clicking a team used to select them and nothing else, which left you
    * staring at two rosters with the answer three screens up. The deal it found
@@ -169,6 +169,9 @@ export function Trade() {
    * knows who to ask for and who they want back, so that pairing is the
    * opening offer -- labelled as a starting point rather than a
    * recommendation, because it has not been through the acceptance test.
+   *
+   * STAGED, NOT PRICED. Analyse is a press of its own from here, so the stats
+   * arrive on their own screen rather than below the board.
    */
   function openTeam(t: TeamRead) {
     setView("build");
@@ -176,7 +179,7 @@ export function Trade() {
     setThem(t.team_id);
     setCounters(null);
     const found = scan?.offers.find((o) => o.team_id === t.team_id);
-    if (found) { load(found); return; }
+    if (found) { load(found, undefined, false); return; }
 
     const wants = t.they_want_from_you[0];
     const gets = t.get_from_them[0];
@@ -238,8 +241,14 @@ export function Trade() {
     } finally { setScanning(false); }
   }
 
-  /** Put a deal on the board and price it in the same motion. */
-  function load(o: TradeOffer, from?: Scan) {
+  /**
+   * Put a deal on the board.
+   *
+   * `now` prices it immediately; the scan's own panel passes false so the deal
+   * is staged and Analyse is a press of its own — the stats then arrive on
+   * their own screen instead of below the board.
+   */
+  function load(o: TradeOffer, from?: Scan, now = true) {
     if (o.team_id > 0) setThem(o.team_id);
     setExtra((m) => {
       const n = new Map(m);
@@ -251,8 +260,10 @@ export function Trade() {
     setGive(g);
     setGet(k);
     setCounters(null);
+    setBalanced(null);
     if (from) setScan(from);
-    price(g, k, auto ? [] : myManual);
+    if (now) { price(g, k, auto ? [] : myManual, true); }
+    else { setV(null); setPriced(null); }
   }
 
   /** A name clicked in the league read goes straight into the right pile. */
@@ -462,22 +473,19 @@ export function Trade() {
             Clear
           </Button>
         )}
-        {/* ANALYSE APPEARS ONLY WHEN THERE IS SOMETHING UNPRICED. A deal that
-            arrived from the scan is already priced, so the button would be
-            offering to recompute what is on the screen. It comes back the
-            moment you change the piles, and says so. */}
+        {/* ANALYSE IS ALWAYS THE WAY TO THE ANSWER, from anywhere with a deal
+            on the board — including a team just opened from the scan, where
+            the deal is staged rather than priced. It is only hidden while you
+            are already reading the answer it would produce. */}
         <div className="ml-auto flex items-center gap-2">
           {empty && (
             <span className="text-[11px] text-clock">
               click a player on either roster to put him in the trade
             </span>
           )}
-          {/* Hidden while you are reading the answer, and inside an open
-              team, where the deal arrived already priced. */}
-          {!reading && !empty && (dirty || focus == null) && (
+          {!reading && !empty && (
             <Button size="sm" className="h-8 px-6 text-[12px]"
-                    onClick={() => price(give, get, auto ? [] : myManual,
-                                         focus == null)}
+                    onClick={() => price(give, get, auto ? [] : myManual, true)}
                     disabled={busy}
                     title="Price this deal">
               {busy ? "Analysing…" : v ? "Re-analyse" : "Analyse this trade"}
