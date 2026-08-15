@@ -87,6 +87,15 @@ OUR_MIN_GAIN = 6.0
 # it against.
 def acceptance(capital: float, lineup: float) -> float:
     return capital + max(lineup, 0.0)
+
+
+# NOBODY TRADES A KICKER. Both are close to flat, so a kicker for a kicker
+# evens the arithmetic and means nothing -- the first balanced version of a
+# real deal came back as "they add Harrison Mevis and you add Jake Bates".
+# They stay tradeable when you put them there yourself; they are never
+# proposed as the sweetener.
+NEVER_SWEETEN = frozenset({"K", "DST"})
+
 # How many survive the cheap pass and get simulated properly.
 SHORTLIST = 24
 # Fewer sims than a single reported verdict: this is ranking, not the answer.
@@ -377,8 +386,10 @@ def counter(
 
     mine_rows = _as_rows(mine)
     their_rows = _as_rows(theirs)
-    my_ids = [p for p in mine_rows if p not in give and p not in set(ask.keep)]
-    their_ids = [p for p in their_rows if p not in get]
+    my_ids = [p for p in mine_rows if p not in give and p not in set(ask.keep)
+              and mine_rows[p][0] not in NEVER_SWEETEN]
+    their_ids = [p for p in their_rows if p not in get
+                 and their_rows[p][0] not in NEVER_SWEETEN]
 
     base_ours = _fast_lineup(list(mine_rows.values()), settings)
     base_theirs = _fast_lineup(list(their_rows.values()), settings)
@@ -448,6 +459,121 @@ def counter(
             note=v.note))
     out_offers.sort(key=lambda o: -o.our_gain)
     return out_offers[:top]
+
+
+def balance(
+    mine: pl.DataFrame,
+    theirs: pl.DataFrame,
+    board: pl.DataFrame,
+    settings: LeagueSettings,
+    give: list[str],
+    get: list[str],
+    observed: pl.DataFrame | None = None,
+    through_week: int = 0,
+    max_add: int = 2,
+    top: int = 3,
+) -> list[Offer]:
+    """Keep this trade and even it out.
+
+    A DIFFERENT QUESTION FROM `counter`, and the difference is the whole point.
+    Counter asks "what nearby deal is best for me" and answers with a better
+    trade, often a different one. This asks "the deal is the deal -- what makes
+    it fair", keeps every man already on the table, and adds the smallest
+    sweetener that closes the gap. Wilson for Swift and you are 24 points
+    light: what do they throw in.
+
+    FAIR MEANS NEITHER SIDE IS BEING FLEECED, on the two scales this project
+    keeps apart -- what it does to my lineup, and what it looks like from
+    across the table. So the objective is the GAP between those two numbers,
+    minimised, with both non-negative. Maximising my side is what counter does;
+    doing it here would just produce a fleecing with extra steps.
+
+    AND MORE BODIES IS NOT MORE VALUE. Every candidate is priced through the
+    same season simulation as any other trade, so a third man who never cracks
+    the lineup adds close to nothing and a fourth who forces a cut is a cost.
+    Three mid players for one good one comes back exactly as badly as it should
+    -- that is not a rule bolted on here, it is what `evaluate` has always
+    measured. Fewest additions wins ties, because the deal you already agreed
+    on is the one worth preserving.
+    """
+    b = market.perceived(board, observed, through_week)
+    pv = dict(zip(b["player_id"].to_list(),
+                  b["perceived_value"].fill_null(0.0).to_list()))
+    mine_rows, their_rows = _as_rows(mine), _as_rows(theirs)
+    g0, k0 = tuple(give), tuple(get)
+    if not g0 and not k0:
+        return []
+
+    base_ours = _fast_lineup(list(mine_rows.values()), settings)
+    base_theirs = _fast_lineup(list(their_rows.values()), settings)
+    limit = settings.roster_size
+    spare_mine = [p for p in mine_rows
+                  if p not in g0 and mine_rows[p][0] not in NEVER_SWEETEN]
+    spare_theirs = [p for p in their_rows
+                    if p not in k0 and their_rows[p][0] not in NEVER_SWEETEN]
+
+    def sides(g: tuple[str, ...], k: tuple[str, ...]) -> tuple[float, float, float]:
+        """(our cheap lineup delta, their capital, their lineup delta)."""
+        after = [v for pid, v in mine_rows.items() if pid not in g] \
+            + [their_rows[i] for i in k if i in their_rows]
+        if len(after) > limit:
+            after = sorted(after, key=lambda r: -r[1])[:limit]
+        ours = _fast_lineup(after, settings) - base_ours
+        capital = (sum(pv.get(i, 0.0) for i in g)
+                   - sum(pv.get(i, 0.0) for i in k))
+        at = [v for pid, v in their_rows.items() if pid not in k] \
+            + [mine_rows[i] for i in g if i in mine_rows]
+        return ours, capital, _fast_lineup(at, settings) - base_theirs
+
+    # Every way of adding up to `max_add` men, from either side, core intact.
+    adds: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for n in range(1, max_add + 1):
+        for take in combinations(spare_theirs, n):
+            adds.append(((), take))
+        for send in combinations(spare_mine, n):
+            adds.append((send, ()))
+    for send in spare_mine:
+        for take in spare_theirs:
+            adds.append(((send,), (take,)))
+
+    scored = []
+    for send, take in adds:
+        g, k = tuple(sorted(g0 + send)), tuple(sorted(k0 + take))
+        ours, capital, theirs_lineup = sides(g, k)
+        if theirs_lineup < 0:
+            continue
+        theirs = acceptance(capital, theirs_lineup)
+        # SOME TRADES CANNOT BE EVENED OUT, and the honest answer to those is
+        # the closest thing that exists plus how far short it lands -- not an
+        # empty panel. A star for a backup is 76 points apart and no bench
+        # piece in the league closes that; you need a different core. So
+        # feasible versions come first and the near misses come back behind
+        # them, marked.
+        feasible = ours >= -OUR_MIN_GAIN and theirs >= -OUR_MIN_GAIN
+        scored.append((not feasible, len(send) + len(take), abs(ours - theirs),
+                       capital, theirs_lineup, g, k))
+
+    if not scored:
+        return []
+    scored.sort(key=lambda r: (r[0], r[1], r[2]))
+
+    out: list[Offer] = []
+    for _, _, _, capital, theirs_lineup, g, k in scored[:SHORTLIST]:
+        v = evaluate(mine, list(g), list(k), settings, board, n_sims=SCAN_SIMS)
+        out.append(Offer(
+            team_id=-1, team_name="balanced", give=v.give, get=v.get,
+            our_gain=v.delta_median, their_gain=capital,
+            their_lineup=theirs_lineup,
+            win_probability=v.win_probability,
+            naive_delta=v.naive_value_delta, note=v.note))
+    # Closest to even first, on the real simulated number rather than the cheap
+    # one used to rank the search.
+    # Closest to even first, and among equally even versions the one that is
+    # better for us -- "fair" has a floor, and the floor is not losing.
+    out.sort(key=lambda o: (abs(o.our_gain - acceptance(o.their_gain,
+                                                        o.their_lineup)),
+                            -o.our_gain))
+    return out[:top]
 
 
 def across_league(

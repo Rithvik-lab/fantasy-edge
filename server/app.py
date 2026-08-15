@@ -1123,6 +1123,15 @@ def trade_evaluate(t: TradeIn) -> dict:
     # better" reasons described one cascade as if it were four events, which
     # reads as a bug -- one receiver arrived, so how did three slots improve?
     d["moves"] = trade.explain.lineup_moves(mine, after, st.settings)
+    # WHO THE MEN YOU ARE BUYING SHARE A JOB WITH. Facts, not an adjustment:
+    # a committee is usually already in the price, and saying so is more use
+    # than a warning that double-counts what the market settled in July.
+    try:
+        from fantasyedge.data import depth
+        d["roles"] = depth.roles(b, list(t.get),
+                                 config.PRODUCTION_TARGET_SEASON)
+    except Exception:
+        d["roles"] = []
     call, line = trade.explain.headline(d)
     d.update({"call": call, "summary": line})
     return d
@@ -1252,6 +1261,91 @@ class CounterIn(BaseModel):
     harder: bool = False
     seen: list[str] = Field(default_factory=list)
     note: str = ""
+
+
+@app.post("/api/trade/balance")
+def trade_balance(c: CounterIn) -> dict:
+    """Keep this trade and even it out.
+
+    Counter looks for a BETTER deal; this one keeps the deal you have and asks
+    what closes the gap. Both men on the table stay, and the smallest sweetener
+    that makes the two scales meet comes back with the arithmetic that says so.
+    """
+    st = _require()
+    b = _board()
+    if c.roster or c.their_roster:
+        mine = b.filter(pl.col("player_id").is_in(c.roster))
+        theirs = b.filter(pl.col("player_id").is_in(c.their_roster))
+    else:
+        r = _espn_rosters()
+        if c.team_id is None:
+            raise HTTPException(400, "which team are you trading with?")
+        mine, others = _team_frames(r)
+        theirs = others.get(int(c.team_id), b.head(0))
+    if not mine.height or not theirs.height:
+        raise HTTPException(400, "I need both rosters to balance a trade.")
+
+    stamp = refresh.read_stamp()
+    obs = refresh.observed() if stamp.got_stats else None
+
+    # What it is worth now, so the answer can say what changed rather than
+    # simply asserting the new one is better.
+    now = trade.evaluate(mine, c.give, c.get, st.settings, b,
+                         n_sims=trade.suggest.SCAN_SIMS)
+    offers = trade.suggest.balance(mine, theirs, b, st.settings, c.give, c.get,
+                                   observed=obs, through_week=stamp.week or 0)
+
+    core = set(c.give) | set(c.get)
+    out = []
+    for o in offers:
+        added_get = [p for p in o.get if p["player_id"] not in core]
+        added_give = [p for p in o.give if p["player_id"] not in core]
+        d = _with_faces(o.as_dict(), b)
+        d["adds"] = {"you_get": added_get, "you_give": added_give}
+        theirs = trade.suggest.acceptance(o.their_gain, o.their_lineup)
+        d["gap"] = round(o.our_gain - theirs, 1)
+        d["even"] = bool(o.our_gain >= -trade.suggest.OUR_MIN_GAIN
+                         and theirs >= -trade.suggest.OUR_MIN_GAIN)
+        d["why"] = _why_balanced(now.delta_median, o, added_get, added_give)
+        out.append(d)
+    return {"offers": out,
+            "before": {"our_gain": round(now.delta_median, 1)},
+            "note": "" if out else
+                    "Nothing on either bench closes this gap without changing "
+                    "the deal. The pieces that would move the number are the "
+                    "ones already on the table."}
+
+
+def _why_balanced(was: float, o, added_get: list[dict],
+                  added_give: list[dict]) -> str:
+    """One sentence, every figure taken from the two verdicts."""
+    theirs = trade.suggest.acceptance(o.their_gain, o.their_lineup)
+    gap = round(abs(o.our_gain - theirs))
+    parts = []
+    if added_get:
+        parts.append("they add "
+                     + ", ".join(p["player_name"] for p in added_get))
+    if added_give:
+        parts.append("you add "
+                     + ", ".join(p["player_name"] for p in added_give))
+    who = " and ".join(parts) if parts else "nothing changes"
+
+    move = (f"moves you from {round(was):+d} to {round(o.our_gain):+d}"
+            if abs(o.our_gain - was) >= 1 else
+            f"holds you at {round(o.our_gain):+d}")
+    pts = "point" if gap == 1 else "points"
+    even = (o.our_gain >= -trade.suggest.OUR_MIN_GAIN
+            and theirs >= -trade.suggest.OUR_MIN_GAIN)
+    if even and o.our_gain >= 0:
+        tail = f"the two sides land {gap} {pts} apart"
+    elif even:
+        tail = (f"the two sides land {gap} {pts} apart, though neither of you "
+                f"gains much — it is even rather than good")
+    else:
+        tail = (f"it is the closest version there is and still leaves {gap} "
+                f"{pts} between you")
+    return (f"{who[0].upper()}{who[1:]}, which {move} on your lineup while "
+            f"reading as {round(theirs):+d} from their side — {tail}.")
 
 
 @app.post("/api/trade/counter")

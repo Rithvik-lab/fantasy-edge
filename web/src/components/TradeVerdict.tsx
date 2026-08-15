@@ -168,6 +168,7 @@ export function TradeVerdict({ v }: { v: Verdict }) {
       <TradeChart v={v} />
 
       <Cascade moves={v.moves ?? []} />
+      <Roles rows={v.roles ?? []} />
 
       {(v.pros?.length || v.cons?.length) && (
         /* Numbers in their own column, in tabular figures, so the eye can run
@@ -218,6 +219,57 @@ export function TradeVerdict({ v }: { v: Verdict }) {
       <Shape v={v} />
       </div>
     </motion.section>
+  );
+}
+
+/**
+ * WHO YOU ARE ACTUALLY BUYING.
+ *
+ * "He shares a backfield — is he still the right target?" is the question
+ * behind every trade for a running back, and the answer is nearly always that
+ * the market already knew. George Pickens is a WR2, everybody knows he is a
+ * WR2, and it is exactly why he goes where he goes in drafts; his price has
+ * carried the committee since July.
+ *
+ * So this reports the fact and says whether it is NEWS: the chart against what
+ * the board already assumed. Matching ranks mean the committee is in the
+ * price. A chart worse than the price is a demotion nobody has paid for yet,
+ * and only that one is a reason to hesitate.
+ */
+function Roles({ rows }: { rows: NonNullable<Verdict["roles"]> }) {
+  if (!rows.length) return null;
+  return (
+    <div className="rounded-md border border-line bg-raised/40 p-2.5">
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <Term k="role">
+          <span className="eyebrow">who you are buying</span>
+        </Term>
+        <span className="text-[10px] text-muted">the job, not the projection</span>
+      </div>
+      <ul className="space-y-1.5">
+        {rows.map((r) => {
+          const news = r.discount < 1;
+          return (
+            <li key={r.player_id} className="text-[11px] leading-snug">
+              <span className="font-medium">{r.player_name}</span>
+              <span className="text-muted">
+                {" — "}listed {r.position}
+                {r.depth_rank} on {r.team}
+                {r.ahead.length > 0 && <> behind {r.ahead.join(" and ")}</>}
+                {r.injury_status && r.injury_status !== "ACTIVE" && (
+                  <span className="text-alarm"> · {r.injury_status.toLowerCase()}</span>
+                )}
+              </span>
+              <div className={cn("mt-0.5", news ? "text-clock" : "text-muted")}>
+                {news
+                  ? `The board prices him as his team's ${r.position}${r.expected_rank ?? 1}, so this is a demotion it has not paid for — his projection is cut ${Math.round((1 - r.discount) * 100)}% here.`
+                  : `That is exactly what his price already assumes, so the committee is not new information.`}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

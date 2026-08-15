@@ -94,10 +94,20 @@ def depth_chart(season: int) -> pl.DataFrame:
 
 
 def injuries(season: int, week: int | None = None) -> pl.DataFrame:
-    """Most recent injury report per player."""
+    """Most recent injury report per player.
+
+    A season nobody has played yet has no injury report, and nflreadpy says so
+    by RAISING rather than returning nothing -- "Season must be between 2009
+    and 2025" for a 2026 request in August. An empty frame is the right answer
+    to "who is hurt in a season that has not started", so it is returned here
+    instead of taking the caller down with it.
+    """
     import nflreadpy as nfl
 
-    d = nfl.load_injuries(seasons=[season])
+    try:
+        d = nfl.load_injuries(seasons=[season])
+    except Exception:
+        return pl.DataFrame()
     if not d.height:
         return pl.DataFrame()
     if week is not None:
@@ -165,6 +175,63 @@ def _with_expectation(board: pl.DataFrame, chart: pl.DataFrame) -> pl.DataFrame:
             pl.lit(1.0),
         ).fill_null(1.0).alias("depth_mult")
     )
+
+
+def roles(board: pl.DataFrame, player_ids: list[str], season: int) -> list[dict]:
+    """Who these men share a job with, and whether the price already knows.
+
+    THE QUESTION BEHIND A TRADE FOR A RUNNING BACK: he is one of two backs in
+    that building -- is he still worth it? The answer is nearly always "the
+    market already knew that", and saying so is more useful than a warning.
+    George Pickens is a WR2, everybody knows he is a WR2, and it is exactly why
+    he goes where he goes in drafts. His ADP has priced the committee since
+    July.
+
+    So each man comes back with three facts and no adjustment: where the chart
+    lists him, who is ahead of him, and whether that matches what the board
+    already assumed. Only the third can be news. `expected_rank` is his rank
+    among his own team's players at his position BY PROJECTION -- what the
+    market believed -- so chart 2 against expected 2 is a committee that is
+    already in the price, and chart 2 against expected 1 is a demotion nobody
+    has paid for yet.
+    """
+    if not player_ids:
+        return []
+    chart = depth_chart(season)
+    if not chart.height:
+        return []
+    j = _with_expectation(board, chart)
+    hurt = injuries(season)
+    if hurt.height:
+        j = j.join(hurt.select(["player_id", "injury_status"]),
+                   on="player_id", how="left")
+
+    ahead: dict[tuple, list[str]] = {}
+    for r in chart.iter_rows(named=True):
+        ahead.setdefault((r["chart_team"], r["chart_pos"]), []).append(
+            (r["depth_rank"], r["chart_name"]))
+
+    out = []
+    for r in j.filter(pl.col("player_id").is_in(player_ids)).iter_rows(named=True):
+        rank = r.get("depth_rank")
+        team = r.get("chart_team")
+        if rank is None or team is None:
+            continue
+        room = sorted(ahead.get((team, r.get("position")), []))
+        out.append({
+            "player_id": r["player_id"],
+            "player_name": r["player_name"],
+            "position": r["position"],
+            "team": team,
+            "depth_rank": int(rank),
+            "expected_rank": int(r["expected_rank"]) if r.get("expected_rank") else None,
+            "ahead": [n for k, n in room if k < rank][:2],
+            "behind": [n for k, n in room if k > rank][:1],
+            # 1.0 means the committee is already in his price.
+            "discount": round(float(r.get("depth_mult") or 1.0), 3),
+            "injury_status": r.get("injury_status"),
+        })
+    return sorted(out, key=lambda x: x["discount"])
 
 
 def apply(board: pl.DataFrame, season: int, week: int | None = None) -> pl.DataFrame:

@@ -186,12 +186,27 @@ export interface TradeVerdict {
   };
   roster_before: number;
   roster_after: number;
+  /** Who the men you are receiving share a job with, and whether the price
+   *  already knew. Facts, not an adjustment. */
+  roles?: { player_id: string; player_name: string; position: string;
+            team: string; depth_rank: number; expected_rank: number | null;
+            ahead: string[]; behind: string[]; discount: number;
+            injury_status?: string | null }[];
   /** The lineup card before and after — one cascade, not four separate gains. */
   moves?: { slot: string; position: string | null;
             out: string | null; out_id: string | null; out_points: number;
             in: string | null; in_id: string | null; in_points: number;
             delta: number }[];
   note: string;
+}
+
+/** A version of the deal on the table with the numbers evened out. */
+export interface Balanced extends TradeOffer {
+  adds: { you_get: TradePlayer[]; you_give: TradePlayer[] };
+  gap: number;
+  /** Both sides land within noise of each other. False = closest possible. */
+  even: boolean;
+  why: string;
 }
 
 export interface TradeOffer {
@@ -403,6 +418,12 @@ export const api = {
     req<Scan>("/trade/scan", {
       method: "POST",
       body: JSON.stringify({ per_team: 1, top: 8, stance: "fair", ...ask }) }),
+  tradeBalance: (give: string[], get: string[], team_id: number | null,
+                 extra: { roster?: string[]; their_roster?: string[] } = {}) =>
+    req<{ offers: Balanced[]; before: { our_gain: number }; note: string }>(
+      "/trade/balance", {
+        method: "POST",
+        body: JSON.stringify({ give, get, team_id, ...extra }) }),
   tradeCounter: (give: string[], get: string[], team_id: number | null,
                  ask: Ask & { roster?: string[]; their_roster?: string[] } = {}) =>
     req<{ offers: TradeOffer[]; keys: string[]; understood: string[] }>(

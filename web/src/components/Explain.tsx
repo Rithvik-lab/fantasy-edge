@@ -126,6 +126,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "The same deal on THEIR scale — draft capital plus an overweighted read of recent form, which is how managers actually price players. A deal has to win on your scale and read as a win on theirs, or it is not a trade, it is a wish.",
   },
+  role: {
+    title: "The job he actually has",
+    body:
+      "Where the depth chart lists him, and who is ahead of him. On its own that is not a warning: a committee is usually already in the price — a WR2 goes where he goes in drafts precisely because everybody knows he is a WR2. It only becomes news when the chart DISAGREES with what the board assumed, and then the projection here is already cut by the difference rather than left for you to discount twice.",
+  },
   cascade: {
     title: "Why more slots move than players",
     body:

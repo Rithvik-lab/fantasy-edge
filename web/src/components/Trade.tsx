@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  api, type Ask, type LeagueRoster, type Piece, type Scan, type TeamRead,
-  type TradeOffer, type TradePlayer, type TradeVerdict as Verdict,
+  api, type Ask, type Balanced, type LeagueRoster, type Piece, type Scan,
+  type TeamRead, type TradeOffer, type TradePlayer,
+  type TradeVerdict as Verdict,
 } from "@/lib/api";
 import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
@@ -51,6 +52,8 @@ export function Trade() {
   // exactly like a dead button.
   const [seen, setSeen] = useState<string[]>([]);
   const [counters, setCounters] = useState<TradeOffer[] | null>(null);
+  const [balanced, setBalanced] = useState<
+    { offers: Balanced[]; before: { our_gain: number }; note: string } | null>(null);
   const [scanning, setScanning] = useState(false);
   // Which manager is open. null means the grid of all of them.
   const [focus, setFocus] = useState<number | null>(null);
@@ -90,7 +93,7 @@ export function Trade() {
                                   roster: string[] = [],
                                   centre = false) => {
     if (!g.length && !k.length) {
-      setV(null); setCounters(null); setPriced(null); return;
+        setV(null); setCounters(null); setBalanced(null); setPriced(null); return;
     }
     // THE ANSWER TAKES THE PAGE. Pressing Analyse used to leave both rosters
     // and both piles sitting there and drop the verdict underneath them, so
@@ -138,6 +141,7 @@ export function Trade() {
   async function runScan(a: Ask = {}, fresh = false) {
     setScanning(true);
     setCounters(null);
+    setBalanced(null);
     setView("build");
     if (fresh) setSeen([]);
     try {
@@ -195,6 +199,27 @@ export function Trade() {
     price(g, k, auto ? [] : myManual);
   }
 
+  /**
+   * KEEP THE DEAL, EVEN IT OUT.
+   *
+   * A different question from Counter, which looks for a better trade and
+   * usually finds a different one. This keeps every man on the table and adds
+   * the smallest sweetener that closes the gap between the two scales — which
+   * is what people mean when they say a trade is unfair.
+   */
+  async function askBalance() {
+    setScanning(true);
+    try {
+      const b = await api.tradeBalance(give, get, auto ? them : null,
+        auto ? {} : { roster: myManual, their_roster: theirManual });
+      setBalanced(b);
+      setCounters(null);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setScanning(false); }
+  }
+
   async function askCounter() {
     setScanning(true);
     try {
@@ -205,6 +230,7 @@ export function Trade() {
         ...(auto ? {} : { roster: myManual, their_roster: theirManual }),
       });
       setCounters(c.offers);
+      setBalanced(null);
       setSeen((prev) => [...new Set([...prev, ...c.keys])]);
       setErr(null);
     } catch (e) {
@@ -269,6 +295,79 @@ export function Trade() {
   // The board has been edited since the verdict on screen was computed.
   const dirty = !empty && dealKey(give, get) !== priced;
   const reading = view === "verdict" && (busy || !!v);
+
+  /**
+   * The same deal, evened out.
+   *
+   * Deliberately not the counter panel: this keeps every man already on the
+   * table and shows what closes the gap, so each row is the deal you agreed
+   * plus one name and the arithmetic that says why.
+   */
+  const balancePanel = (
+    <AnimatePresence>
+      {balanced && (
+        <motion.section
+          initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className="rounded-lg border border-line bg-panel"
+        >
+          <header className="flex flex-wrap items-baseline gap-2 border-b border-line px-3 py-2">
+            <span className="eyebrow">Evening it out</span>
+            <span className="num text-[10.5px] text-muted">
+              as it stands: {balanced.before.our_gain > 0 ? "+" : ""}
+              {Math.round(balanced.before.our_gain)} to your lineup
+            </span>
+            <button onClick={() => setBalanced(null)}
+                    className="ml-auto text-[11px] text-muted hover:text-chalk">
+              close
+            </button>
+          </header>
+          {balanced.offers.length === 0 ? (
+            <p className="px-3 py-6 text-center text-[11.5px] leading-snug text-muted">
+              {balanced.note}
+            </p>
+          ) : (
+            <ul className="divide-y divide-line/60">
+              {balanced.offers.map((o, i) => (
+                <li key={i}>
+                  <button onClick={() => load(o)}
+                          className="w-full px-3 py-2 text-left transition-colors hover:bg-raised/60">
+                    <div className="flex items-baseline gap-2">
+                      <span className={cn("text-[11px] font-semibold uppercase tracking-wider",
+                        o.even ? "text-turf" : "text-clock")}>
+                        {o.even ? "even" : `${Math.abs(Math.round(o.gap))} apart`}
+                      </span>
+                      <span className="num ml-auto text-[11.5px] font-semibold text-turf">
+                        {o.our_gain > 0 ? "+" : ""}{Math.round(o.our_gain)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] leading-snug">
+                      <span className="text-alarm/80">
+                        {o.give.map((p) => p.player_name).join(", ") || "nothing"}
+                      </span>
+                      <span className="text-muted">{" → "}</span>
+                      <span className="text-turf/80">
+                        {o.get.map((p) => p.player_name).join(", ") || "nothing"}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-[10.5px] leading-snug text-muted">
+                      {o.why}
+                    </p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="border-t border-line px-3 py-2 text-[10px] leading-snug text-muted">
+            Each version is priced through the same season simulation as any
+            other trade, so a third body who never cracks your lineup adds
+            almost nothing and a fourth that forces a cut is a cost. Three mid
+            players for one good one comes back as badly as it should.
+          </p>
+        </motion.section>
+      )}
+    </AnimatePresence>
+  );
 
   /** Better versions of what is on the table. */
   const countersPanel = (
@@ -358,7 +457,8 @@ export function Trade() {
         )}
         {!empty && (
           <Button size="sm" variant="ghost" className="h-7 text-[11px]"
-                  onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null); }}>
+                  onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null);
+                                   setBalanced(null); }}>
             Clear
           </Button>
         )}
@@ -404,10 +504,18 @@ export function Trade() {
               &larr; Edit trade
             </Button>
             {!busy && (auto || (myManual.length > 0 && theirManual.length > 0)) && (
-              <Button size="sm" variant="outline" className="h-7 text-[11px]"
-                      onClick={askCounter} disabled={scanning}>
-                {scanning ? "looking for a better version…" : "Counter this trade"}
-              </Button>
+              <>
+                <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                        onClick={askBalance} disabled={scanning}
+                        title="keep this deal and add the smallest piece that evens it out">
+                  {scanning ? "evening it out…" : "Make this trade fair"}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-[11px]"
+                        onClick={askCounter} disabled={scanning}
+                        title="look for a different, better deal with this manager">
+                  Counter this trade
+                </Button>
+              </>
             )}
             <span className="ml-auto truncate text-[11px] text-muted">
               {give.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
@@ -417,6 +525,7 @@ export function Trade() {
                 || "nothing"}
             </span>
           </div>
+          {balancePanel}
           {countersPanel}
           {busy ? <Simulating /> : v ? <TradeVerdict v={v} /> : null}
         </div>
