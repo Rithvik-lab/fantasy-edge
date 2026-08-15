@@ -167,6 +167,8 @@ export function TradeVerdict({ v }: { v: Verdict }) {
 
       <TradeChart v={v} />
 
+      <Cascade moves={v.moves ?? []} />
+
       {(v.pros?.length || v.cons?.length) && (
         /* Numbers in their own column, in tabular figures, so the eye can run
            down them. Buried mid-sentence, six reasons read as six paragraphs
@@ -216,6 +218,52 @@ export function TradeVerdict({ v }: { v: Verdict }) {
       <Shape v={v} />
       </div>
     </motion.section>
+  );
+}
+
+/**
+ * YOUR LINEUP CARD, BEFORE AND AFTER.
+ *
+ * This replaced four separate reasons that each said "your WR2 slot gets
+ * better". Every one was true and together they read like a bug — one receiver
+ * arrived, so how did three slots improve? Because slots are ranks and not
+ * people: the new man takes WR1, the old WR1 slides to WR2, that man slides to
+ * the flex, and the back who left empties RB2. One cascade, shown as one.
+ */
+function Cascade({ moves }: { moves: NonNullable<Verdict["moves"]> }) {
+  if (!moves.length) return null;
+  return (
+    <div className="rounded-md border border-line bg-raised/40 p-2.5">
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <Term k="cascade">
+          <span className="eyebrow">how your lineup rearranges</span>
+        </Term>
+        <span className="text-[10px] text-muted">
+          {moves.length} slot{moves.length === 1 ? "" : "s"} move
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {moves.map((m, i) => (
+          <li key={i} className="flex items-center gap-2 text-[11px]">
+            <span className="num w-10 shrink-0 text-[9.5px] uppercase tracking-wider text-muted">
+              {m.slot}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-muted line-through decoration-muted/50">
+              {m.out ?? "—"}
+            </span>
+            <span className="shrink-0 text-muted">&rarr;</span>
+            <span className={cn("min-w-0 flex-1 truncate",
+              m.in ? "text-chalk" : "text-alarm/80")}>
+              {m.in ?? "nobody"}
+            </span>
+            <span className={cn("num w-11 shrink-0 text-right text-[10.5px]",
+              m.delta >= 0 ? "text-turf" : "text-alarm")}>
+              {m.delta > 0 ? "+" : ""}{Math.round(m.delta)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

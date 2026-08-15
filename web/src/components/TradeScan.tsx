@@ -259,12 +259,14 @@ function OfferRow({ o, onLoad }: { o: TradeOffer; onLoad: () => void }) {
  * back on screen, because a text box that silently ignores you is worse than
  * no text box.
  */
-function WhatsWrong({ give, players, onGo, busy, understood }: {
+function WhatsWrong({ give, players, onGo, busy, understood, team }: {
   give: string[];
   players: Map<string, TradePlayer>;
   onGo: (a: Ask) => void;
   busy: boolean;
   understood: string[];
+  /** The manager this box searches. Null means the whole league. */
+  team: TeamRead | null;
 }) {
   const [keep, setKeep] = useState<string[]>([]);
   const [want, setWant] = useState<string[]>([]);
@@ -289,7 +291,14 @@ function WhatsWrong({ give, players, onGo, busy, understood }: {
 
   return (
     <div className="space-y-2 border-t border-line px-3 py-2">
-      <span className="eyebrow">What&rsquo;s wrong with it?</span>
+      <span className="eyebrow">
+        {team ? `What's wrong with it?` : "Tell it what you are after"}
+      </span>
+      <p className="text-[10px] leading-snug text-muted">
+        {team
+          ? `Searches ${team.team_name} only — you have this manager open.`
+          : "Searches every roster in the league."}
+      </p>
 
       <div className="flex flex-wrap gap-1.5">
         {give.map((id) => {
@@ -324,7 +333,9 @@ function WhatsWrong({ give, players, onGo, busy, understood }: {
           onKeyDown={(e) => {
             if (e.key === "Enter") onGo({ keep, want, note, ...flag });
           }}
-          placeholder="or say it — “keep Jeanty, I want a receiver”"
+          placeholder={team
+            ? `or say it — “keep Jeanty, I want a receiver”`
+            : `or say it — “I'm set at tight end, I need a WR”`}
           className="h-7 flex-1 rounded border border-line bg-ink px-2 text-[11px] text-chalk placeholder:text-muted/70 focus:border-turf/50 focus:outline-none"
         />
         <Button size="sm" className="h-7 px-3 text-[11px]" disabled={busy}
@@ -435,7 +446,9 @@ export function TradeScan({
                 ))}
               </ul>
             )}
-            <WhatsWrong give={give} players={players} onGo={onAgain} busy={busy}
+            <WhatsWrong give={give} players={players} busy={busy}
+                        team={one}
+                        onGo={(a) => onAgain({ ...a, team_id: one.team_id })}
                         understood={scan.understood} />
           </div>
         </div>
@@ -519,7 +532,7 @@ export function TradeScan({
             </ul>
           )}
           <WhatsWrong give={give} players={players} onGo={onAgain} busy={busy}
-                      understood={scan.understood} />
+                      team={null} understood={scan.understood} />
         </div>
       </div>
     </motion.section>

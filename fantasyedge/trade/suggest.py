@@ -257,6 +257,11 @@ def for_team(
     if ask.want:
         get_sets = [k for k in get_sets
                     if {pos.get(i) for i in k} & set(ask.want)]
+    if ask.avoid:
+        # "I am fine at tight end" is a real instruction and the only honest
+        # reading of it is: do not send me one.
+        get_sets = [k for k in get_sets
+                    if not ({pos.get(i) for i in k} & set(ask.avoid))]
     if not give_sets or not get_sets:
         return []
     floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)

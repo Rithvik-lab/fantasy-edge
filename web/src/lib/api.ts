@@ -186,6 +186,11 @@ export interface TradeVerdict {
   };
   roster_before: number;
   roster_after: number;
+  /** The lineup card before and after — one cascade, not four separate gains. */
+  moves?: { slot: string; position: string | null;
+            out: string | null; out_id: string | null; out_points: number;
+            in: string | null; in_id: string | null; in_points: number;
+            delta: number }[];
   note: string;
 }
 

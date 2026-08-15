@@ -126,6 +126,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "The same deal on THEIR scale — draft capital plus an overweighted read of recent form, which is how managers actually price players. A deal has to win on your scale and read as a win on theirs, or it is not a trade, it is a wish.",
   },
+  cascade: {
+    title: "Why more slots move than players",
+    body:
+      "A trade does not change one slot, it re-solves the whole lineup. Slots are ranks, not people: a new receiver takes WR1, the man who was there slides to WR2, the man HE displaced slides to the flex, and the back who left empties RB2. One arrival, four slots — read it as a cascade down the card rather than as four separate gains.",
+  },
   their_lineup: {
     title: "What it fixes for them",
     body:

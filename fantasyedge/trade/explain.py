@@ -59,6 +59,75 @@ def _starters(roster: pl.DataFrame, settings: LeagueSettings) -> dict[str, dict]
         if starters.height else {}
 
 
+def lineup_moves(before: pl.DataFrame, after: pl.DataFrame,
+                 settings: LeagueSettings) -> list[dict]:
+    """Your lineup card, slot by slot, before and after.
+
+    WHY THIS REPLACED FOUR SEPARATE REASONS. A trade does not change one slot,
+    it re-solves the whole lineup, and the old presentation reported the
+    consequences as if they were independent gains:
+
+        +52 your FLEX slot gets better
+        +47 your WR1 slot gets better
+        +15 your WR2 slot gets better
+        -76 your RB2 slot gets worse
+
+    Every line was true and the set of them reads like a bug -- one receiver
+    arrived, so how did three slots improve? Because the slots are ranks, not
+    people: the new man takes WR1, the old WR1 slides to WR2, that man slides
+    to FLEX, and the back who left empties RB2. It is one cascade. Shown as a
+    before/after card it explains itself and the numbers stop looking invented.
+    """
+    def card(roster: pl.DataFrame) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {}
+        if not roster.height:
+            return out
+        starters, _ = optimal_lineup(roster, settings)
+        for r in starters.iter_rows(named=True):
+            slot = r.get("slot") or r["position"]
+            out.setdefault(slot, []).append({
+                "player_id": r["player_id"],
+                "player_name": r["player_name"],
+                "position": r["position"],
+                "points": float(r.get("projected_points") or 0.0),
+            })
+        for v in out.values():
+            v.sort(key=lambda p: -p["points"])
+        return out
+
+    b, a = card(before), card(after)
+    rows = []
+    for slot in sorted(set(b) | set(a), key=lambda s: LINEUP_SORT(s)):
+        was, now = b.get(slot, []), a.get(slot, [])
+        for i in range(max(len(was), len(now))):
+            x = was[i] if i < len(was) else None
+            y = now[i] if i < len(now) else None
+            if (x or {}).get("player_id") == (y or {}).get("player_id"):
+                continue
+            rows.append({
+                "slot": slot,
+                "out": x["player_name"] if x else None,
+                "out_id": x["player_id"] if x else None,
+                "out_points": round(x["points"], 1) if x else 0.0,
+                "in": y["player_name"] if y else None,
+                "in_id": y["player_id"] if y else None,
+                "in_points": round(y["points"], 1) if y else 0.0,
+                "position": (y or x or {}).get("position"),
+                "delta": round((y["points"] if y else 0.0)
+                               - (x["points"] if x else 0.0), 1),
+            })
+    return rows
+
+
+# Lineup-card order for a slot label, so the card reads the way it is written.
+_ORDER = ("QB", "RB", "WR", "TE", "FLEX", "SUPERFLEX", "DST", "K")
+
+
+def LINEUP_SORT(slot: str) -> tuple[int, str]:
+    base = (slot or "").rstrip("0123456789") or slot
+    return (_ORDER.index(base) if base in _ORDER else len(_ORDER), slot)
+
+
 def promotions(before: pl.DataFrame, after: pl.DataFrame,
                settings: LeagueSettings, incoming: set[str]) -> list[dict]:
     """WHO STARTS INSTEAD. The question a trade actually turns on.
@@ -112,21 +181,27 @@ def reasons(
     get = verdict.get("get") or []
     dropped = verdict.get("dropped") or []
 
-    # --- what happened to the lineup, slot by slot ------------------------
+    # --- what happened to the lineup ---------------------------------------
+    # Slot by slot used to be four separate reasons here. It is one cascade and
+    # it is now drawn as a before/after card by `lineup_moves`; repeating it as
+    # a list of independent gains made a correct answer look broken. What stays
+    # is the NET, which is the part a list of slots never actually said.
     b = _slot_strength(before, settings)
     a = _slot_strength(after, settings)
-    moves = sorted(
-        ((slot, a.get(slot, 0.0) - b.get(slot, 0.0))
-         for slot in set(b) | set(a)),
-        key=lambda kv: -abs(kv[1]),
-    )
-    for slot, d in moves:
-        if abs(d) < MATERIAL:
-            continue
-        if d > 0:
-            pro(f"+{round(d)}", f"Your {slot} slot gets better.")
+    net = sum(a.get(s, 0.0) for s in set(b) | set(a)) \
+        - sum(b.get(s, 0.0) for s in set(b) | set(a))
+    moved = sum(1 for s in set(b) | set(a)
+                if abs(a.get(s, 0.0) - b.get(s, 0.0)) >= MATERIAL)
+    if moved:
+        word = "slot" if moved == 1 else "slots"
+        if net > 0:
+            pro(f"+{round(net)}", f"Your lineup rearranges: {moved} {word} move "
+                f"and the starting eleven is {round(net)} points better on "
+                f"projection.")
         else:
-            con(f"-{abs(round(d))}", f"Your {slot} slot gets worse.")
+            con(f"{round(net)}", f"Your lineup rearranges: {moved} {word} move "
+                f"and the starting eleven is {abs(round(net))} points worse on "
+                f"projection.")
 
     # --- who steps up, which is what the deal really costs ----------------
     stepped = promotions(before, after, settings,

@@ -1119,6 +1119,10 @@ def trade_evaluate(t: TradeIn) -> dict:
     after = b.filter(pl.col("player_id").is_in([x for x in after_ids
                                                if x not in dropped]))
     d.update(trade.explain.reasons(mine, after, st.settings, d))
+    # The lineup card, before and after. Four separate "your WR2 slot gets
+    # better" reasons described one cascade as if it were four events, which
+    # reads as a bug -- one receiver arrived, so how did three slots improve?
+    d["moves"] = trade.explain.lineup_moves(mine, after, st.settings)
     call, line = trade.explain.headline(d)
     d.update({"call": call, "summary": line})
     return d
