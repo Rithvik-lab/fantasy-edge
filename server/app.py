@@ -1038,6 +1038,23 @@ def team_suggest(week: int = 1) -> dict:
     """
     st = _require()
     b = _board()
+
+    # FORM, ONCE THERE IS ANY -- and consistent form, not one loud Sunday.
+    # `inseason.reprice` blends the pre-season number with what the season has
+    # shown, weighted by EFFECTIVE games: three steady weeks are worth nearly
+    # three, three wild ones worth about one and a half. So a man who has been
+    # quietly good climbs into the lineup and a man who had one thirty-point
+    # afternoon does not.
+    stamp = refresh.read_stamp()
+    form: pl.DataFrame | None = None
+    if stamp.got_stats:
+        obs = refresh.observed()
+        if obs.height:
+            from fantasyedge.models import inseason
+
+            b = inseason.reprice(b, obs, stamp.week or 0)
+            form = obs
+
     mine = b.filter(pl.col("player_id").is_in(st.my_ids))
     if not mine.height:
         return {"empty": True, "note": "Nothing on your roster yet."}
@@ -1101,11 +1118,24 @@ def team_suggest(week: int = 1) -> dict:
     gone = [q for q in have if q not in want]
     come = [p for p in want if p not in have]
 
+    seen = {}
+    if form is not None:
+        seen = {r["player_id"]: r for r in form.iter_rows(named=True)}
+
     def reason(q: str) -> str:
         if byes.get(q) is not None and int(byes[q] or 0) == week:
             return "on bye this week"
         if (hurt.get(q) or "").upper() in OUT_FOR_THE_WEEK:
             return f"listed {(hurt.get(q) or 'out').lower().replace('_', ' ')}"
+        f = seen.get(q)
+        if f and (f.get("games") or 0) > 0:
+            # Name the record, not just the conclusion: how many games, at
+            # what rate, and whether that rate held up week to week.
+            cv = f.get("cv")
+            shape = ("steady" if cv is not None and cv < 0.5
+                     else "erratic" if cv is not None else "so far")
+            return (f"{int(f['games'])} games at {float(f['ppg']):.1f} "
+                    f"a game, {shape}")
         return "beaten on projection"
 
     changes, used = [], set()
@@ -1152,11 +1182,16 @@ def team_suggest(week: int = 1) -> dict:
                       "lift": round(mult, 2)}
                      for pid, mult in sorted(lifted.items(), key=lambda kv: -kv[1])
                      if pid in names],
-        "note": ("Byes, injury status and jobs opened by somebody else's "
-                 "injury are the week-specific facts today. Opponent matchup "
-                 "and week-to-week consistency are not in this yet — they "
-                 "need weekly data that does not exist until the season "
-                 "starts."),
+        "note": (
+            "Byes, injury status, jobs opened by somebody else's injury, and "
+            "form so far — weighted by how CONSISTENT it has been, so three "
+            "steady weeks count for nearly three and three wild ones for about "
+            "one and a half. Opponent matchup is the one week-specific thing "
+            "still missing; it needs a fit on real weeks."
+            if form is not None else
+            "Byes, injury status and jobs opened by somebody else's injury are "
+            "the week-specific facts today. Form and opponent matchup arrive "
+            "with the first real week — there is nothing to read yet."),
     }
 
 

@@ -114,7 +114,19 @@ def reprice(
     games = pl.col("games").fill_null(0.0)
     k = pl.col("position").replace_strict(
         PRIOR_STRENGTH, default=DEFAULT_K, return_dtype=pl.Float64)
-    w = pl.when(games > 0).then(games / (games + k)).otherwise(0.0)
+
+    # WEIGHTED ON EFFECTIVE GAMES, NOT RAW ONES -- which is what the section
+    # below this function has always said should happen and what this line did
+    # not do. Two players average 13 over three weeks; one went 30-5-5 and the
+    # other 13-13-14, and a raw count calls those the same evidence. They are
+    # not, and the difference is exactly the "is he actually good now or did he
+    # have one Sunday" question: n_eff = n / (1 + 0.8 * cv^2).
+    #
+    # Availability still uses the RAW count further down, because a spiky
+    # scorer played those games however wildly he scored in them.
+    n = pl.col("games_eff").fill_null(games) if "games_eff" in observed.columns \
+        else games
+    w = pl.when(games > 0).then(n / (n + k)).otherwise(0.0)
 
     # Pre-season rate, per game he was expected to play.
     prior_rate = pl.col("projected_points") / pl.col("expected_games").clip(1.0, None)
