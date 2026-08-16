@@ -183,7 +183,7 @@ export function Trade() {
     setView("build");
     if (fresh) setSeen([]);
     try {
-      const s = await api.tradeScan({ stance, ...a,
+      const s = await api.tradeScan({ per_team: 1, top: 20, stance, ...a,
                                       seen: fresh ? [] : (a.seen ?? seen) });
       setScan(s);
       setSeen((prev) => [...new Set([...(fresh ? [] : prev), ...s.keys])]);
@@ -219,25 +219,22 @@ export function Trade() {
     const found = scan?.offers.find((o) => o.team_id === t.team_id);
     if (found) { load(found, undefined, false); return; }
 
-    const wants = t.they_want_from_you[0];
-    const gets = t.get_from_them[0];
-    if (!wants && !gets) { setGive([]); setGet([]); setV(null); return; }
-    setExtra((m) => {
-      const n = new Map(m);
-      for (const p of [wants, gets]) {
-        if (p) n.set(p.player_id, {
-          player_id: p.player_id, player_name: p.player_name,
-          position: p.position, headshot: null,
-          projected_points: p.projected_points,
-        });
-      }
-      return n;
-    });
-    const g = wants ? [wants.player_id] : [];
-    const k = gets ? [gets.player_id] : [];
-    setGive(g);
-    setGet(k);
-    price(g, k, auto ? [] : myManual);
+    // NOTHING GOES ON THE BOARD THAT HAS NOT PASSED BOTH TESTS.
+    //
+    // This used to fall back to pairing the top of one list with the top of
+    // the other -- and both lists are ranked by what a man would ADD to the
+    // opposite lineup, so the pair was always my best against their best.
+    // Opening Kian's team staged "Garrett Wilson for Bijan Robinson", which is
+    // not an opening offer, it is a fantasy, and the app had put it on the
+    // board and priced it.
+    //
+    // A manager the search found nothing for is a manager it found nothing
+    // for. The read stays on screen -- who is spare, who they are short of --
+    // and the piles stay empty until somebody puts a name in them.
+    setGive([]);
+    setGet([]);
+    setV(null);
+    setPriced(null);
   }
 
   /**

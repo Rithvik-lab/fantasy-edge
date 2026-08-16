@@ -435,9 +435,11 @@ export function TradeScan({
             </header>
             {scan.offers.filter((o) => o.team_id === one.team_id).length === 0 ? (
               <p className="px-3 py-4 text-center text-[11px] leading-snug text-muted">
-                Nothing here clears both tests at once — it has to win on your
-                lineup and read as a win on theirs. The pair on the left is a
-                starting point, not a recommendation.
+                Nothing with this manager clears both tests at once — a deal
+                has to win on your lineup AND read as a win on theirs, and no
+                combination here does. The names on the left are what each side
+                would want; put some in the piles and I will price whatever you
+                build.
               </p>
             ) : (
               <ul className="divide-y divide-line/60">
