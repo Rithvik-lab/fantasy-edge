@@ -9,7 +9,7 @@ import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
 import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
 import { TradeScan, TeamSummary } from "@/components/TradeScan";
-import { Simulating, Waiting } from "@/components/Simulating";
+import { Simulating } from "@/components/Simulating";
 import { useFlight } from "@/components/Flight";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -352,7 +352,7 @@ export function Trade() {
           </Button>
         </div>
       </div>
-    ) : <Waiting label="your league" />;
+    ) : <Simulating label="reading your league" />;
   }
 
   const auto = entry === "auto" && !!mine;

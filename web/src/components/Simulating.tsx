@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 
 /**
  * The wait, made into the thing you are waiting for.
@@ -73,74 +73,6 @@ function Weeks() {
     </div>
   );
 }
-
-/** What opening trade mode actually does, in the order it does it. */
-const READING = [
-  "reading twelve rosters",
-  "pricing every man on them",
-  "working out who is short of what",
-];
-
-/**
- * The league being read, drawn as the league being read.
- *
- * NOT the simulation below it. That one says four thousand seasons are being
- * played, which is true of a trade verdict and false of a roster fetch — and
- * running it for every wait had trade mode open with a racing season counter
- * to do something else entirely.
- *
- * So this shows the real shape of this particular wait: twelve teams filling
- * in, one after another, which is exactly what the engine is doing. Same
- * weight of animation, no claim that is not true.
- */
-export function Waiting({ label, teams = 12 }: { label: string; teams?: number }) {
-  const [i, setI] = useState(0);
-  const reduce = useReducedMotion();
-
-  useEffect(() => {
-    const t = setInterval(() => setI((n) => Math.min(READING.length - 1, n + 1)), 700);
-    return () => clearInterval(t);
-  }, []);
-
-  return (
-    <div className="rounded-lg border border-line bg-panel p-4">
-      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
-        {Array.from({ length: teams }).map((_, t) => (
-          <motion.div
-            key={t}
-            className="flex items-center gap-1.5 rounded border border-line/60 px-2 py-1.5"
-            initial={{ opacity: 0.25 }}
-            animate={reduce ? undefined : { opacity: [0.25, 1, 0.25] }}
-            transition={{ duration: 1.8, repeat: Infinity, delay: t * 0.11 }}
-          >
-            <span className="h-4 w-4 shrink-0 rounded-full bg-line" />
-            <span className="h-1.5 flex-1 rounded-full bg-line/70" />
-          </motion.div>
-        ))}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <span className="relative flex h-1.5 w-1.5 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-turf opacity-60" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-turf" />
-        </span>
-        <AnimatePresence mode="wait">
-          <motion.span
-            key={i}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.18 }}
-            className="text-[11.5px] text-muted"
-          >
-            {label} — {READING[i]}…
-          </motion.span>
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
-
 
 export function Simulating({ label }: { label?: string }) {
   const [phase, setPhase] = useState(0);
