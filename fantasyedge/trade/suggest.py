@@ -520,8 +520,30 @@ def balance(
     base_ours = _fast_lineup(list(mine_rows.values()), settings)
     base_theirs = _fast_lineup(list(their_rows.values()), settings)
     limit = settings.roster_size
-    spare_mine = [p for p in mine_rows
-                  if p not in g0 and mine_rows[p][0] not in NEVER_SWEETEN]
+    # A SWEETENER CANNOT BE SOMEBODY YOU CANNOT SPARE. Counting bodies by
+    # position and refusing to offer the last man at a required slot: the first
+    # version of this proposed adding Drake Maye to even out a deal, and Drake
+    # Maye is the only quarterback on the roster -- so the "fairer" version
+    # started a week with nobody at quarterback. Evening a trade by breaking
+    # your own lineup is not evening it.
+    have: dict[str, int] = {}
+    for pos, _pts in mine_rows.values():
+        have[pos] = have.get(pos, 0) + 1
+    for pid in g0:
+        if pid in mine_rows:
+            pos = mine_rows[pid][0]
+            have[pos] = have.get(pos, 0) - 1
+
+    def spareable(pid: str) -> bool:
+        pos = mine_rows[pid][0]
+        if pos in NEVER_SWEETEN:
+            return False
+        need = settings.lineup.get(pos, 0)
+        if pos in settings.flex_eligible:
+            need += settings.lineup.get("FLEX", 0)
+        return have.get(pos, 0) - 1 >= need
+
+    spare_mine = [p for p in mine_rows if p not in g0 and spareable(p)]
     spare_theirs = [p for p in their_rows
                     if p not in k0 and their_rows[p][0] not in NEVER_SWEETEN]
 
@@ -582,11 +604,17 @@ def balance(
             naive_delta=v.naive_value_delta, note=v.note))
     # Closest to even first, on the real simulated number rather than the cheap
     # one used to rank the search.
-    # Closest to even first, and among equally even versions the one that is
-    # better for us -- "fair" has a floor, and the floor is not losing.
-    out.sort(key=lambda o: (abs(o.our_gain - acceptance(o.their_gain,
-                                                        o.their_lineup)),
-                            -o.our_gain))
+    # NEITHER SIDE LOSING BEATS A SMALLER GAP. Sorting on the gap alone put a
+    # version costing me seven above one that cost nobody anything, because
+    # (-7, +2) is closer together than (-2, +19). Closeness is not the goal;
+    # a deal both managers can sign is. So: versions where neither side is
+    # under water first, then the tightest of those, then the best for us.
+    def rank(o: "Offer") -> tuple:
+        theirs = acceptance(o.their_gain, o.their_lineup)
+        both_ok = o.our_gain >= -OUR_MIN_GAIN and theirs >= -OUR_MIN_GAIN
+        return (not both_ok, abs(o.our_gain - theirs), -o.our_gain)
+
+    out.sort(key=rank)
     return out[:top]
 
 

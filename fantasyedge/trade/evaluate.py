@@ -357,12 +357,22 @@ def _waiver_rate(pool: pl.DataFrame | None) -> dict[str, float]:
 
 
 def _with(roster: pl.DataFrame, fills: list[dict]) -> pl.DataFrame:
-    """The roster plus the men you would have to add to field a lineup."""
+    """The roster plus the men you would have to add to field a lineup.
+
+    BUILT TO THE ROSTER'S SCHEMA, not to whatever python infers. These rows
+    come back through dicts, so an Int32 column on the board -- `depth_rank`,
+    once the depth chart started being applied -- arrives here as Int64 and
+    polars refuses to stack them. It only fired when a trade actually emptied a
+    slot, which is why the ordinary verdict was fine and "make this trade fair"
+    was a 500: the balancer tries packages that strip a position bare.
+    """
     if not fills:
         return roster
     add = pl.DataFrame([f["row"] for f in fills])
     cols = [c for c in roster.columns if c in add.columns]
-    return pl.concat([roster.select(cols), add.select(cols)], how="vertical")
+    add = add.select([pl.col(c).cast(roster.schema[c], strict=False)
+                      for c in cols])
+    return pl.concat([roster.select(cols), add], how="vertical")
 
 
 def _summary(totals: np.ndarray) -> dict[str, float]:

@@ -406,7 +406,8 @@ export function Trade() {
                     <div className="flex items-baseline gap-2">
                       <span className={cn("text-[11px] font-semibold uppercase tracking-wider",
                         o.even ? "text-turf" : "text-clock")}>
-                        {o.even ? "even" : `${Math.abs(Math.round(o.gap))} apart`}
+                        {!o.even ? `${Math.abs(Math.round(o.gap))} apart`
+                          : Math.abs(o.gap) <= 12 ? "even" : "both fine"}
                       </span>
                       <span className="num ml-auto text-[11.5px] font-semibold text-turf">
                         {o.our_gain > 0 ? "+" : ""}{Math.round(o.our_gain)}

@@ -1739,11 +1739,13 @@ def _why_balanced(was: float, o, added_get: list[dict],
     pts = "point" if gap == 1 else "points"
     even = (o.our_gain >= -trade.suggest.OUR_MIN_GAIN
             and theirs >= -trade.suggest.OUR_MIN_GAIN)
-    if even and o.our_gain >= 0:
+    if even and gap <= trade.suggest.OUR_MIN_GAIN * 2:
         tail = f"the two sides land {gap} {pts} apart"
     elif even:
-        tail = (f"the two sides land {gap} {pts} apart, though neither of you "
-                f"gains much — it is even rather than good")
+        # Both can sign it and it is not a straight swap -- worth saying which,
+        # because "even" and "21 points apart" together read as a contradiction.
+        tail = (f"neither of you loses on it, though it is not level: you land "
+                f"{round(o.our_gain):+d} and they land {round(theirs):+d}")
     else:
         tail = (f"it is the closest version there is and still leaves {gap} "
                 f"{pts} between you")
