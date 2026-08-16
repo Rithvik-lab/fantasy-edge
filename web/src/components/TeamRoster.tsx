@@ -145,12 +145,14 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
           </span>
         </div>
         <div className="mt-1.5">
-          <SuggestLineup onApplied={() => onRefresh?.()} />
+          <SuggestLineup onApplied={() => onRefresh?.()} week={d.pinned_week ?? 1} />
         </div>
         {Object.keys(pinned).length > 0 && (
           <button onClick={onReset} disabled={busy}
                   className="mt-1 text-[10.5px] text-clock underline-offset-2 hover:underline">
-            {Object.keys(pinned).length} set by hand — back to the season lineup
+            {d.pinned_week
+              ? `lineup set for week ${d.pinned_week} — back to the season lineup`
+              : `${Object.keys(pinned).length} set by hand — solve it`}
           </button>
         )}
       </header>

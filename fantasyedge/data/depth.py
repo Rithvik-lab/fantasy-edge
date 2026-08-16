@@ -324,23 +324,36 @@ VACANCY_LIFT: dict[str, tuple[float, float]] = {
 GONE = frozenset({"Out", "Doubtful", "Injured Reserve", "IR", "PUP", "Suspension"})
 
 
-def vacancy(board: pl.DataFrame, season: int, week: int | None = None) -> pl.DataFrame:
+def vacancy(board: pl.DataFrame, season: int, week: int | None = None,
+            injured: set[str] | None = None) -> pl.DataFrame:
     """Promote the next man up when the starter ahead of him is out.
 
     This is the in-season half of the depth chart. `apply` handles the static
-    case -- who has the job. This handles the case that actually moves trade
-    value week to week: the job just came open.
+    case -- who has the job. This handles the case that actually moves value
+    week to week: the job just came open.
 
     Adds `vacancy_mult` and applies it, so a backup's projection reflects the
     role he is about to have rather than the one he had in August.
+
+    `injured` is a set of player ids, for when the caller has a better injury
+    report than nflverse does -- which in August is every caller, because
+    nflverse publishes none until the season starts and ESPN publishes one
+    today. Without it this function was correct, measured, and permanently
+    inert for the months when a backup's job actually changes hands.
     """
     chart = depth_chart(season)
-    inj = injuries(season, week)
-    if not chart.height or not inj.height:
+    if not chart.height:
         return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
 
-    hurt = (inj.filter(pl.col("injury_status").is_in(list(GONE)))
-               .select("player_id").unique())
+    if injured is not None:
+        hurt = pl.DataFrame({"player_id": sorted(injured)}) if injured \
+            else pl.DataFrame({"player_id": []}, schema={"player_id": pl.Utf8})
+    else:
+        inj = injuries(season, week)
+        if not inj.height:
+            return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
+        hurt = (inj.filter(pl.col("injury_status").is_in(list(GONE)))
+                   .select("player_id").unique())
     if not hurt.height:
         return board.with_columns(pl.lit(1.0).alias("vacancy_mult"))
 
@@ -361,8 +374,13 @@ def vacancy(board: pl.DataFrame, season: int, week: int | None = None) -> pl.Dat
 
     lift = pl.lit(1.0)
     for pos, (d2, d3) in VACANCY_LIFT.items():
+        # RANK 3 IS WHERE THE MEASUREMENT STOPS AND SO IS THE LIFT. `>= 3` gave
+        # the WR3 multiplier to every receiver on the roster: one injury in
+        # Indianapolis promoted their sixth and tenth receivers by 22% each,
+        # which is not a finding, it is a table being read past its last row.
+        # A tenth receiver inherits nothing.
         step = (pl.when(pl.col("depth_rank") == 2).then(pl.lit(d2))
-                .when(pl.col("depth_rank") >= 3).then(pl.lit(d3))
+                .when(pl.col("depth_rank") == 3).then(pl.lit(d3))
                 .otherwise(pl.lit(1.0)))
         lift = pl.when(pl.col("position") == pos).then(step).otherwise(lift)
 

@@ -169,6 +169,7 @@ class Draft:
         # something the projection does not, and it is deliberately partial --
         # pin one man and the rest still solve around him.
         self.pinned: dict[str, str] = {}      # player_id -> slot
+        self.pinned_week: int | None = None   # set by the week solver, if any
         self.platform: str = "espn"
         self.league_id: str | None = None      # set once saved
         self.name: str = ""
@@ -303,6 +304,7 @@ def _snapshot() -> dict:
         "slot_confirmed": st.slot_confirmed,
         "draft_time": st.draft_time,
         "pinned": dict(st.pinned),
+        "pinned_week": st.pinned_week,
         "added": list(st.added),
         "dropped": list(st.dropped),
     }
@@ -910,6 +912,7 @@ def roster_unpin() -> dict:
     _require()
     with STATE.lock:
         STATE.pinned = {}
+        STATE.pinned_week = None
     _autosave()
     return {"pinned": {}}
 
@@ -973,6 +976,7 @@ def team_report() -> dict:
             st.settings),
         "draft": dr,
         "pinned": dict(STATE.pinned),
+        "pinned_week": STATE.pinned_week,
         "league": report.league_comparison(b, st.picks, st.settings,
                                           st.my_ids, st.my_slot,
                                           rosters=STATE.rosters,
@@ -999,6 +1003,11 @@ OUT_FOR_THE_WEEK = frozenset({"OUT", "INJURY_RESERVE", "SUSPENSION", "DOUBTFUL",
 
 class ApplyIn(BaseModel):
     pinned: dict[str, str] = Field(default_factory=dict)
+    # Which week this lineup was solved for. The roster panel says "set by
+    # hand" about pinned men, which is a lie about a lineup the app itself
+    # worked out -- and the difference matters, because one of them you want
+    # to keep and the other you want to clear when the week turns over.
+    week: int | None = None
 
 
 @app.post("/api/roster/apply")
@@ -1007,8 +1016,9 @@ def roster_apply(x: ApplyIn) -> dict:
     _require()
     with STATE.lock:
         STATE.pinned = dict(x.pinned)
+        STATE.pinned_week = x.week
     _autosave()
-    return {"pinned": dict(STATE.pinned)}
+    return {"pinned": dict(STATE.pinned), "pinned_week": STATE.pinned_week}
 
 
 @app.get("/api/team/suggest")
@@ -1032,8 +1042,35 @@ def team_suggest(week: int = 1) -> dict:
     if not mine.height:
         return {"empty": True, "note": "Nothing on your roster yet."}
 
-    mine = report.with_byes(mine, config.PRODUCTION_TARGET_SEASON)
     hurt = _injury_status()
+    # WHOSE JOB JUST CAME OPEN. The man behind an injured starter is not the
+    # player his season projection describes -- measured on 2025, an RB2 whose
+    # starter sits goes 6.93 -> 13.00, and a WR2 barely moves, because carries
+    # transfer whole and vacated targets scatter. That machinery was built,
+    # measured, and inert, because it asked nflverse for an injury report that
+    # does not exist until the season starts. ESPN has one today.
+    #
+    # It runs across the WHOLE LEAGUE, not just your roster: the starter who is
+    # out is usually not your player, which is the entire point.
+    out_now = {pid for pid, s in hurt.items()
+               if (s or "").upper() in OUT_FOR_THE_WEEK}
+    lifted: dict[str, float] = {}
+    try:
+        from fantasyedge.data import depth
+
+        bumped = depth.vacancy(b, config.PRODUCTION_TARGET_SEASON, week,
+                               injured=out_now)
+        if "vacancy_mult" in bumped.columns:
+            lifted = {r["player_id"]: float(r["vacancy_mult"])
+                      for r in bumped.select(["player_id", "vacancy_mult"])
+                                     .iter_rows(named=True)
+                      if float(r["vacancy_mult"] or 1.0) > 1.0}
+            if lifted:
+                mine = bumped.filter(pl.col("player_id").is_in(st.my_ids))
+    except Exception:
+        pass
+
+    mine = report.with_byes(mine, config.PRODUCTION_TARGET_SEASON)
     byes = {r["player_id"]: r.get("bye_week")
             for r in mine.iter_rows(named=True)} if "bye_week" in mine.columns else {}
 
@@ -1109,9 +1146,17 @@ def team_suggest(week: int = 1) -> dict:
         "byes": {str(w): [names.get(p) for p, bw in byes.items()
                           if bw is not None and int(bw or 0) == w]
                  for w in sorted({int(v) for v in byes.values() if v})},
-        "note": ("Byes and injury status are the week-specific facts today; "
-                 "everything else is the season projection. Weekly matchup "
-                 "numbers arrive with the first real week."),
+        # Who this week's promotions are, so a lineup change that comes from
+        # somebody else's injury says so rather than looking like a whim.
+        "promoted": [{"player_id": pid, "player_name": names.get(pid),
+                      "lift": round(mult, 2)}
+                     for pid, mult in sorted(lifted.items(), key=lambda kv: -kv[1])
+                     if pid in names],
+        "note": ("Byes, injury status and jobs opened by somebody else's "
+                 "injury are the week-specific facts today. Opponent matchup "
+                 "and week-to-week consistency are not in this yet — they "
+                 "need weekly data that does not exist until the season "
+                 "starts."),
     }
 
 
@@ -2209,6 +2254,7 @@ def load_league(league_id: str) -> dict:
         STATE.team_names = {int(k): v for k, v in (d.get("team_names") or {}).items()}
         STATE.my_team_id = d.get("my_team_id")
         STATE.pinned = dict(d.get("pinned") or {})
+        STATE.pinned_week = d.get("pinned_week")
         STATE.added = list(d.get("added") or [])
         STATE.dropped = list(d.get("dropped") or [])
         STATE.rosters = {}

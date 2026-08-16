@@ -304,6 +304,8 @@ export interface TeamReport {
                     adp: number; edge: number; verdict: string }[];
            total_edge: number; steals: number; reaches: number };
   pinned?: Record<string, string>;
+  /** Set by the week solver rather than by dragging, which reads differently. */
+  pinned_week?: number | null;
   complete?: boolean;
   league?: { slot: number; mine: boolean; starters: number;
              floor: number | null; ceiling: number | null;
@@ -337,6 +339,7 @@ export interface Suggestion2 {
              out_id: string | null; out_name: string | null;
              out_points: number; why: string }[];
   unavailable: { player_id: string; player_name: string; reason: string }[];
+  promoted: { player_id: string; player_name: string; lift: number }[];
   byes: Record<string, string[]>;
 }
 

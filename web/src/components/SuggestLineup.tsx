@@ -18,8 +18,12 @@ import { cn } from "@/lib/utils";
  * the men move to their new slots rather than blinking into them, and what
  * changed is said once underneath and then gets out of the way.
  */
-export function SuggestLineup({ onApplied }: { onApplied: () => void }) {
-  const [week, setWeek] = useState(1);
+export function SuggestLineup({ onApplied, week: initial = 1 }: {
+  onApplied: () => void;
+  /** The week the lineup is currently set for, so the picker opens there. */
+  week?: number;
+}) {
+  const [week, setWeek] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Suggestion2 | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -55,11 +59,14 @@ export function SuggestLineup({ onApplied }: { onApplied: () => void }) {
                 title="set the best lineup for this week, around byes and injuries">
           {busy ? "sorting…" : "Fix my lineup"}
         </Button>
+        {/* LOOKING IS NOT DOING. Changing the week used to apply a lineup
+            immediately, so checking what week 13 looks like silently rewrote
+            your team. It sets the week; the button sets the lineup. */}
         <select
           value={week}
-          onChange={(e) => { const w = Number(e.target.value); setWeek(w); fix(w); }}
+          onChange={(e) => setWeek(Number(e.target.value))}
           disabled={busy}
-          title="which week to solve for — byes are the reason this matters"
+          title="which week to solve for — byes and injuries are why it matters"
           className="h-7 rounded border border-line bg-ink px-1.5 text-[11px] text-muted focus:outline-none"
         >
           {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
@@ -76,6 +83,16 @@ export function SuggestLineup({ onApplied }: { onApplied: () => void }) {
             exit={{ opacity: 0, y: -4 }}
             className="text-[10.5px] leading-snug"
           >
+            {said.promoted.length > 0 && (
+              <ul className="mb-0.5 space-y-0.5">
+                {said.promoted.map((p) => (
+                  <li key={p.player_id} className="text-clock">
+                    {p.player_name} &times;{p.lift.toFixed(2)} — the man ahead
+                    of him is listed out
+                  </li>
+                ))}
+              </ul>
+            )}
             {said.changes.length === 0 ? (
               <span className="text-muted">
                 Week {said.week} was already right — nobody on bye, nobody out.
@@ -101,6 +118,10 @@ export function SuggestLineup({ onApplied }: { onApplied: () => void }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {said?.note && (
+        <p className="text-[9.5px] leading-snug text-muted/80">{said.note}</p>
+      )}
 
       {err && <p className="text-[10.5px] text-alarm">{err}</p>}
     </div>
