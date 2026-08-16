@@ -352,7 +352,7 @@ export function Trade() {
           </Button>
         </div>
       </div>
-    ) : <Waiting label="reading your league" />;
+    ) : <Waiting label="your league" />;
   }
 
   const auto = entry === "auto" && !!mine;
@@ -572,7 +572,7 @@ export function Trade() {
           verdict block, so scanning before analysing anything computed eleven
           rosters and showed nothing at all. */}
       {scanning && !scan && (
-        <Waiting label="reading every roster in the league" />
+        <Simulating label="reading every roster, then pricing the deals" />
       )}
 
       {/* THE ANSWER, ALONE AND IN THE MIDDLE. Everything used to build it is
