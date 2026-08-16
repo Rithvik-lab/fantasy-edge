@@ -276,6 +276,27 @@ def reasons(
             pro(f"{round(p['points'])}", f"{p['player_name']} moves into your "
                 f"lineup at {p['slot']}, so a bench spot starts earning.")
 
+    # --- WHY THE GAP IS SMALLER THAN THE DRAFT ORDER SUGGESTS -------------
+    # The second pick in the draft for the thirty-first reads as a fleecing and
+    # comes back as thirty-five points, which looks like a broken model until
+    # you notice what changed: nothing about scarcity. Draft position prices
+    # how hard a man is to REPLACE, and that matters when you are filling a
+    # roster. Both of these start every week in a lineup that is already full,
+    # so the only thing left is what they score.
+    best_in = max(get, key=lambda p: -(p.get("ecr") or 9e9), default=None) if get else None
+    best_out = max(give, key=lambda p: -(p.get("ecr") or 9e9), default=None) if give else None
+    if best_in and best_out and best_in.get("ecr") and best_out.get("ecr"):
+        rounds = (float(best_out["ecr"]) - float(best_in["ecr"])) / 12.0
+        pts = (float(best_in.get("projected_points") or 0)
+               - float(best_out.get("projected_points") or 0))
+        if rounds >= 1.5 and abs(pts) < 60:
+            pro(f"{round(rounds)} rounds",
+                f"{best_in['player_name']} goes {round(rounds)} rounds earlier "
+                f"than {best_out['player_name']}, and that gap is scarcity — how "
+                f"hard he is to replace on draft day. Your lineup is already "
+                f"full, so what you actually collect is the {round(pts):+d} "
+                f"points between them.")
+
     # --- the shape of the season, not just its middle ---------------------
     df, dc = verdict.get("delta_floor", 0.0), verdict.get("delta_ceiling", 0.0)
     if df >= MATERIAL:

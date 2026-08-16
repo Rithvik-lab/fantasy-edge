@@ -379,7 +379,7 @@ def _rows(board: pl.DataFrame, ids: list[str]) -> list[dict]:
         return []
     sub = board.filter(pl.col("player_id").is_in(ids))
     keep = [c for c in ("player_id", "player_name", "position", "projected_points",
-                        "vor", "season_p20", "season_p50", "season_p80",
+                        "vor", "ecr", "season_p20", "season_p50", "season_p80",
                         "expected_games") if c in sub.columns]
     return sub.select(keep).to_dicts()
 
