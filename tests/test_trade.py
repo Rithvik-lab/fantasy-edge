@@ -23,6 +23,11 @@ def team(names: list[str]) -> pl.DataFrame:
     return got
 
 
+# The verdict from the most recent `show`, so the check at the bottom can read
+# what was actually printed rather than recomputing it.
+LAST: dict = {}
+
+
 def ids(names: list[str]) -> list[str]:
     """The engine works in ids; the test is written in names."""
     return board.filter(pl.col("player_name").is_in(names))["player_id"].to_list()
@@ -30,6 +35,7 @@ def ids(names: list[str]) -> list[str]:
 
 def show(label, v):
     d = v.as_dict()
+    LAST.clear(); LAST.update(d)
     print(f"\n{'='*68}\n{label}\n{'='*68}")
     print(f"  give : {[r['player_name'] for r in d['give']]}")
     print(f"  get  : {[r['player_name'] for r in d['get']]}")
@@ -70,3 +76,13 @@ show("THREE-FOR-ONE — the other direction: depth out, stud in",
 
 show("PURE ADD — give nothing, take a bench arm (should be ~free, not huge)",
      evaluate(mine, [], ids(["Jerry Jeudy"]), S, board))
+
+
+# THE CLAIM THIS FILE EXISTS TO CHECK, enforced rather than printed. A script
+# that says "NO — check this" and exits zero is reported green by every runner
+# there is, including mine, which is how the fairness check sat broken through
+# a whole day of commits.
+if not (LAST["naive_value_delta"] < 0 < LAST["delta_median"]):
+    raise SystemExit(
+        f"the two scales agree ({LAST['naive_value_delta']:+.0f} vs "
+        f"{LAST['delta_median']:+.0f}) — this file exists to show them disagree")

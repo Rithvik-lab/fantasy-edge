@@ -104,13 +104,38 @@ print(f"On YOUR LINEUP the worst is taking {worst[0]} players "
 deltas = [d["delta_median"] for _, d in rows]
 gaps = [d["opportunity_gap"] for _, d in rows]
 print()
-print("Does taking MORE bodies get worse, as it should?",
-      "yes" if deltas == sorted(deltas, reverse=True) else "NO — check this")
+# WHAT A FULL ROSTER ACTUALLY DOES WITH EXTRA BODIES.
+#
+# The original claim here was that each additional man makes the deal WORSE, and
+# it held while `_trim_to_limit` cut from the bottom of your own roster. It cuts
+# the worst men on the COMBINED roster now, so the filler you receive is
+# usually what gets released the moment it arrives -- and the lineup delta
+# plateaus rather than declining. That is the better behaviour and the truer
+# one: a body you cannot roster is worth nothing, not less than nothing.
+#
+# So the property to hold on to is the one that was always the point: extra
+# bodies stop paying on the lineup scale while value totals keep counting them,
+# and the GAP between the two is the whole argument.
+# From the SECOND package onwards. One-for-one is a straight swap and may well
+# be a loss; the claim is about what the third and fourth man add, which is
+# nothing once the roster is full.
+plateau = all(b <= a + 1.0 for a, b in zip(deltas[1:], deltas[2:]))
+widening = gaps == sorted(gaps)
+
+print("Do extra bodies stop paying on your lineup, as they should?",
+      "yes" if plateau else "NO — check this")
 print("Does the value/lineup gap widen with each extra body?",
-      "yes" if gaps == sorted(gaps) else "NO — check this")
+      "yes" if widening else "NO — check this")
 
 for _, d in rows:
     if d["dropped"]:
         print(f"\ncuts forced at {d['roster_before']} -> {d['roster_after']}: "
               + ", ".join(p["player_name"] for p in d["dropped"]))
         break
+
+# EXIT NON-ZERO WHEN THE CLAIM FAILS. These scripts printed "NO — check this"
+# and returned success, so a runner that checks the exit code -- which is every
+# runner, including mine -- reported them green while they were saying the
+# opposite on screen.
+if not (plateau and widening):
+    raise SystemExit(1)

@@ -146,14 +146,24 @@ def _player_weeks(row: dict, n_sims: int) -> np.ndarray:
 
 
 def simulate_lineup(
-    roster: pl.DataFrame, settings: LeagueSettings, n_sims: int = N_SIMS
+    roster: pl.DataFrame, settings: LeagueSettings, n_sims: int = N_SIMS,
+    waiver: dict[str, float] | None = None,
 ) -> np.ndarray:
     """Season totals of the best lineup this roster can field, per simulation.
 
     Vectorised by position. Within a position the weekly scores are sorted
-    descending and the top `count` start; an unavailable player scores zero and
-    therefore sorts to the bottom, so he only ever occupies a slot when nobody
-    else is left -- in which case the slot is worth zero anyway, which is right.
+    descending and the top `count` start.
+
+    `waiver` is what a free agent at each position scores in a week, and it is
+    the FLOOR on every slot. Without it a week where your only tight end is hurt
+    scores zero at tight end, which nobody has ever let happen -- you add
+    somebody on Wednesday. Pricing that week at nothing made a backup worth the
+    whole slot rather than the difference between him and the wire, and the
+    scan noticed: swapping a bench back for a bench tight end came back +32
+    with not one starting slot changing hands.
+
+    Same error the roster-level fix caught, one level down -- there it was an
+    empty slot for the season, here it is an empty slot for a week.
     """
     if not roster.height:
         return np.zeros(n_sims)
@@ -167,22 +177,37 @@ def simulate_lineup(
 
     total = np.zeros((n_sims, MAX_GAMES))
     leftovers = []
+    w = waiver or {}
 
     for slot, count in settings.lineup.items():
         if slot in ("FLEX", "SUPERFLEX"):
             continue
+        floor = float(w.get(slot, 0.0))
         arr = stacked.get(slot)
         if arr is None:
+            # Nobody at all here: the slot is the wire, every week.
+            total += floor * count
             continue
-        total += arr[:, :, :count].sum(axis=-1)
+        got = arr[:, :, :count]
+        if got.shape[-1] < count:
+            total += floor * (count - got.shape[-1])
+        total += np.maximum(got, floor).sum(axis=-1)
         if slot in settings.flex_eligible and arr.shape[-1] > count:
             leftovers.append(arr[:, :, count:])
 
     flex = settings.lineup.get("FLEX", 0)
-    if flex and leftovers:
-        pool = np.concatenate(leftovers, axis=-1)
-        pool = np.sort(pool, axis=-1)[:, :, ::-1]
-        total += pool[:, :, :flex].sum(axis=-1)
+    if flex:
+        floor = max((float(w.get(p, 0.0)) for p in settings.flex_eligible),
+                    default=0.0)
+        if leftovers:
+            pool = np.concatenate(leftovers, axis=-1)
+            pool = np.sort(pool, axis=-1)[:, :, ::-1]
+            got = pool[:, :, :flex]
+            if got.shape[-1] < flex:
+                total += floor * (flex - got.shape[-1])
+            total += np.maximum(got, floor).sum(axis=-1)
+        else:
+            total += floor * flex
 
     return total.sum(axis=1)
 
@@ -311,6 +336,26 @@ def _waiver_fill(roster: pl.DataFrame, settings: LeagueSettings,
     return fills
 
 
+def _waiver_rate(pool: pl.DataFrame | None) -> dict[str, float]:
+    """Weekly points from the best free agent at each position.
+
+    The floor under every slot in every simulated week. Nobody plays a week
+    with an empty slot -- they add somebody on Wednesday -- so a backup is
+    worth the difference between himself and the wire, not the whole slot.
+    """
+    if pool is None or not pool.height:
+        return {}
+    out: dict[str, float] = {}
+    best = (pool.with_columns(
+                (pl.col("projected_points")
+                 / pl.col("expected_games").clip(1.0, None)).alias("_wk"))
+                .group_by("position").agg(pl.col("_wk").max()))
+    for r in best.iter_rows(named=True):
+        if r["position"] and r["_wk"] is not None:
+            out[r["position"]] = float(r["_wk"])
+    return out
+
+
 def _with(roster: pl.DataFrame, fills: list[dict]) -> pl.DataFrame:
     """The roster plus the men you would have to add to field a lineup."""
     if not fills:
@@ -377,9 +422,12 @@ def evaluate(
     after, dropped = _trim_to_limit(after_full, settings)
     before_fill = _waiver_fill(roster, settings, free_agents)
     after_fill = _waiver_fill(after, settings, free_agents)
+    rate = _waiver_rate(free_agents)
 
-    before_totals = simulate_lineup(_with(roster, before_fill), settings, n_sims)
-    after_totals = simulate_lineup(_with(after, after_fill), settings, n_sims)
+    before_totals = simulate_lineup(_with(roster, before_fill), settings,
+                                    n_sims, waiver=rate)
+    after_totals = simulate_lineup(_with(after, after_fill), settings,
+                                   n_sims, waiver=rate)
 
     b, a = _summary(before_totals), _summary(after_totals)
 

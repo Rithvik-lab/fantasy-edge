@@ -62,8 +62,23 @@ STANCE: dict[str, float] = {
     "fair": 12.0,
     "fleece": 3.0,
 }
-# Ours, on the honest scale. Below this it is not worth the message.
+# Ours, on the honest scale. Above this it is a win worth the message.
 OUR_MIN_GAIN = 6.0
+
+# AND HOW MUCH A DEAL MAY COST YOU AND STILL BE WORTH SEEING.
+#
+# Requiring every offer to WIN by six assumes the only reason to trade is to
+# come out ahead on points, and that is not how a season goes. A back tears an
+# ACL, a bye week takes three starters, a position empties out -- and the right
+# move is a deal that costs a couple of points on the season and fixes the
+# thing that would have cost you a game. Rejecting those outright meant the
+# scan had least to say exactly when it was most needed.
+#
+# Ten points is the width of the window, which is about half a point a week:
+# small enough that no real edge is being given away, large enough that a
+# straight swap for the position you need is not thrown out over rounding.
+# Losses are shown last and marked as losses; nothing is dressed up as a win.
+OUR_FLOOR = -10.0
 
 # WHAT MAKES THEM SAY YES IS BOTH THINGS AT ONCE.
 #
@@ -257,7 +272,9 @@ def for_team(
                     if not ({pos.get(i) for i in k} & set(ask.avoid))]
     if not give_sets or not get_sets:
         return []
-    floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)
+    # "Not enough back" raises the bar to a real win; otherwise the window
+    # runs from a small loss upwards, and the sort puts the wins first.
+    floor = OUR_MIN_GAIN * 2.0 if ask.richer else OUR_FLOOR
 
     # --- pass 1 + 2: prune on their scale, rank on ours ------------------
     scored = []
@@ -281,7 +298,13 @@ def for_team(
             if len(after_ours) > limit:
                 after_ours = sorted(after_ours, key=lambda r: -r[1])[:limit]
             cheap = _fast_lineup(after_ours, settings) - base_ours
-            if cheap <= 0:
+            # The window, not the sign. A deal that costs a little can be the
+            # right one when a position has emptied out, and this gate threw
+            # every one of them away before it could be priced -- so the scan
+            # went quiet exactly when the roster needed help. Wins still sort
+            # to the top; a loss only surfaces when a manager has nothing
+            # better, and it is labelled a loss when it does.
+            if cheap <= OUR_FLOOR:
                 continue
 
             # Their roster has to actually work afterwards, or they will see
@@ -414,7 +437,7 @@ def counter(
         if len(after) > limit:
             after = sorted(after, key=lambda r: -r[1])[:limit]
         cheap = _fast_lineup(after, settings) - base_ours
-        if cheap <= 0:
+        if cheap <= OUR_FLOOR:
             continue
         after_theirs = ([v for pid, v in their_rows.items() if pid not in k]
                         + [mine_rows[i] for i in g if i in mine_rows])
@@ -430,7 +453,9 @@ def counter(
     scored.sort(key=lambda r: -r[0])
 
     out_offers: list[Offer] = []
-    floor = OUR_MIN_GAIN * (2.0 if ask.richer else 1.0)
+    # "Not enough back" raises the bar to a real win; otherwise the window
+    # runs from a small loss upwards, and the sort puts the wins first.
+    floor = OUR_MIN_GAIN * 2.0 if ask.richer else OUR_FLOOR
     for _, their_gain, g, k, theirs_lineup in scored[:SHORTLIST]:
         if key(g, k) in seen:
             continue
