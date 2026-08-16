@@ -136,6 +136,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "The same swap run on every other roster in the league — each team handed the men you would send, then making the trade on their own roster with their own holes and the same waiver wire. The median is what the deal is worth in general. Compared against what it is worth to YOU, the gap separates a steal from a fit: a package everyone would take, landing on the one roster that cannot use it, is the mistake that costs leagues.",
   },
+  byes: {
+    title: "Weeks your men are off",
+    body:
+      "A bye is known months ahead — it is simply the week a team has no game, read off the published schedule. One or two starters sharing one is a lineup problem you solve that Sunday. Three or four sharing one is a roster problem, and the time to fix it is now, by trade, not in October off a waiver wire everyone else is also picking through.",
+  },
   waiver: {
     title: "Filled off the wire",
     body:

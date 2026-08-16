@@ -327,6 +327,19 @@ export interface TeamReport {
   weaknesses: string[];
 }
 
+export interface Suggestion2 {
+  empty?: boolean;
+  note?: string;
+  week: number;
+  pinned: Record<string, string>;
+  changes: { slot: string | null; player_id: string | null;
+             player_name: string | null; points: number;
+             out_id: string | null; out_name: string | null;
+             out_points: number; why: string }[];
+  unavailable: { player_id: string; player_name: string; reason: string }[];
+  byes: Record<string, string[]>;
+}
+
 export interface Performance {
   ready: boolean;
   week: number;
@@ -443,6 +456,11 @@ export const api = {
   teamReport: () => req<TeamReport>("/team/report"),
   performance: (scope: "mine" | "league" = "mine") =>
     req<Performance>(`/performance?scope=${scope}`),
+  teamSuggest: (week = 1) =>
+    req<Suggestion2>(`/team/suggest?week=${week}`),
+  rosterApply: (pinned: Record<string, string>) =>
+    req<{ pinned: Record<string, string> }>("/roster/apply", {
+      method: "POST", body: JSON.stringify({ pinned }) }),
   rosterSwap: (a: string, b: string) =>
     req<{ pinned: Record<string, string> }>("/roster/swap", {
       method: "POST", body: JSON.stringify({ a, b }) }),

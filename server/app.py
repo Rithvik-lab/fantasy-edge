@@ -989,6 +989,144 @@ def team_report() -> dict:
     }
 
 
+# ESPN's own injury tag, which is the ONLY injury report that exists in
+# August: nflverse publishes none until the season starts (its loader caps at
+# last season) and no preseason box scores at all, ever. ESPN's is live, it is
+# already in the roster payload, and it is what a manager is looking at.
+OUT_FOR_THE_WEEK = frozenset({"OUT", "INJURY_RESERVE", "SUSPENSION", "DOUBTFUL",
+                              "NOT_ACTIVE"})
+
+
+class ApplyIn(BaseModel):
+    pinned: dict[str, str] = Field(default_factory=dict)
+
+
+@app.post("/api/roster/apply")
+def roster_apply(x: ApplyIn) -> dict:
+    """Set the whole lineup at once, from a suggestion."""
+    _require()
+    with STATE.lock:
+        STATE.pinned = dict(x.pinned)
+    _autosave()
+    return {"pinned": dict(STATE.pinned)}
+
+
+@app.get("/api/team/suggest")
+def team_suggest(week: int = 1) -> dict:
+    """The lineup to start in a given week, and what changes from the one set.
+
+    A LINEUP IS A WEEKLY QUESTION and the solver behind My Team answers a
+    seasonal one. Most weeks the two agree; the weeks they do not are exactly
+    the weeks people lose. A man on bye scores zero, a man ESPN lists OUT
+    scores zero, and both are invisible to a season projection -- which is why
+    a roster that looks right in August starts a bye week in October.
+
+    What is week-specific TODAY is byes and injury status, and it says so
+    rather than implying a matchup model that does not exist yet. When weekly
+    projections arrive the same endpoint gets better inputs and the interface
+    does not change.
+    """
+    st = _require()
+    b = _board()
+    mine = b.filter(pl.col("player_id").is_in(st.my_ids))
+    if not mine.height:
+        return {"empty": True, "note": "Nothing on your roster yet."}
+
+    mine = report.with_byes(mine, config.PRODUCTION_TARGET_SEASON)
+    hurt = _injury_status()
+    byes = {r["player_id"]: r.get("bye_week")
+            for r in mine.iter_rows(named=True)} if "bye_week" in mine.columns else {}
+
+    out_ids = [pid for pid in mine["player_id"].to_list()
+               if (hurt.get(pid) or "").upper() in OUT_FOR_THE_WEEK
+               or (byes.get(pid) is not None and int(byes[pid] or 0) == week)]
+
+    # Solve on who can actually play. Everyone else is benched by the facts
+    # rather than by an opinion about him.
+    playable = mine.filter(~pl.col("player_id").is_in(out_ids))
+    starters, bench = optimal_lineup(playable, st.settings)
+
+    want = {r["player_id"]: (r.get("slot") or r["position"])
+            for r in starters.iter_rows(named=True)}
+    now, _ = optimal_lineup(mine, st.settings, pinned=STATE.pinned)
+    have = {r["player_id"]: (r.get("slot") or r["position"])
+            for r in now.iter_rows(named=True)}
+    names = dict(zip(mine["player_id"].to_list(), mine["player_name"].to_list()))
+    pts = dict(zip(mine["player_id"].to_list(),
+                   mine["projected_points"].fill_null(0.0).to_list()))
+
+    # PAIR BY POSITION, NOT BY SLOT. Benching a man on bye cascades -- his
+    # RB1 slot is refilled from RB2, RB2 from the flex, and the man who
+    # actually comes off the bench arrives at the bottom. Matching the two
+    # lists slot-for-slot produced "KC Concepcion in for nobody", which is
+    # true of the slot and useless about the trade-off.
+    pos = dict(zip(mine["player_id"].to_list(), mine["position"].to_list()))
+    gone = [q for q in have if q not in want]
+    come = [p for p in want if p not in have]
+
+    def reason(q: str) -> str:
+        if byes.get(q) is not None and int(byes[q] or 0) == week:
+            return "on bye this week"
+        if (hurt.get(q) or "").upper() in OUT_FOR_THE_WEEK:
+            return f"listed {(hurt.get(q) or 'out').lower().replace('_', ' ')}"
+        return "beaten on projection"
+
+    changes, used = [], set()
+    for q in sorted(gone, key=lambda x: -pts.get(x, 0.0)):
+        mate = next((p for p in come
+                     if p not in used and pos.get(p) == pos.get(q)), None)
+        if mate is None:
+            mate = next((p for p in come if p not in used), None)
+        if mate:
+            used.add(mate)
+        changes.append({
+            "slot": want.get(mate, have.get(q)),
+            "player_id": mate, "player_name": names.get(mate) if mate else None,
+            "points": round(pts.get(mate, 0.0), 1) if mate else 0.0,
+            "out_id": q, "out_name": names.get(q),
+            "out_points": round(pts.get(q, 0.0), 1),
+            "why": reason(q),
+        })
+    for p in come:
+        if p in used:
+            continue
+        changes.append({
+            "slot": want.get(p), "player_id": p, "player_name": names.get(p),
+            "points": round(pts.get(p, 0.0), 1),
+            "out_id": None, "out_name": None, "out_points": 0.0,
+            "why": "a slot nobody was filling",
+        })
+
+    return {
+        "empty": False,
+        "week": week,
+        "pinned": want,
+        "changes": sorted(changes, key=lambda c: c["slot"]),
+        "unavailable": [{"player_id": p, "player_name": names.get(p),
+                         "reason": ("bye" if byes.get(p) == week
+                                    else (hurt.get(p) or "out").lower())}
+                        for p in out_ids],
+        "byes": {str(w): [names.get(p) for p, bw in byes.items()
+                          if bw is not None and int(bw or 0) == w]
+                 for w in sorted({int(v) for v in byes.values() if v})},
+        "note": ("Byes and injury status are the week-specific facts today; "
+                 "everything else is the season projection. Weekly matchup "
+                 "numbers arrive with the first real week."),
+    }
+
+
+def _injury_status() -> dict[str, str]:
+    """player_id -> ESPN's live injury tag, for everyone in the league."""
+    try:
+        r = _espn_rosters()
+    except Exception:
+        return {}
+    if not r.height or "injury_status" not in r.columns:
+        return {}
+    return {row["player_id"]: row["injury_status"]
+            for row in r.iter_rows(named=True) if row.get("injury_status")}
+
+
 @app.get("/api/performance")
 def performance(scope: str = "mine", top: int = 12) -> dict:
     """Projected against actual, once games have been played.

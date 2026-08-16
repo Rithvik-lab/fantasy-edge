@@ -5,6 +5,7 @@ import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
 import { AddByName } from "@/components/TradeDeck";
 import { Term } from "@/components/Explain";
+import { SuggestLineup } from "@/components/SuggestLineup";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,10 +29,13 @@ function rank(slot: string | undefined, position: string): number {
   return j >= 0 ? j : ORDER.length;
 }
 
-export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, busy }: {
+export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
+                             busy }: {
   d: TeamReport;
   onSwap: (a: string, b: string) => void;
   onReset: () => void;
+  /** Re-read the roster after the lineup is set from a suggestion. */
+  onRefresh?: () => void;
   /** Type a name to put him on your team. Dragging is for rearranging what is
    *  already here; typing is how something gets here in the first place, and
    *  a roster you can only reorder is not a roster you can fix. */
@@ -156,6 +160,7 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, busy }: {
 
       {onAdd && (
         <div className="space-y-1 border-t border-line p-2">
+          <SuggestLineup onApplied={() => onRefresh?.()} />
           <AddByName placeholder="add a player by name…" restrictTo={null}
                      onAdd={(h) => onAdd(h.player_id)} />
           <p className="text-[10px] leading-snug text-muted">

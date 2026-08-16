@@ -242,7 +242,8 @@ export function MyTeam({ initial }: { initial?: TeamReport | null }) {
           here describes it. */}
       <div className="grid gap-4 lg:grid-cols-[1.05fr_0.9fr_1fr]">
         <TeamRoster d={d} onSwap={swap} onReset={reset} busy={busy}
-                    onAdd={add} onDrop={dropPlayer} />
+                    onAdd={add} onDrop={dropPlayer}
+                    onRefresh={async () => setD(await api.teamReport())} />
 
         <div className="space-y-4">
           {d.improve && d.improve.length > 0 && <Improve rows={d.improve} />}
