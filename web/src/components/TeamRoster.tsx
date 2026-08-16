@@ -145,7 +145,7 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
           </span>
         </div>
         <div className="mt-1.5">
-          <SuggestLineup onApplied={() => onRefresh?.()} week={d.pinned_week ?? 1} />
+          <SuggestLineup onApplied={() => onRefresh?.()} />
         </div>
         {Object.keys(pinned).length > 0 && (
           <button onClick={onReset} disabled={busy}

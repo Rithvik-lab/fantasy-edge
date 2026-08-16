@@ -461,8 +461,9 @@ export const api = {
   teamReport: () => req<TeamReport>("/team/report"),
   performance: (scope: "mine" | "league" = "mine") =>
     req<Performance>(`/performance?scope=${scope}`),
-  teamSuggest: (week = 1) =>
-    req<Suggestion2>(`/team/suggest?week=${week}`),
+  // No week argument: there is one week whose lineup you can still set and
+  // the engine knows which it is.
+  teamSuggest: () => req<Suggestion2>("/team/suggest"),
   rosterApply: (pinned: Record<string, string>) =>
     req<{ pinned: Record<string, string> }>("/roster/apply", {
       method: "POST", body: JSON.stringify({ pinned }) }),

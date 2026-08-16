@@ -18,12 +18,7 @@ import { cn } from "@/lib/utils";
  * the men move to their new slots rather than blinking into them, and what
  * changed is said once underneath and then gets out of the way.
  */
-export function SuggestLineup({ onApplied, week: initial = 1 }: {
-  onApplied: () => void;
-  /** The week the lineup is currently set for, so the picker opens there. */
-  week?: number;
-}) {
-  const [week, setWeek] = useState(initial);
+export function SuggestLineup({ onApplied }: { onApplied: () => void }) {
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Suggestion2 | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -36,10 +31,10 @@ export function SuggestLineup({ onApplied, week: initial = 1 }: {
     return () => clearTimeout(t);
   }, [said]);
 
-  async function fix(w: number) {
+  async function fix() {
     setBusy(true);
     try {
-      const s = await api.teamSuggest(w);
+      const s = await api.teamSuggest();
       if (!s.empty) {
         await api.rosterApply(s.pinned);
         onApplied();
@@ -55,24 +50,13 @@ export function SuggestLineup({ onApplied, week: initial = 1 }: {
     <div className="space-y-1.5">
       <div className="flex items-center gap-1.5">
         <Button size="sm" className="h-7 px-3 text-[11.5px]"
-                onClick={() => fix(week)} disabled={busy}
-                title="set the best lineup for this week, around byes and injuries">
+                onClick={fix} disabled={busy}
+                title="set the best lineup for the next week nobody has played">
           {busy ? "sorting…" : "Fix my lineup"}
         </Button>
-        {/* LOOKING IS NOT DOING. Changing the week used to apply a lineup
-            immediately, so checking what week 13 looks like silently rewrote
-            your team. It sets the week; the button sets the lineup. */}
-        <select
-          value={week}
-          onChange={(e) => setWeek(Number(e.target.value))}
-          disabled={busy}
-          title="which week to solve for — byes and injuries are why it matters"
-          className="h-7 rounded border border-line bg-ink px-1.5 text-[11px] text-muted focus:outline-none"
-        >
-          {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-            <option key={w} value={w} className="bg-panel">week {w}</option>
-          ))}
-        </select>
+        {said && (
+          <span className="num text-[10px] text-muted">week {said.week}</span>
+        )}
       </div>
 
       <AnimatePresence>

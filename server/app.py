@@ -1022,7 +1022,7 @@ def roster_apply(x: ApplyIn) -> dict:
 
 
 @app.get("/api/team/suggest")
-def team_suggest(week: int = 1) -> dict:
+def team_suggest(week: int | None = None) -> dict:
     """The lineup to start in a given week, and what changes from the one set.
 
     A LINEUP IS A WEEKLY QUESTION and the solver behind My Team answers a
@@ -1039,13 +1039,21 @@ def team_suggest(week: int = 1) -> dict:
     st = _require()
     b = _board()
 
+    # THE WEEK IS DERIVED, NOT CHOSEN. There is exactly one week whose lineup
+    # you can still set -- the next one nobody has played -- so asking which
+    # one was a control with a single right answer. Before kickoff that is week
+    # one; after it, the week following the last set of results.
+    stamp0 = refresh.read_stamp()
+    if week is None:
+        week = min((stamp0.week or 0) + 1, 18) if stamp0.got_stats else 1
+
     # FORM, ONCE THERE IS ANY -- and consistent form, not one loud Sunday.
     # `inseason.reprice` blends the pre-season number with what the season has
     # shown, weighted by EFFECTIVE games: three steady weeks are worth nearly
     # three, three wild ones worth about one and a half. So a man who has been
     # quietly good climbs into the lineup and a man who had one thirty-point
     # afternoon does not.
-    stamp = refresh.read_stamp()
+    stamp = stamp0
     form: pl.DataFrame | None = None
     if stamp.got_stats:
         obs = refresh.observed()
