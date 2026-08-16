@@ -68,7 +68,21 @@ export function Trade() {
   const [theirManual, setTheirManual] = useState<string[]>([]);
   const { launch, layer, landingIn } = useFlight();
 
-  useEffect(() => {
+  /**
+   * Read the league's rosters, or say why not.
+   *
+   * A FAILED FETCH IS NOT A FACT ABOUT THE LEAGUE. Any error at all used to
+   * drop straight into Manual -- which has no Scan button, no opponents and no
+   * league read -- so a restarted engine or one flaky call presented itself as
+   * "you do not have a synced league" and the whole automatic half of trade
+   * mode simply vanished with no explanation and nothing to click.
+   *
+   * Manual is the answer to ONE error, the one that says there is no ESPN
+   * league attached. Everything else is a failure, and a failure gets said out
+   * loud with a way to try again.
+   */
+  const readRosters = useCallback(() => {
+    setErr(null);
     api.rosters()
       .then((r) => {
         setRosters(r.teams);
@@ -76,8 +90,20 @@ export function Trade() {
         const first = r.teams.find((t) => !t.mine);
         if (first) setThem(first.team_id);
       })
-      .catch(() => { setRosters([]); setEntry("manual"); });
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/no ESPN league/i.test(msg)) {
+          setRosters([]);
+          setEntry("manual");
+          return;
+        }
+        setRosters([]);
+        setEntry(null);
+        setErr(msg);
+      });
   }, []);
+
+  useEffect(() => { readRosters(); }, [readRosters]);
 
   // EVERY HOOK BEFORE THE FIRST RETURN. This one sat below `if (!entry)
   // return`, so the first render (still fetching rosters) ran one effect and
@@ -308,7 +334,26 @@ export function Trade() {
     add(side, h.player_id);
   }
 
-  if (!entry) return <Waiting label="reading your league" />;
+  if (!entry) {
+    return err ? (
+      <div className="rounded-lg border border-alarm/30 bg-alarm/[0.06] p-4">
+        <p className="text-[12px] text-alarm">{err}</p>
+        <p className="mt-1 text-[11px] leading-snug text-muted">
+          Automatic mode needs your league's rosters. Until they load there is
+          nobody to trade with — you can still price a deal by hand.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" className="h-7 text-[11px]" onClick={readRosters}>
+            Try again
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                  onClick={() => { setRosters([]); setEntry("manual"); }}>
+            Enter it by hand
+          </Button>
+        </div>
+      </div>
+    ) : <Waiting label="reading your league" />;
+  }
 
   const auto = entry === "auto" && !!mine;
   const myIds = auto ? new Set(mine!.players.map((p) => p.player_id)) : null;
