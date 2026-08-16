@@ -79,6 +79,18 @@ export function Trade() {
       .catch(() => { setRosters([]); setEntry("manual"); });
   }, []);
 
+  // EVERY HOOK BEFORE THE FIRST RETURN. This one sat below `if (!entry)
+  // return`, so the first render (still fetching rosters) ran one effect and
+  // the second ran two -- React counts them, and the mismatch takes the whole
+  // tree down. Trade mode showed its loading line and then went black.
+  //
+  // AN OLD ANSWER MUST NOT SURVIVE A CHANGE TO THE QUESTION: take a man out of
+  // a pile, put another in, and the verdict on screen belongs to a deal that
+  // is no longer on the board. It is cleared the moment the two stop matching.
+  useEffect(() => {
+    if (v && dealKey(give, get) !== priced) { setV(null); setView("build"); }
+  }, [give, get, priced, v]);
+
   const mine = rosters?.find((t) => t.mine) ?? null;
   const other = rosters?.find((t) => t.team_id === them) ?? null;
 
@@ -312,16 +324,6 @@ export function Trade() {
   // have picked a manager. Open a team and the board comes back.
   const browsing = !!scan && focus == null;
 
-  // AN OLD ANSWER MUST NOT SURVIVE A CHANGE TO THE QUESTION. Take a man out of
-  // a pile, put another in, press Re-analyse and the screen still showed the
-  // previous verdict -- which reads as "it analysed the old trade", and was
-  // exactly that whenever the new deal failed to price at all (ten men on live
-  // rosters in this league sit outside the projection board, and adding one
-  // returns an error while the stale ruling sat there looking authoritative).
-  // The verdict is cleared the moment the board stops matching it.
-  useEffect(() => {
-    if (v && dealKey(give, get) !== priced) { setV(null); setView("build"); }
-  }, [give, get, priced, v]);
 
   /**
    * The same deal, evened out.
