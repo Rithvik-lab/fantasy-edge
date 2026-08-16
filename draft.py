@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import polars as pl  # noqa: E402
 
-from fantasyedge.data import espn, market, yahoo  # noqa: E402
+from fantasyedge.data import depth, espn, market, yahoo  # noqa: E402
 from fantasyedge.draft.engine import DraftState, add_vor, recommend  # noqa: E402
 from fantasyedge.draft.session import Session, grade_roster  # noqa: E402
 from fantasyedge import config  # noqa: E402
@@ -145,6 +145,29 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
                 "season_p80", "expected_games"]
         kd = kd.select([c for c in keep if c in kd.columns])
         b = pl.concat([b, kd], how="diagonal")
+
+    # WHOSE JOB IT ACTUALLY IS, applied last and before value is computed.
+    #
+    # The market prices a man on what he did and what he cost; the depth chart
+    # says whether he has the job now. Where the two AGREE nothing happens --
+    # everybody knows a WR2 is a WR2 and his ADP has said so since July. Where
+    # they disagree, the chart wins and only ever downwards, because being
+    # listed first in a committee is not evidence of anything.
+    #
+    # This module was written, measured and left disconnected, and the cost of
+    # that showed up as trade advice: Rachaad White is Washington's second back
+    # on the chart and was priced as their first, so the engine kept proposing
+    # deals that ended with him starting. A committee back valued as a starter
+    # is the single most expensive error a projection can make, because it is
+    # the one you act on.
+    #
+    # Before `add_vor` on purpose: replacement level should be computed from
+    # what men are actually worth, not from what they were worth in July.
+    try:
+        b = depth.apply(b, config.PRODUCTION_TARGET_SEASON)
+    except Exception:
+        pass                # a chart we cannot read is not a reason to stop
+
     _BOARD = add_vor(b, settings)
     return _BOARD
 

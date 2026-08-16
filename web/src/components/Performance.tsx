@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { api, type Performance as Perf } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { Term } from "@/components/Explain";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,15 +23,20 @@ import { cn } from "@/lib/utils";
  */
 export function Performance() {
   const [scope, setScope] = useState<"mine" | "league">("mine");
+  // Which opponent is open. The league view is TWELVE TEAMS, not the top
+  // twelve players in it — "whose men are beating their price" is a question
+  // about a roster, and a leaderboard hides whose.
+  const [team, setTeam] = useState<{ id: number; name: string } | null>(null);
   const [d, setD] = useState<Perf | null>(null);
 
   useEffect(() => {
     let alive = true;
     setD(null);
-    api.performance(scope).then((r) => { if (alive) setD(r); })
+    api.performance(scope, scope === "league" ? team?.id : null)
+       .then((r) => { if (alive) setD(r); })
        .catch(() => { if (alive) setD(null); });
     return () => { alive = false; };
-  }, [scope]);
+  }, [scope, team]);
 
   const max = Math.max(...(d?.rows ?? []).map((r) => Math.abs(r.delta)), 3);
   const expMax = Math.max(...(d?.rows ?? []).map((r) => r.expected_ppg ?? 0), 1);
@@ -54,11 +60,17 @@ export function Performance() {
         {d && !d.ready && (
           <span className="text-[10px] text-muted">what is expected</span>
         )}
+        {team && (
+          <button onClick={() => setTeam(null)}
+                  className="text-[10.5px] text-muted hover:text-chalk">
+            &larr; {team.name}
+          </button>
+        )}
         <div className="ml-auto flex rounded border border-line p-0.5">
           {(["mine", "league"] as const).map((s) => (
             <button
               key={s}
-              onClick={() => setScope(s)}
+              onClick={() => { setScope(s); setTeam(null); }}
               className={cn("rounded px-2 py-0.5 text-[10.5px] transition-colors",
                 scope === s ? "bg-raised font-medium text-chalk"
                             : "text-muted hover:text-chalk")}
@@ -69,7 +81,51 @@ export function Performance() {
         </div>
       </header>
 
-      {d && !d.ready && d.rows.length > 0 ? (
+      {d && (d.teams?.length ?? 0) > 0 ? (
+        <ul>
+          {d.teams!.map((t) => {
+            const w = t.expected_ppg / Math.max(
+              ...d.teams!.map((x) => x.expected_ppg), 1) * 100;
+            return (
+              <li key={t.team_id}>
+                <button
+                  onClick={() => setTeam({ id: t.team_id, name: t.name })}
+                  className={cn(
+                    "flex w-full items-center gap-2 border-b border-line/40 px-3 py-1.5 text-left transition-colors last:border-0 hover:bg-raised/60",
+                    t.mine && "bg-turf/[0.06]")}
+                >
+                  <span className="min-w-0 flex-1 truncate text-[11.5px]">
+                    {t.name}
+                  </span>
+                  <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-line/40">
+                    <motion.div className={cn("h-full rounded-full",
+                      t.mine ? "bg-turf/60" : "bg-chalk/25")}
+                      initial={{ width: 0 }} animate={{ width: `${w}%` }}
+                      transition={{ type: "spring", stiffness: 200, damping: 28 }} />
+                  </div>
+                  {t.ppg != null && (
+                    <span className={cn("num w-10 shrink-0 text-right text-[10.5px] font-semibold",
+                      t.delta >= 0 ? "text-turf" : "text-alarm")}>
+                      {t.delta > 0 ? "+" : ""}{t.delta.toFixed(1)}
+                    </span>
+                  )}
+                  <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70">
+                    {(t.ppg ?? t.expected_ppg).toFixed(1)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          <li className="border-t border-line px-3 py-1.5">
+            <Term k="team_ppg">
+              <span className="text-[10px] text-muted">
+                points a week from each team's best lineup — click one for its
+                players
+              </span>
+            </Term>
+          </li>
+        </ul>
+      ) : d && !d.ready && d.rows.length > 0 ? (
         /* THE HALF THAT EXISTS IN AUGUST. Same list, same order, same rows
            that gain an actual in week one — so the panel shows what it is
            about to measure against instead of one sentence adrift in an empty
@@ -105,9 +161,11 @@ export function Performance() {
                                 transition={{ type: "spring", stiffness: 200,
                                               damping: 28 }} />
                   </div>
-                  <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70">
-                    {(r.expected_ppg ?? 0).toFixed(1)}
-                  </span>
+                  <Term k="expected_ppg">
+                    <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70">
+                      {(r.expected_ppg ?? 0).toFixed(1)}
+                    </span>
+                  </Term>
                 </li>
               );
             })}
@@ -174,13 +232,17 @@ export function Performance() {
                       style={good ? { left: "50%", width: `${w}%` }
                                   : { right: "50%", width: `${w}%` }} />
                   </div>
-                  <span className="num w-16 shrink-0 text-right text-[10px] text-muted">
-                    {(r.expected_ppg ?? 0).toFixed(1)}&rarr;{(r.ppg ?? 0).toFixed(1)}
-                  </span>
-                  <span className={cn("num w-10 shrink-0 text-right text-[10.5px] font-semibold",
-                    good ? "text-turf" : "text-alarm")}>
-                    {good ? "+" : ""}{r.delta.toFixed(1)}
-                  </span>
+                  <Term k="expected_ppg">
+                    <span className="num w-16 shrink-0 text-right text-[10px] text-muted">
+                      {(r.expected_ppg ?? 0).toFixed(1)}&rarr;{(r.ppg ?? 0).toFixed(1)}
+                    </span>
+                  </Term>
+                  <Term k="actual_delta">
+                    <span className={cn("num w-10 shrink-0 text-right text-[10.5px] font-semibold",
+                      good ? "text-turf" : "text-alarm")}>
+                      {good ? "+" : ""}{r.delta.toFixed(1)}
+                    </span>
+                  </Term>
                 </li>
               );
             })}

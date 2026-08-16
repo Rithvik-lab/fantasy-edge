@@ -1215,7 +1215,67 @@ def _injury_status() -> dict[str, str]:
             for row in r.iter_rows(named=True) if row.get("injury_status")}
 
 
-def _expected_rows(scope: str, top: int) -> list[dict]:
+def _team_rows(scope: str, team_id: int | None) -> pl.DataFrame | None:
+    """Which players this view is about: mine, one team's, or everybody's.
+
+    A LEAGUE VIEW OF TWELVE TEAMS IS TWELVE TEAMS, not the top twelve players
+    in it. The first version listed the best scorers league-wide, which reads
+    as a leaderboard and answers a question nobody asked -- you look at this to
+    see whose men are beating their price, and "whose" needs a team.
+    """
+    b = _board()
+    if scope == "mine":
+        return b.filter(pl.col("player_id").is_in(STATE.my_ids))
+    if team_id is not None:
+        ids = (STATE.rosters or {}).get(int(team_id), [])
+        return b.filter(pl.col("player_id").is_in(ids)) if ids else b.head(0)
+    return None
+
+
+def _league_teams(obs: pl.DataFrame | None) -> list[dict]:
+    """Every team, with what its men were expected to do and what they did.
+
+    Summed over the STARTING lineup rather than the whole roster: a bench full
+    of disappointments is not what lost you a week, and a team is judged on
+    what it puts on the field.
+    """
+    if not STATE.rosters:
+        return []
+    b = _board()
+    st = STATE
+    out = []
+    for tid, ids in STATE.rosters.items():
+        roster = b.filter(pl.col("player_id").is_in(ids))
+        if not roster.height or st.settings is None:
+            continue
+        starters, _ = optimal_lineup(roster, st.settings)
+        if not starters.height:
+            continue
+        exp = float((starters["projected_points"]
+                     / starters["expected_games"].clip(1.0, None)).sum())
+        row = {
+            "team_id": int(tid),
+            "name": STATE.team_names.get(int(tid), f"Team {tid}"),
+            "mine": int(tid) == STATE.my_team_id,
+            "players": roster.height,
+            "expected_ppg": round(exp, 1),
+            "ppg": None,
+            "delta": 0.0,
+        }
+        if obs is not None and obs.height:
+            j = starters.join(obs, on="player_id", how="inner")
+            if j.height:
+                got = float(j["ppg"].fill_null(0.0).sum())
+                row["ppg"] = round(got, 1)
+                row["delta"] = round(got - float(
+                    (j["projected_points"] / j["expected_games"].clip(1.0, None)
+                     ).sum()), 1)
+        out.append(row)
+    return sorted(out, key=lambda r: -(r["ppg"] if r["ppg"] is not None
+                                       else r["expected_ppg"]))
+
+
+def _expected_rows(scope: str, top: int, team_id: int | None = None) -> list[dict]:
     """What the projection expects per game, before anybody has played.
 
     The pre-season half of the performance panel. Same shape as the real rows
@@ -1225,8 +1285,9 @@ def _expected_rows(scope: str, top: int) -> list[dict]:
     """
     st = STATE
     b = _board()
-    pool = (b.filter(pl.col("player_id").is_in(st.my_ids)) if scope == "mine"
-            else b)
+    pool = _team_rows(scope, team_id)
+    if pool is None:
+        pool = b
     if not pool.height:
         return []
     shots = _headshots(b)
@@ -1250,7 +1311,8 @@ def _expected_rows(scope: str, top: int) -> list[dict]:
 
 
 @app.get("/api/performance")
-def performance(scope: str = "mine", top: int = 12) -> dict:
+def performance(scope: str = "mine", top: int = 12,
+                team_id: int | None = None) -> dict:
     """Projected against actual, once games have been played.
 
     Two scopes and they answer different questions. `mine` is whether MY men
@@ -1275,7 +1337,11 @@ def performance(scope: str = "mine", top: int = 12) -> dict:
                 "note": "No games have been played yet. This fills in from "
                         "week one.",
                 "expected": True,
-                "rows": _expected_rows(scope, top)}
+                "teams": (_league_teams(None)
+                          if scope == "league" and team_id is None else []),
+                "team_id": team_id,
+                "rows": ([] if scope == "league" and team_id is None
+                         else _expected_rows(scope, top, team_id))}
 
     obs = refresh.observed()
     if not obs.height:
@@ -1301,10 +1367,16 @@ def performance(scope: str = "mine", top: int = 12) -> dict:
     if scope == "mine":
         j = j.filter(pl.col("player_id").is_in(st.my_ids))
         j = j.sort("delta", descending=True)
+    elif team_id is not None:
+        ids = (STATE.rosters or {}).get(int(team_id), [])
+        j = j.filter(pl.col("player_id").is_in(ids)).sort("delta", descending=True)
     else:
-        # League-wide: only men with enough games for the number to mean
-        # something, ranked by how far past their price they are running.
-        j = j.filter(pl.col("games") >= 3).sort("delta", descending=True).head(top)
+        # THE LEAGUE IS TWELVE TEAMS. Drilling into one of them lists its men;
+        # the top level lists the teams, because "who is beating their price"
+        # is a question about somebody's roster and a leaderboard hides whose.
+        return {"ready": True, "week": stamp.week or 0, "scope": scope,
+                "teams": _league_teams(obs), "team_id": None,
+                "rows": [], "note": ""}
 
     shots = _headshots(b)
     keep = [c for c in ("player_id", "player_name", "position", "ecr",
@@ -1315,7 +1387,7 @@ def performance(scope: str = "mine", top: int = 12) -> dict:
         r["headshot"] = shots.get(r["player_id"])
         r["mine"] = r["player_id"] in set(st.my_ids)
     return {"ready": True, "week": stamp.week or 0, "scope": scope,
-            "rows": rows, "note": ""}
+            "team_id": team_id, "teams": [], "rows": rows, "note": ""}
 
 
 # ---------------------------------------------------------------------------

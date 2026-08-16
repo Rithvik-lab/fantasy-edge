@@ -347,6 +347,10 @@ export interface Performance {
   ready: boolean;
   /** Pre-season: the rows carry the expectation only, with no actual yet. */
   expected?: boolean;
+  /** League scope with no team open: every team, best first. */
+  teams?: { team_id: number; name: string; mine: boolean; players: number;
+            expected_ppg: number; ppg: number | null; delta: number }[];
+  team_id?: number | null;
   week: number;
   scope?: string;
   kickoff?: string;
@@ -459,8 +463,9 @@ export const api = {
   rosters: () => req<{ teams: LeagueRoster[]; as_of: number }>("/rosters"),
   season: () => req<SeasonStatus>("/season"),
   teamReport: () => req<TeamReport>("/team/report"),
-  performance: (scope: "mine" | "league" = "mine") =>
-    req<Performance>(`/performance?scope=${scope}`),
+  performance: (scope: "mine" | "league" = "mine", teamId?: number | null) =>
+    req<Performance>(`/performance?scope=${scope}`
+      + (teamId != null ? `&team_id=${teamId}` : "")),
   // No week argument: there is one week whose lineup you can still set and
   // the engine knows which it is.
   teamSuggest: () => req<Suggestion2>("/team/suggest"),

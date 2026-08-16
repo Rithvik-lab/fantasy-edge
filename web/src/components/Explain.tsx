@@ -136,6 +136,21 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "The same swap run on every other roster in the league — each team handed the men you would send, then making the trade on their own roster with their own holes and the same waiver wire. The median is what the deal is worth in general. Compared against what it is worth to YOU, the gap separates a steal from a fit: a package everyone would take, landing on the one roster that cannot use it, is the mistake that costs leagues.",
   },
+  expected_ppg: {
+    title: "Points per game the projection expects",
+    body:
+      "His season projection divided by the games it expects him to play. PER GAME on purpose: a man who misses three weeks is judged on the football he played rather than punished twice for the injury — availability is priced separately, in the season band. This is the line his actual scoring gets measured against.",
+  },
+  actual_delta: {
+    title: "Ahead of, or behind, his price",
+    body:
+      "Points per game above or below what the pre-season number implied. Positive is a man outscoring what he cost — a sell-high if the room has noticed and a keeper if it has not. Negative is the reverse. Three games is the minimum before it is shown league-wide, because two good Sundays is not evidence of anything.",
+  },
+  team_ppg: {
+    title: "What this team's starters expect",
+    body:
+      "Summed across the best legal lineup that roster can field, per game. The bench is left out on purpose: a bench full of disappointments is not what loses a week, and a team is judged on what it puts on the field.",
+  },
   byes: {
     title: "Weeks your men are off",
     body:
