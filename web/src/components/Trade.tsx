@@ -9,7 +9,7 @@ import { TradeVerdict } from "@/components/TradeVerdict";
 import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
 import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
 import { TradeScan, TeamSummary } from "@/components/TradeScan";
-import { Simulating } from "@/components/Simulating";
+import { Simulating, Waiting } from "@/components/Simulating";
 import { useFlight } from "@/components/Flight";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -296,7 +296,7 @@ export function Trade() {
     add(side, h.player_id);
   }
 
-  if (!entry) return <Simulating label="reading your league" />;
+  if (!entry) return <Waiting label="reading your league" />;
 
   const auto = entry === "auto" && !!mine;
   const myIds = auto ? new Set(mine!.players.map((p) => p.player_id)) : null;
@@ -525,7 +525,7 @@ export function Trade() {
           verdict block, so scanning before analysing anything computed eleven
           rosters and showed nothing at all. */}
       {scanning && !scan && (
-        <Simulating label="reading every roster in the league" />
+        <Waiting label="reading every roster in the league" />
       )}
 
       {/* THE ANSWER, ALONE AND IN THE MIDDLE. Everything used to build it is

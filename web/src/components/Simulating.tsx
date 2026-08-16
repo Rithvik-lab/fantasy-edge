@@ -74,6 +74,28 @@ function Weeks() {
   );
 }
 
+/**
+ * The quiet version, for a wait that is not a simulation.
+ *
+ * The full show below claims four thousand seasons are being played, which is
+ * true of a trade verdict and false of reading a roster off ESPN. Running it
+ * for every wait made trade mode open with a racing counter and a sweeping
+ * histogram to fetch twelve rosters — busy, and a lie about what the machine
+ * was doing.
+ */
+export function Waiting({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2.5">
+      <span className="relative flex h-1.5 w-1.5 shrink-0">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-turf opacity-60" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-turf" />
+      </span>
+      <span className="text-[11.5px] text-muted">{label}…</span>
+    </div>
+  );
+}
+
+
 export function Simulating({ label }: { label?: string }) {
   const [phase, setPhase] = useState(0);
   const [seasons, setSeasons] = useState(0);
