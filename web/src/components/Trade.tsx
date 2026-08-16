@@ -596,13 +596,23 @@ export function Trade() {
                 </Button>
               </>
             )}
-            <span className="ml-auto truncate text-[11px] text-muted">
-              {give.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
-                || "nothing"}
-              {" → "}
-              {get.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
-                || "nothing"}
-            </span>
+            {/* A FAILURE BELONGS BESIDE THE BUTTON THAT CAUSED IT. This
+                view carried its errors at the foot of a long verdict card,
+                so pressing Make this trade fair while it was returning a 500
+                looked like pressing a dead button. */}
+            {err && !scanning ? (
+              <span className="ml-auto max-w-[26rem] truncate text-right text-[11px] text-alarm">
+                {err}
+              </span>
+            ) : (
+              <span className="ml-auto truncate text-[11px] text-muted">
+                {give.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
+                  || "nothing"}
+                {" → "}
+                {get.map((id) => known.get(id)?.player_name).filter(Boolean).join(", ")
+                  || "nothing"}
+              </span>
+            )}
           </div>
           {balancePanel}
           {countersPanel}
