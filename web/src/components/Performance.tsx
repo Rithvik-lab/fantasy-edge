@@ -33,6 +33,12 @@ export function Performance() {
   }, [scope]);
 
   const max = Math.max(...(d?.rows ?? []).map((r) => Math.abs(r.delta)), 3);
+  const expMax = Math.max(...(d?.rows ?? []).map((r) => r.expected_ppg ?? 0), 1);
+  // Days to kickoff, from the date the season pull already knows.
+  const days = d?.kickoff
+    ? Math.max(0, Math.ceil((new Date(d.kickoff + "T13:00:00Z").getTime()
+                             - Date.now()) / 86400000))
+    : null;
 
   return (
     <section className="rounded-lg border border-line bg-panel">
@@ -45,6 +51,9 @@ export function Performance() {
           d?.ready ? "bg-raised text-chalk" : "bg-raised text-muted")}>
           {d?.ready && d.week ? `week ${d.week}` : "pre-season"}
         </span>
+        {d && !d.ready && (
+          <span className="text-[10px] text-muted">what is expected</span>
+        )}
         <div className="ml-auto flex rounded border border-line p-0.5">
           {(["mine", "league"] as const).map((s) => (
             <button
@@ -60,7 +69,57 @@ export function Performance() {
         </div>
       </header>
 
-      {d && !d.ready ? (
+      {d && !d.ready && d.rows.length > 0 ? (
+        /* THE HALF THAT EXISTS IN AUGUST. Same list, same order, same rows
+           that gain an actual in week one — so the panel shows what it is
+           about to measure against instead of one sentence adrift in an empty
+           box. Every number here is the projection the board already carries;
+           nothing is invented to fill the space. */
+        <>
+          <ul>
+            {d.rows.map((r) => {
+              const w = (r.expected_ppg ?? 0) / expMax * 100;
+              return (
+                <li key={r.player_id}
+                    className={cn("flex items-center gap-2 border-b border-line/40 px-3 py-1.5 last:border-0",
+                      r.mine && scope === "league" && "bg-turf/[0.06]")}>
+                  {r.headshot ? (
+                    <PlayerHover playerId={r.player_id} className="shrink-0">
+                      <img src={r.headshot} alt="" loading="lazy"
+                           className="h-6 w-6 shrink-0 cursor-help rounded object-cover object-top" />
+                    </PlayerHover>
+                  ) : <span className="h-6 w-6 shrink-0 rounded bg-raised" />}
+                  <PlayerHover playerId={r.player_id} className="w-[104px] min-w-0 shrink-0">
+                    <span className="block cursor-help truncate text-[11.5px]">
+                      {r.player_name}
+                    </span>
+                  </PlayerHover>
+                  <span className="w-5 shrink-0 text-[9.5px] font-bold"
+                        style={{ color: POS_HUE[r.position] ?? "#8CA096" }}>
+                    {r.position}
+                  </span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line/40">
+                    <motion.div className="h-full rounded-full bg-chalk/25"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${w}%` }}
+                                transition={{ type: "spring", stiffness: 200,
+                                              damping: 28 }} />
+                  </div>
+                  <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70">
+                    {(r.expected_ppg ?? 0).toFixed(1)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="border-t border-line px-3 py-1.5 text-[10px] leading-snug text-muted">
+            Points per game the projection expects, which is the line the real
+            thing gets measured against.{" "}
+            {d.kickoff && <>Week one is {d.kickoff}
+              {days != null && <> — {days} day{days === 1 ? "" : "s"}</>}.</>}
+          </p>
+        </>
+      ) : d && !d.ready ? (
         <div className="px-3 py-6 text-center">
           <p className="text-[11.5px] text-muted">{d.note}</p>
           {d.kickoff && (

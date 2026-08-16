@@ -1172,6 +1172,40 @@ def _injury_status() -> dict[str, str]:
             for row in r.iter_rows(named=True) if row.get("injury_status")}
 
 
+def _expected_rows(scope: str, top: int) -> list[dict]:
+    """What the projection expects per game, before anybody has played.
+
+    The pre-season half of the performance panel. Same shape as the real rows
+    so the interface does not need a second layout, with `ppg` and `delta`
+    absent rather than zeroed -- a zero would be a measurement and there has
+    not been one.
+    """
+    st = STATE
+    b = _board()
+    pool = (b.filter(pl.col("player_id").is_in(st.my_ids)) if scope == "mine"
+            else b)
+    if not pool.height:
+        return []
+    shots = _headshots(b)
+    mine = set(st.my_ids)
+    rows = (pool.with_columns(
+                (pl.col("projected_points")
+                 / pl.col("expected_games").clip(1.0, None)).alias("exp_ppg"))
+                .sort("exp_ppg", descending=True, nulls_last=True)
+                .head(top))
+    return [{
+        "player_id": r["player_id"],
+        "player_name": r["player_name"],
+        "position": r["position"],
+        "expected_ppg": round(float(r["exp_ppg"] or 0.0), 1),
+        "ppg": None,
+        "delta": 0.0,
+        "games": None,
+        "headshot": shots.get(r["player_id"]),
+        "mine": r["player_id"] in mine,
+    } for r in rows.iter_rows(named=True)]
+
+
 @app.get("/api/performance")
 def performance(scope: str = "mine", top: int = 12) -> dict:
     """Projected against actual, once games have been played.
@@ -1187,11 +1221,18 @@ def performance(scope: str = "mine", top: int = 12) -> dict:
     st = _require()
     stamp = refresh.read_stamp()
     if not stamp.got_stats:
+        # THE HALF OF THIS PANEL THAT EXISTS IN AUGUST is the expectation. It
+        # is the same list, the same order and the same rows that gain an
+        # actual in week one -- so the panel shows what it is going to measure
+        # against instead of a sentence in the middle of an empty box. Nothing
+        # here is invented: every number is the projection the board already
+        # carries, divided by the games it already expects.
         return {"ready": False, "week": 0,
                 "kickoff": refresh.kickoff(config.PRODUCTION_TARGET_SEASON),
                 "note": "No games have been played yet. This fills in from "
                         "week one.",
-                "rows": []}
+                "expected": True,
+                "rows": _expected_rows(scope, top)}
 
     obs = refresh.observed()
     if not obs.height:

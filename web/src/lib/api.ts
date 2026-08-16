@@ -345,6 +345,8 @@ export interface Suggestion2 {
 
 export interface Performance {
   ready: boolean;
+  /** Pre-season: the rows carry the expectation only, with no actual yet. */
+  expected?: boolean;
   week: number;
   scope?: string;
   kickoff?: string;
