@@ -306,6 +306,11 @@ export function Trade() {
   // The board has been edited since the verdict on screen was computed.
   const dirty = !empty && dealKey(give, get) !== priced;
   const reading = view === "verdict" && (busy || !!v);
+  // THE LEAGUE GRID IS A PAGE OF ITS OWN. Leaving the board underneath it put
+  // two different questions on one screen -- who should I call, and what do I
+  // send this particular manager -- and the second one has no answer until you
+  // have picked a manager. Open a team and the board comes back.
+  const browsing = !!scan && focus == null;
 
   // AN OLD ANSWER MUST NOT SURVIVE A CHANGE TO THE QUESTION. Take a man out of
   // a pile, put another in, press Re-analyse and the screen still showed the
@@ -477,7 +482,7 @@ export function Trade() {
                       : scan ? "Scan again" : "Scan the league"}
           </Button>
         )}
-        {!empty && (
+        {!empty && !browsing && (
           <Button size="sm" variant="ghost" className="h-7 text-[11px]"
                   onClick={() => { setGive([]); setGet([]); setV(null); setCounters(null);
                                    setBalanced(null); }}>
@@ -489,9 +494,14 @@ export function Trade() {
             the deal is staged rather than priced. It is only hidden while you
             are already reading the answer it would produce. */}
         <div className="ml-auto flex items-center gap-2">
-          {empty && (
+          {empty && !browsing && (
             <span className="text-[11px] text-clock">
               click a player on either roster to put him in the trade
+            </span>
+          )}
+          {browsing && (
+            <span className="text-[11px] text-muted">
+              pick a manager to build a deal with
             </span>
           )}
           {err && !busy && (
@@ -499,7 +509,7 @@ export function Trade() {
               {err}
             </span>
           )}
-          {!reading && !empty && (
+          {!reading && !empty && !browsing && (
             <Button size="sm" className="h-8 px-6 text-[12px]"
                     onClick={() => price(give, get, auto ? [] : myManual, true)}
                     disabled={busy}
@@ -571,6 +581,7 @@ export function Trade() {
         )}
       </AnimatePresence>
 
+      {!browsing && (
       <div className="grid gap-3 lg:grid-cols-[1fr_0.8fr_0.8fr_1fr]">
         <div className="flex min-h-0 flex-col gap-2">
           {auto ? (
@@ -655,12 +666,13 @@ export function Trade() {
           )}
         </div>
       </div>
+      )}
 
       {/* In the scan's own layout the board and the answer belong together --
           you are reading the roster beside the ruling and editing both. */}
-      {busy && <Simulating />}
+      {busy && !browsing && <Simulating />}
 
-      {v && !busy && (
+      {v && !busy && !browsing && (
         <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
           <TradeVerdict v={v} />
           <div className="space-y-3">
@@ -675,7 +687,7 @@ export function Trade() {
         </div>
       )}
 
-      {!v && !busy && (
+      {!v && !busy && !browsing && (
         <div className="rounded-lg border border-dashed border-line p-6 text-center">
           <p className="text-sm text-muted">
             Click names into the two piles and hit Analyse
