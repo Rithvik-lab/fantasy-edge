@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 import draft as D
 from fantasyedge import config
 from fantasyedge.data import espn_draft, refresh
+from fantasyedge import waiver
 from fantasyedge.draft import explain, report
 from fantasyedge.draft.engine import (
     DraftState,
@@ -1308,6 +1309,60 @@ def _expected_rows(scope: str, top: int, team_id: int | None = None) -> list[dic
         "headshot": shots.get(r["player_id"]),
         "mine": r["player_id"] in mine,
     } for r in rows.iter_rows(named=True)]
+
+
+@app.get("/api/waivers")
+def waivers(top: int = 12) -> dict:
+    """The wire, ranked by what each man would do to YOUR lineup.
+
+    Not a list of the best free agents -- that list is identical for all twelve
+    managers, which is the tell that it is not about anybody's roster. A claim
+    is an add AND a drop, and both are priced here.
+    """
+    st = _require()
+    b = _board()
+    free = _free_agents(b)
+    mine = b.filter(pl.col("player_id").is_in(st.my_ids))
+    if not mine.height:
+        return {"empty": True, "claims": [],
+                "note": "Nothing on your roster yet."}
+
+    # Form and role, the same two corrections the lineup solver uses, so the
+    # wire is judged on what a man is now rather than what he cost in July.
+    stamp = refresh.read_stamp()
+    if stamp.got_stats:
+        obs = refresh.observed()
+        if obs.height:
+            from fantasyedge.models import inseason
+
+            b2 = inseason.reprice(b, obs, stamp.week or 0)
+            free = b2.filter(pl.col("player_id").is_in(free["player_id"].to_list()))
+            mine = b2.filter(pl.col("player_id").is_in(st.my_ids))
+
+    rows = waiver.claims(mine, free, st.settings, top=top, board=b)
+    full = mine.height >= st.settings.roster_size
+    return {
+        "empty": False,
+        "roster": mine.height,
+        "limit": st.settings.roster_size,
+        "full": full,
+        "pool": free.height,
+        "claims": _with_free_faces(rows, b),
+        "week": stamp.week or 0,
+        "note": waiver.note(mine, st.settings, full, len(rows)),
+        "streaming": ("Kicker and defence are ranked on the season here. Once "
+                      "games start they are ranked on the WEEK, which is where "
+                      "streaming them is actually worth something — the "
+                      "softest matchup returns about 3.8 points a week more "
+                      "than the toughest at defence."),
+    }
+
+
+def _with_free_faces(rows: list[dict], board: pl.DataFrame) -> list[dict]:
+    shots = _headshots(board)
+    for r in rows:
+        r["headshot"] = shots.get(r["player_id"])
+    return rows
 
 
 @app.get("/api/performance")

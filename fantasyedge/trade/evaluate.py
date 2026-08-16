@@ -168,16 +168,51 @@ def simulate_lineup(
     if not roster.height:
         return np.zeros(n_sims)
 
-    by_pos: dict[str, list[np.ndarray]] = {}
+    # Realised weeks and the EXPECTATION each man was picked on. The two are
+    # kept apart on purpose -- see below.
+    by_pos: dict[str, list[tuple[float, np.ndarray]]] = {}
     for row in roster.iter_rows(named=True):
-        by_pos.setdefault(row["position"], []).append(_player_weeks(row, n_sims))
+        rate = (float(row.get("projected_points") or 0.0)
+                / max(float(row.get("expected_games") or MAX_GAMES), 1.0))
+        by_pos.setdefault(row["position"], []).append(
+            (rate, _player_weeks(row, n_sims)))
 
-    stacked = {p: np.sort(np.stack(v, axis=-1), axis=-1)[:, :, ::-1]
-               for p, v in by_pos.items()}   # (n_sims, weeks, players) desc
+    # STARTERS ARE CHOSEN BEFORE THE WEEK, NOT AFTER IT.
+    #
+    # This sorted each week's REALISED scores and started the top of them,
+    # which is a manager who knows on Wednesday what everyone will do on
+    # Sunday. It is worth a fortune and nobody has it. Every bench player was
+    # credited with his best weeks and none of his worst, so depth priced like
+    # a starter: adding a backup quarterback to a roster that already had one
+    # came back +37 a season, on a man whose average week is below what the
+    # waiver wire offers for free.
+    #
+    # So the order is fixed in advance -- by season rate, which is what you
+    # actually have on Wednesday -- and only AVAILABILITY moves week to week.
+    # The best man playing starts; the man who happened to explode does not
+    # get retro-fitted into your lineup.
+    stacked: dict[str, np.ndarray] = {}
+    for pos, men in by_pos.items():
+        men.sort(key=lambda m: -m[0])
+        stacked[pos] = np.stack([w for _, w in men], axis=-1)
 
     total = np.zeros((n_sims, MAX_GAMES))
-    leftovers = []
+    used: dict[str, np.ndarray] = {}
     w = waiver or {}
+
+    def take(arr: np.ndarray, count: int, floor: float,
+             skip: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Start the top `count` AVAILABLE men in the fixed order."""
+        avail = arr > 0.0
+        if skip is not None:
+            avail = avail & ~skip
+        # Position in the queue among those available this week.
+        queue = np.cumsum(avail, axis=-1)
+        start = avail & (queue <= count)
+        got = np.where(start, arr, 0.0).sum(axis=-1)
+        filled = np.minimum(queue[:, :, -1], count)
+        # Slots nobody could fill are bought off the wire, not left at zero.
+        return got + floor * (count - filled), start
 
     for slot, count in settings.lineup.items():
         if slot in ("FLEX", "SUPERFLEX"):
@@ -185,27 +220,31 @@ def simulate_lineup(
         floor = float(w.get(slot, 0.0))
         arr = stacked.get(slot)
         if arr is None:
-            # Nobody at all here: the slot is the wire, every week.
             total += floor * count
             continue
-        got = arr[:, :, :count]
-        if got.shape[-1] < count:
-            total += floor * (count - got.shape[-1])
-        total += np.maximum(got, floor).sum(axis=-1)
-        if slot in settings.flex_eligible and arr.shape[-1] > count:
-            leftovers.append(arr[:, :, count:])
+        got, start = take(arr, count, floor)
+        total += got
+        used[slot] = start
 
     flex = settings.lineup.get("FLEX", 0)
     if flex:
         floor = max((float(w.get(p, 0.0)) for p in settings.flex_eligible),
                     default=0.0)
-        if leftovers:
-            pool = np.concatenate(leftovers, axis=-1)
-            pool = np.sort(pool, axis=-1)[:, :, ::-1]
-            got = pool[:, :, :flex]
-            if got.shape[-1] < flex:
-                total += floor * (flex - got.shape[-1])
-            total += np.maximum(got, floor).sum(axis=-1)
+        pool, skip = [], []
+        for pos in settings.flex_eligible:
+            arr = stacked.get(pos)
+            if arr is None:
+                continue
+            pool.append(arr)
+            skip.append(used.get(pos, np.zeros(arr.shape, dtype=bool)))
+        if pool:
+            # One queue across every flex-eligible man, still ordered by
+            # expectation, with those already starting removed.
+            rates = np.concatenate(pool, axis=-1)
+            taken = np.concatenate(skip, axis=-1)
+            order = np.argsort(-rates.mean(axis=(0, 1)))
+            got, _ = take(rates[:, :, order], flex, floor, taken[:, :, order])
+            total += got
         else:
             total += floor * flex
 
