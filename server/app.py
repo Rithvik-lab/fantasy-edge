@@ -1394,6 +1394,17 @@ def performance(scope: str = "mine", top: int = 12,
 # Trade
 # ---------------------------------------------------------------------------
 
+def _named(ids: list[str]) -> str:
+    """Player ids as names, for a message a person has to read."""
+    try:
+        r = _espn_rosters()
+        by = {row["player_id"]: row["player_name"]
+              for row in r.iter_rows(named=True)} if r.height else {}
+    except Exception:
+        by = {}
+    return ", ".join(by.get(i, i) for i in ids)
+
+
 def _with_faces(d: dict, board: pl.DataFrame) -> dict:
     """Attach headshots to the players named in a verdict or an offer.
 
@@ -1455,7 +1466,17 @@ def trade_evaluate(t: TradeIn) -> dict:
     known = set(b["player_id"].to_list())
     unknown = [p for p in (t.give + t.get) if p not in known]
     if unknown:
-        raise HTTPException(400, f"not on the board: {unknown}")
+        # NAME THEM. A list of gsis ids is unreadable, and the men who land
+        # here are real: ten players on live rosters in his league sit outside
+        # the ADP board the projections are built from, so they have no
+        # projection to trade on. Saying which one, and why, is the difference
+        # between a bug report and an explanation.
+        who = _named(unknown)
+        raise HTTPException(
+            400, f"{who} {'is' if len(unknown) == 1 else 'are'} not on the "
+                 f"projection board — nobody drafted {'him' if len(unknown) == 1 else 'them'} "
+                 f"inside the top 600, so there is no number to trade on. "
+                 f"Take {'him' if len(unknown) == 1 else 'them'} out of the deal.")
 
     # No roster is a legitimate question, not an error. People speculate about
     # players they do not own yet -- a deal two moves away, or a name they are

@@ -307,6 +307,17 @@ export function Trade() {
   const dirty = !empty && dealKey(give, get) !== priced;
   const reading = view === "verdict" && (busy || !!v);
 
+  // AN OLD ANSWER MUST NOT SURVIVE A CHANGE TO THE QUESTION. Take a man out of
+  // a pile, put another in, press Re-analyse and the screen still showed the
+  // previous verdict -- which reads as "it analysed the old trade", and was
+  // exactly that whenever the new deal failed to price at all (ten men on live
+  // rosters in this league sit outside the projection board, and adding one
+  // returns an error while the stale ruling sat there looking authoritative).
+  // The verdict is cleared the moment the board stops matching it.
+  useEffect(() => {
+    if (v && dealKey(give, get) !== priced) { setV(null); setView("build"); }
+  }, [give, get, priced, v]);
+
   /**
    * The same deal, evened out.
    *
@@ -481,6 +492,11 @@ export function Trade() {
           {empty && (
             <span className="text-[11px] text-clock">
               click a player on either roster to put him in the trade
+            </span>
+          )}
+          {err && !busy && (
+            <span className="max-w-[22rem] text-right text-[10.5px] leading-snug text-alarm">
+              {err}
             </span>
           )}
           {!reading && !empty && (

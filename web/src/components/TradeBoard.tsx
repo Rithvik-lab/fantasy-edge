@@ -51,6 +51,11 @@ export function RosterPanel({
 
   const Line = ({ p, slot }: { p: LeagueRoster["players"][0]; slot?: string }) => {
     const on = selected.includes(p.player_id);
+    // SAY IT BEFORE HE CLICKS. Ten men on live rosters in a twelve-team league
+    // sit outside the ADP board the projections are built from, so they cannot
+    // be priced -- and finding that out from an error after building a trade
+    // around one is the worst possible moment.
+    const unpriced = p.projected_points == null;
     return (
       <li
         draggable
@@ -59,13 +64,16 @@ export function RosterPanel({
           e.dataTransfer.setData("application/x-side", side);
           e.dataTransfer.effectAllowed = "copy";
         }}
-        onClick={() => onToggle(p.player_id)}
-        onDoubleClick={(e) => onAdd?.(p.player_id, e.currentTarget as Element)}
-        title={on ? "in the trade — click to take him out"
-                  : "click or double-click to put him in the trade"}
+        onClick={() => !unpriced && onToggle(p.player_id)}
+        onDoubleClick={(e) => !unpriced && onAdd?.(p.player_id, e.currentTarget as Element)}
+        title={unpriced
+          ? `${p.player_name} is outside the projection board — no number to trade on`
+          : on ? "in the trade — click to take him out"
+               : "click or double-click to put him in the trade"}
         className={cn(
-          "group flex cursor-pointer select-none items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0",
-          on ? "bg-turf/12" : "hover:bg-raised/60"
+          "group flex select-none items-center gap-2 border-b border-line/40 px-2 py-1.5 transition-colors last:border-0",
+          unpriced ? "cursor-not-allowed opacity-40" : "cursor-pointer",
+          on ? "bg-turf/12" : !unpriced && "hover:bg-raised/60"
         )}
       >
         <span className="num w-9 shrink-0 text-[9.5px] uppercase tracking-wider text-muted">
@@ -93,11 +101,17 @@ export function RosterPanel({
             </span>
           )}
         </div>
-        <Term k="projected">
-          <span className="num shrink-0 text-[10px] text-muted">
-            {Math.round(p.projected_points ?? 0)}
+        {unpriced ? (
+          <span className="shrink-0 text-[9px] uppercase tracking-wider text-muted">
+            unpriced
           </span>
-        </Term>
+        ) : (
+          <Term k="projected">
+            <span className="num shrink-0 text-[10px] text-muted">
+              {Math.round(p.projected_points ?? 0)}
+            </span>
+          </Term>
+        )}
         <span className={cn("w-3 shrink-0 text-[13px] leading-none transition-opacity",
           on ? "text-turf" : "text-muted opacity-0 group-hover:opacity-100")}>
           {on ? "\u2713" : "+"}
