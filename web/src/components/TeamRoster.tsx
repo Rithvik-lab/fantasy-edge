@@ -129,6 +129,10 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
         </span>
       </header>
 
+      <div className="border-b border-line px-3 py-2">
+        <SuggestLineup onApplied={() => onRefresh?.()} />
+      </div>
+
       <ul>
         {starters.map((p) => <Row key={p.player_id} p={p} slot={p.slot} />)}
         {/* An unfilled slot is a fact about your team and the only honest
@@ -160,7 +164,6 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
 
       {onAdd && (
         <div className="space-y-1 border-t border-line p-2">
-          <SuggestLineup onApplied={() => onRefresh?.()} />
           <AddByName placeholder="add a player by name…" restrictTo={null}
                      onAdd={(h) => onAdd(h.player_id)} />
           <p className="text-[10px] leading-snug text-muted">

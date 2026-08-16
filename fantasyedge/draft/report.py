@@ -36,6 +36,13 @@ from fantasyedge.league import LeagueSettings
 # Two backup tight ends sharing week nine is not a story.
 BYE_WEEKS = 18
 
+# Positions where "you are below the league" is not a problem worth acting on,
+# and where "you beat the room" is not a compliment either. Kicker and defence
+# are nearly flat by construction: being 30th percentile at kicker costs about
+# a point a week and no roster move fixes it, and beating ADP on one is a fact
+# about when the room took kickers rather than about you.
+NOT_WORTH_FIXING = frozenset({"K", "DST"})
+
 
 def _league_starters(board: pl.DataFrame, settings: LeagueSettings,
                      position: str) -> pl.Series:
@@ -194,6 +201,15 @@ def draft_report(picks: list[dict], board: pl.DataFrame,
     for p in picks:
         pid = p.get("player_id")
         if pid not in set(my_ids):
+            continue
+        # KICKERS AND DEFENCES ARE NOT VALUE PICKS. Everyone takes one in the
+        # last two rounds and the order inside those rounds is close to random,
+        # so "you beat the room by 40 on your kicker" is a fact about when the
+        # room happened to take kickers, not about you. Left in, they were also
+        # the largest edges on the card, because deep ADP is the noisiest part
+        # of the board -- the same trap that made them the biggest bars on the
+        # positional chart.
+        if pos.get(pid) in NOT_WORTH_FIXING:
             continue
         where = p.get("overall")
         market = adp.get(pid)
@@ -360,12 +376,6 @@ def _rate(by_slot: dict[int, list[str]], board: pl.DataFrame,
     return out
 
 
-# Positions where "you are below the league" is not a problem worth acting on.
-# Kicker and defence are nearly flat by construction -- being 30th percentile
-# at kicker costs about a point a week and there is nothing to do about it that
-# is worth a roster move. Listing them as things to fix buries the one that is.
-NOT_WORTH_FIXING = frozenset({"K", "DST"})
-
 # The order a lineup card is written in, which is not the order anything sorts
 # in. Sorting these by size answers "which number is biggest"; nobody reads a
 # roster that way, and a chart that reorders itself between two visits is
@@ -476,6 +486,8 @@ def team_shape(lineup: list[dict], board: pl.DataFrame,
         return []
     by: dict[str, float] = {}
     for p in lineup:
+        if p["position"] in NOT_WORTH_FIXING:
+            continue
         by[p["position"]] = by.get(p["position"], 0.0) + float(
             p.get("projected_points") or 0.0)
 
@@ -506,7 +518,12 @@ def sleepers(board: pl.DataFrame, my_ids: list[str], top: int = 5) -> list[dict]
     # at this ADP normally returns", which needs the whole market to describe;
     # fitting it on the five men you drafted asks what a player at this ADP
     # returns among your own picks, and answers nothing.
-    priced = market.value_curve(board).filter(pl.col("player_id").is_in(my_ids))
+    priced = (market.value_curve(board)
+              .filter(pl.col("player_id").is_in(my_ids)
+                      # Same reason they are off the draft card: a kicker
+                      # "underpriced by 4" is the noise in deep ADP, and it
+                      # pushes a real name off a five-row list.
+                      & ~pl.col("position").is_in(list(NOT_WORTH_FIXING))))
     if "market_edge" not in priced.columns:
         return []
     return (priced.filter(pl.col("market_edge") > 0)
