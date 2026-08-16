@@ -378,6 +378,16 @@ export function TradeScan({
     ? scan.teams.find((t) => t.team_id === focus) ?? null
     : null;
 
+  // ONLY THE MANAGERS YOU CAN ACTUALLY DO BUSINESS WITH. A card for a team the
+  // search found nothing with is an invitation to open an empty board, and
+  // there is nothing behind it -- every combination against that roster either
+  // loses for you or reads as a fleecing to them. They are counted at the
+  // bottom rather than listed, because "no deal here" is worth knowing once
+  // and not eleven times.
+  const dealt = new Set(scan.offers.map((o) => o.team_id));
+  const tradeable = scan.teams.filter((t) => dealt.has(t.team_id));
+  const quiet = scan.teams.length - tradeable.length;
+
   // ONE MANAGER AT A TIME once you have picked one. Eleven cards is the right
   // answer to "who should I call" and the wrong one to "is this offer worth
   // sending" -- so the grid gets out of the way and leaves the door open.
@@ -485,6 +495,9 @@ export function TradeScan({
             )}
           </span>
         )}
+        <span className="text-[11px] text-muted">
+          {tradeable.length} of {scan.teams.length} managers have a deal
+        </span>
         <button onClick={() => setOpen((o) => !o)}
                 className="ml-auto text-[11px] text-muted hover:text-chalk">
           {open ? "hide rosters" : "show rosters"}
@@ -503,13 +516,28 @@ export function TradeScan({
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="grid gap-2 sm:grid-cols-2"
             >
-              {scan.teams.map((t) => (
+              {tradeable.map((t) => (
                 <TeamCard key={t.team_id} t={t}
                           active={t.team_id === activeTeam}
                           onOpen={() => onOpenTeam(t)}
                           onTake={(p) => onTake(t, p)}
                           onSend={(p) => onSend(t, p)} />
               ))}
+              {tradeable.length === 0 && (
+                <p className="rounded-lg border border-dashed border-line p-4 text-center text-[11.5px] leading-snug text-muted sm:col-span-2">
+                  No manager in the league has a deal that clears both tests
+                  right now — it has to win on your lineup and read as a win on
+                  theirs. Say what you are after below and it will look again.
+                </p>
+              )}
+              {quiet > 0 && tradeable.length > 0 && (
+                <p className="text-[10px] leading-snug text-muted sm:col-span-2">
+                  {quiet} other {quiet === 1 ? "manager has" : "managers have"}{" "}
+                  nothing that clears both tests today — every combination
+                  against {quiet === 1 ? "that roster" : "those rosters"} either
+                  loses for you or reads as a fleecing to them.
+                </p>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
