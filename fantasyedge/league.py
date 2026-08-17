@@ -25,6 +25,25 @@ FLEX_ALLOCATION: dict[str, float] = {"RB": 0.45, "WR": 0.45, "TE": 0.10}
 SUPERFLEX_ALLOCATION: dict[str, float] = {"QB": 0.85, "RB": 0.05, "WR": 0.10}
 
 
+def fits(position: str | None, slot: str,
+         flex_eligible: tuple[str, ...]) -> bool:
+    """Can this man legally fill this slot?
+
+    Slot labels carry a number when a league has more than one -- RB1, RB2,
+    FLEX2 -- so the rule is on the base. Everything except the flex takes
+    exactly its own position; the flex takes whatever this league says, which
+    is not always RB/WR/TE.
+    """
+    if not position:
+        return False
+    base = (slot or "").rstrip("0123456789") or slot
+    if base == "FLEX":
+        return position in flex_eligible
+    if base in ("SUPERFLEX", "OP"):
+        return position in tuple(flex_eligible) + ("QB",)
+    return position == base
+
+
 @dataclass(frozen=True)
 class LeagueSettings:
     """Everything about a league that changes what a player is worth."""

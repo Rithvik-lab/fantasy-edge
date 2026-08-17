@@ -22,6 +22,26 @@ import { cn } from "@/lib/utils";
 const ORDER = ["QB", "RB1", "RB2", "RB", "WR1", "WR2", "WR3", "WR",
                "TE", "FLEX", "FLEX1", "FLEX2", "DST", "D/ST", "K"];
 
+/**
+ * Can this man legally fill this slot?
+ *
+ * The same rule the engine enforces, applied before the drop rather than
+ * after it — dragging a receiver onto the defence used to put him there, and
+ * the pin outlived the mistake: every lineup solved afterwards had somebody in
+ * a slot he cannot fill, and no further drag could repair it because the
+ * repair was illegal too.
+ */
+const FLEXES = ["RB", "WR", "TE"];
+
+function fits(position: string, slot?: string): boolean {
+  if (!slot) return true;                    // the bench takes anybody
+  const base = slot.replace(/[0-9]+$/, "");
+  if (base === "FLEX") return FLEXES.includes(position);
+  if (base === "SUPERFLEX" || base === "OP")
+    return FLEXES.includes(position) || position === "QB";
+  return position === base;
+}
+
 function rank(slot: string | undefined, position: string): number {
   const i = ORDER.indexOf(slot ?? "");
   if (i >= 0) return i;
@@ -38,7 +58,8 @@ function rank(slot: string | undefined, position: string): number {
  * why a man moving from the bench into the lineup used to blink rather than
  * travel.
  */
-function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy }: {
+function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy,
+               held, setHeld }: {
   p: TeamReport["starters"][0];
   slot?: string;
   bench?: boolean;
@@ -48,14 +69,30 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy }: {
   onSwap: (a: string, b: string) => void;
   onDrop?: (playerId: string, name: string) => void;
   busy: boolean;
+  /** The man currently being dragged, so a slot can refuse him on the way in. */
+  held: { id: string; position: string } | null;
+  setHeld: (h: { id: string; position: string } | null) => void;
 }) {
+  const legal = !held || held.id === p.player_id
+    || (fits(held.position, slot) && fits(p.position, pinned[held.id] ??
+        (bench ? undefined : slot)));
   return (
     <motion.li
       layout
       draggable
-      onDragStart={(e) => (e as unknown as React.DragEvent)
-        .dataTransfer.setData("text/plain", p.player_id)}
-      onDragOver={(e) => { e.preventDefault(); setOver(() => p.player_id); }}
+      onDragStart={(e) => {
+        (e as unknown as React.DragEvent)
+          .dataTransfer.setData("text/plain", p.player_id);
+        setHeld({ id: p.player_id, position: p.position });
+      }}
+      onDragEnd={() => { setHeld(null); setOver(() => null); }}
+      onDragOver={(e) => {
+        // Not calling preventDefault is what makes a drop impossible, so an
+        // illegal target simply will not take him.
+        if (!legal) return;
+        e.preventDefault();
+        setOver(() => p.player_id);
+      }}
       onDragLeave={() => setOver((o) => (o === p.player_id ? null : o))}
       onDrop={(e) => {
         e.preventDefault();
@@ -64,10 +101,13 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy }: {
           .dataTransfer.getData("text/plain");
         if (from && from !== p.player_id) onSwap(from, p.player_id);
       }}
-      title="drag onto another of your players to swap where they play"
+      title={held && !legal
+        ? `${held.position} cannot play ${slot ?? "there"}`
+        : "drag onto another of your players to swap where they play"}
       className={cn(
         "group flex cursor-grab select-none items-center gap-2.5 border-b border-line/40 px-3 py-2 transition-colors last:border-0 active:cursor-grabbing",
         over === p.player_id && "bg-turf/12",
+        held && !legal && "opacity-40",
         bench && "opacity-70",
         pinned[p.player_id] && "border-l-2 border-l-clock"
       )}
@@ -128,11 +168,12 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
   busy: boolean;
 }) {
   const [over, setOver] = useState<string | null>(null);
+  const [held, setHeld] = useState<{ id: string; position: string } | null>(null);
   const pinned = d.pinned ?? {};
 
   const starters = [...d.starters].sort(
     (a, b) => rank(a.slot, a.position) - rank(b.slot, b.position));
-  const row = { over, setOver, pinned, onSwap, onDrop, busy };
+  const row = { over, setOver, pinned, onSwap, onDrop, busy, held, setHeld };
 
   return (
     <LayoutGroup>

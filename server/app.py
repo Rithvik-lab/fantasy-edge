@@ -38,7 +38,8 @@ from fantasyedge.draft.engine import (
 )
 from fantasyedge.draft.session import grade_roster, optimal_lineup
 from fantasyedge import trade
-from fantasyedge.league import LeagueSettings, picks_for_slot, slot_for_pick
+from fantasyedge.league import (LeagueSettings, fits, picks_for_slot,
+                                slot_for_pick)
 from server import store
 
 app = FastAPI(title="FantasyEdge draft", version="1.0")
@@ -896,6 +897,22 @@ def roster_swap(x: SwapIn) -> dict:
     sa, sb = slot_of.get(x.a), slot_of.get(x.b)
     if sa == sb:
         raise HTTPException(400, "those two are already in the same place")
+
+    # A SLOT HAS RULES AND THE SWAP HAS TO OBEY THEM. Dragging a receiver onto
+    # the defence put him there: the lineup then had a man in a slot he cannot
+    # legally fill, and every number computed off it was quietly wrong. Only
+    # the flex takes more than one position, and only the ones this league says.
+    pos = dict(zip(b["player_id"].to_list(), b["position"].to_list()))
+    for pid, slot in ((x.a, sb), (x.b, sa)):
+        if not slot:
+            continue
+        if not fits(pos.get(pid), slot, st.settings.flex_eligible):
+            raise HTTPException(
+                400,
+                f"{_named([pid])} is a {pos.get(pid)} and cannot play {slot}. "
+                f"Only the flex takes more than one position, and in this "
+                f"league it takes "
+                f"{', '.join(st.settings.flex_eligible)}.")
 
     with STATE.lock:
         for pid, slot in ((x.a, sb), (x.b, sa)):

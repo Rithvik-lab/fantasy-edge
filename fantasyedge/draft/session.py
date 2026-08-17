@@ -27,7 +27,7 @@ from datetime import datetime
 import polars as pl
 
 from fantasyedge import config
-from fantasyedge.league import LeagueSettings, overall_pick, picks_for_slot, slot_for_pick
+from fantasyedge.league import LeagueSettings, fits, overall_pick, picks_for_slot, slot_for_pick
 
 SESSION_PATH = config.PROCESSED / "draft_session.json"
 
@@ -159,6 +159,14 @@ def optimal_lineup(
                 continue
             row = remaining.filter(pl.col("player_id") == pid)
             if not row.height:
+                continue
+            # AN ILLEGAL PIN IS IGNORED RATHER THAN HONOURED. A receiver was
+            # dragged onto the defence slot before the interface refused it,
+            # and the pin outlived the bug: every lineup solved afterwards had
+            # a man in a slot he cannot fill, and no amount of dragging could
+            # fix it because each repair swap was itself illegal. Dropping it
+            # here heals the roster the next time anything reads it.
+            if not fits(row["position"][0], slot, settings.flex_eligible):
                 continue
             starters.append(row.with_columns(pl.lit(slot).alias("slot")))
             remaining = remaining.filter(pl.col("player_id") != pid)
