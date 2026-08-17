@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type {
   Ask, Piece, Read, Scan, TeamRead, TradeOffer, TradePlayer,
@@ -147,6 +147,73 @@ export function TeamSummary({ read, title, mine }: {
         )}
       </p>
     </section>
+  );
+}
+
+/** What a scan is doing while it does it, over the answer it is replacing. */
+const STEPS = [
+  "reading twelve rosters",
+  "pricing every man on them",
+  "pairing what each side is short of",
+  "playing the survivors out, fifteen hundred seasons each",
+];
+
+/**
+ * The re-scan overlay.
+ *
+ * Scanning again left the previous answer on screen with nothing but a change
+ * of button label to say anything was happening — so a four-second search
+ * looked like a dead press. The panel keeps its shape and its contents; they
+ * simply go quiet and something honest happens on top of them.
+ */
+function Working() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(
+      () => setI((n) => Math.min(STEPS.length - 1, n + 1)), 1100);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+    >
+      <div className="relative overflow-hidden rounded-lg border border-line bg-panel/95 px-4 py-3 shadow-2xl">
+        <motion.div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 w-1/3"
+          style={{ background:
+            "linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-turf) 12%, transparent), transparent)" }}
+          initial={{ x: "-120%" }} animate={{ x: "340%" }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "linear" }}
+        />
+        <div className="relative flex items-center gap-2">
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-turf opacity-60" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-turf" />
+          </span>
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={i}
+              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}
+              className="text-[11.5px] text-chalk/85"
+            >
+              {STEPS[i]}…
+            </motion.span>
+          </AnimatePresence>
+        </div>
+        <div className="relative mt-2 flex gap-1">
+          {STEPS.map((_, k) => (
+            <motion.span key={k} className="h-1 rounded-full"
+              animate={{ width: k === i ? 20 : 7,
+                         backgroundColor: k === i ? "var(--color-turf)"
+                                                  : "var(--color-line)" }}
+              transition={{ type: "spring", stiffness: 320, damping: 28 }} />
+          ))}
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
@@ -417,8 +484,9 @@ export function TradeScan({
           </button>
         </header>
 
-        <div className="grid gap-3 p-3 lg:grid-cols-[1fr_1fr]">
-          <div className="space-y-2">
+        <div className="relative grid gap-3 p-3 lg:grid-cols-[1fr_1fr]">
+          <AnimatePresence>{busy && <Working />}</AnimatePresence>
+          <div className={cn("space-y-2 transition-opacity", busy && "opacity-30")}>
             <p className="text-[11px] leading-snug text-muted">{one.note}</p>
             <Bars rows={one.strength} />
             <div className="grid gap-x-3 gap-y-0.5 border-t border-line/60 pt-1.5 sm:grid-cols-2">
@@ -508,13 +576,15 @@ export function TradeScan({
         </button>
       </header>
 
-      <div className="grid gap-3 p-3 lg:grid-cols-[1.4fr_1fr]">
+      <div className="relative grid gap-3 p-3 lg:grid-cols-[1.4fr_1fr]">
+        <AnimatePresence>{busy && <Working />}</AnimatePresence>
         <AnimatePresence initial={false}>
           {open && (
             <motion.div
               key="teams"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="grid gap-2 sm:grid-cols-2"
+              className={cn("grid gap-2 sm:grid-cols-2 transition-opacity",
+                busy && "opacity-30")}
             >
               {tradeable.map((t) => (
                 <TeamCard key={t.team_id} t={t}
@@ -542,7 +612,8 @@ export function TradeScan({
           )}
         </AnimatePresence>
 
-        <div className={cn("rounded-lg border border-line", !open && "lg:col-span-2")}>
+        <div className={cn("rounded-lg border border-line transition-opacity",
+          !open && "lg:col-span-2", busy && "opacity-30")}>
           <header className="border-b border-line px-3 py-1.5">
             <span className="eyebrow">Offers worth sending</span>
             <p className="mt-0.5 text-[10px] leading-snug text-muted">
