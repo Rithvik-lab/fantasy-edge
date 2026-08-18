@@ -73,7 +73,7 @@ export default function App() {
   // mid-draft.
   const [tab, setTab] = useState<Tab>("room");
   const wasLive = useRef(false);
-  const [mode, setMode] = useState<Mode>("waiver");
+  const [mode, setMode] = useState<Mode>("draft");
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -151,6 +151,13 @@ export default function App() {
    */
   const openLeague = useCallback(async (s: Status) => {
     setBooting(true);
+    // OPENING A LEAGUE LANDS ON MY TEAM, always. Mode is deliberately not
+    // persisted, but it survived in memory across a league switch, so leaving
+    // waivers open and picking a different league from My Leagues dropped you
+    // into that league's wire — a screen about a roster you had not looked at
+    // yet. Set here rather than in `open`, which is also the after-a-pick
+    // refresh: that one must never move you.
+    setMode("draft");
     // finally, always. A gate that can fail to open is worse than the flash it
     // exists to prevent -- a stuck loading screen has no way out but a reload.
     try {

@@ -47,7 +47,11 @@ SLOTS = {
     0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K",
     23: "FLEX", 7: "SUPERFLEX",
 }
-BENCH_SLOTS = {20, 21}
+BENCH_SLOTS = {20}
+# Slot 21 is injured reserve. It arrives in the same map as the bench and was
+# counted with it, which invented a roster spot: a 16+1 league read as 17 men
+# of room. An IR seat only takes a player ESPN lists as unavailable.
+IR_SLOT = 21
 
 # statId 53 is receptions; its points value is the PPR setting.
 RECEPTION_STAT = 53
@@ -107,6 +111,7 @@ class LeagueInfo:
     n_teams: int = 12
     points_per_reception: float = 1.0
     roster_size: int = 16
+    ir_slots: int = 0
     lineup: dict[str, int] = field(default_factory=dict)
     teams: list[dict] = field(default_factory=list)
     in_progress: bool = False
@@ -122,6 +127,7 @@ def league_info(payload: dict) -> LeagueInfo:
 
     lineup: dict[str, int] = {}
     bench = 0
+    ir = 0
     for slot, n in counts.items():
         n = int(n or 0)
         if not n:
@@ -129,6 +135,9 @@ def league_info(payload: dict) -> LeagueInfo:
         sid = int(slot)
         if sid in BENCH_SLOTS:
             bench += n
+            continue
+        if sid == IR_SLOT:
+            ir += n
             continue
         name = SLOTS.get(sid)
         if name:
@@ -161,6 +170,7 @@ def league_info(payload: dict) -> LeagueInfo:
         n_teams=len(teams) or int(settings.get("size") or 12),
         points_per_reception=ppr,
         roster_size=(starters + bench) or 16,
+        ir_slots=ir,
         lineup=lineup or {"QB": 1, "RB": 2, "WR": 2, "TE": 1,
                           "FLEX": 1, "K": 1, "DST": 1},
         teams=teams,

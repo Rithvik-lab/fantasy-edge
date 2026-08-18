@@ -105,7 +105,7 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy,
         ? `${held.position} cannot play ${slot ?? "there"}`
         : "drag onto another of your players to swap where they play"}
       className={cn(
-        "group flex cursor-grab select-none items-center gap-2.5 border-b border-line/40 px-3 py-2 transition-colors last:border-0 active:cursor-grabbing",
+        "group flex cursor-grab select-none items-center gap-2.5 border-b border-line/40 px-3 py-1.5 transition-colors last:border-0 active:cursor-grabbing",
         over === p.player_id && "bg-turf/12",
         held && !legal && "opacity-40",
         bench && "opacity-70",
@@ -120,9 +120,9 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy,
       {p.headshot ? (
         <PlayerHover playerId={p.player_id} className="shrink-0">
           <img src={p.headshot} alt="" loading="lazy"
-               className="h-9 w-9 shrink-0 cursor-help rounded-md bg-raised object-cover object-top ring-1 ring-line" />
+               className="h-7 w-7 shrink-0 cursor-help rounded-md bg-raised object-cover object-top ring-1 ring-line" />
         </PlayerHover>
-      ) : <span className="h-9 w-9 shrink-0 rounded-md bg-raised" />}
+      ) : <span className="h-7 w-7 shrink-0 rounded-md bg-raised" />}
       <div className="min-w-0 flex-1">
         <PlayerHover playerId={p.player_id}>
           <span className="block cursor-help truncate text-[12.5px] leading-tight">
@@ -212,7 +212,7 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
             <span className="num w-10 shrink-0 text-[10px] uppercase tracking-wider text-clock">
               {g.slot}
             </span>
-            <span className="h-9 w-9 shrink-0 rounded-md border border-dashed border-line" />
+            <span className="h-7 w-7 shrink-0 rounded-md border border-dashed border-line" />
             <span className="flex-1 text-[11.5px] italic text-muted">
               nobody here — you start this slot empty
             </span>
@@ -229,6 +229,55 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
             {d.bench.map((p) => (
               <Row key={p.player_id} p={p} bench {...row} />
             ))}
+          </ul>
+        </>
+      )}
+
+      {/* INJURED RESERVE. Shown even when empty, because an empty IR seat is a
+          thing you can use and an invisible one is a thing you forget you
+          have. It is also the reason the roster limit is what it is: ESPN
+          reports IR in the same map as the bench, and counting the two
+          together invented a spare bench spot the app then spent. */}
+      {!!d.ir_slots && (
+        <>
+          <div className="flex items-center gap-2 border-y border-line bg-raised/40 px-3 py-1">
+            <span className="eyebrow">Injured reserve</span>
+            <span className="num ml-auto text-[10px] text-muted">
+              {(d.ir ?? []).length}/{d.ir_slots}
+            </span>
+          </div>
+          <ul>
+            {Array.from({ length: d.ir_slots }).map((_, i) => {
+              const p = (d.ir ?? [])[i];
+              return (
+                <li key={i}
+                    className="flex items-center gap-2.5 border-b border-line/40 px-3 py-1.5 last:border-0">
+                  <span className="num w-10 shrink-0 text-[10px] uppercase tracking-wider text-muted/60">
+                    IR
+                  </span>
+                  {p ? (
+                    <>
+                      <span className="h-7 w-7 shrink-0 rounded-md bg-raised" />
+                      <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
+                        <span className="block cursor-help truncate text-[12px] leading-tight">
+                          {p.player_name}
+                        </span>
+                      </PlayerHover>
+                      <span className="shrink-0 text-[9px] uppercase tracking-wider text-alarm">
+                        {(p.status ?? "").toLowerCase().replace(/_/g, " ")}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-7 w-7 shrink-0 rounded-md border border-dashed border-line" />
+                      <span className="flex-1 text-[11px] italic text-muted">
+                        empty — holds a man ESPN lists out, and only him
+                      </span>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}

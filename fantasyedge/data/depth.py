@@ -64,6 +64,69 @@ STATUS_AVAILABILITY: dict[str, float] = {
     "Suspension": 0.0,
 }
 
+# ESPN's tag vocabulary against the labels the table above is keyed on. Two
+# feeds, one meaning, and the number stays in one place.
+ESPN_STATUS: dict[str, str] = {
+    "OUT": "Out",
+    "NOT_ACTIVE": "Out",
+    "DOUBTFUL": "Doubtful",
+    "QUESTIONABLE": "Questionable",
+    "DAY_TO_DAY": "Questionable",
+    "INJURY_RESERVE": "Injured Reserve",
+    "IR": "Injured Reserve",
+    "PUP": "PUP",
+    "SUSPENSION": "Suspension",
+}
+
+# What each one means for a lineup. Deliberately about the FLAG rather than
+# about the man: nothing here knows what is wrong with him, only what the tag
+# is worth, and saying more than that would be inventing a medical opinion.
+STATUS_MEANING: dict[str, str] = {
+    "Out": "ESPN has him out. He scores nothing, so the slot is somebody "
+           "else's this week — the only question is whose.",
+    "Doubtful": "Doubtful. Players carrying this tag almost never play; the "
+                "engine expects him for well under a tenth of what is left, "
+                "which is close enough to nothing that you should plan "
+                "around him.",
+    "Questionable": "Questionable, which is a coin flip in name only — the "
+                    "engine expects him to play about three quarters of the "
+                    "remaining games. Usually he plays. Have a replacement "
+                    "ready rather than a replacement started.",
+    "Injured Reserve": "On injured reserve. He is not available for weeks, "
+                       "and a roster spot spent on him is a roster spot you "
+                       "are not using.",
+    "PUP": "On the physically-unable-to-perform list — unavailable, and for "
+           "long enough that the wire is the answer rather than patience.",
+    "Suspension": "Suspended. The games are gone whatever his health is.",
+}
+
+
+# Which ESPN tags let a man occupy an injured-reserve seat. Not every flag
+# does: "questionable" and "doubtful" are week-to-week and stay on your bench,
+# which is exactly why an IR slot is not simply two more bench spots.
+IR_ELIGIBLE = frozenset({"INJURY_RESERVE", "IR", "PUP", "NOT_ACTIVE"})
+
+
+def status_note(tag: str | None) -> dict | None:
+    """An ESPN injury tag, explained, with the number the engine actually uses.
+
+    Returns None for a healthy man rather than a cheerful sentence about him,
+    because a lineup card covered in "ACTIVE" badges is a lineup card nobody
+    reads.
+    """
+    if not tag:
+        return None
+    label = ESPN_STATUS.get(tag.upper())
+    if label is None:
+        return None
+    plays = STATUS_AVAILABILITY.get(label, 1.0)
+    return {
+        "tag": tag,
+        "label": label,
+        "plays": plays,
+        "text": STATUS_MEANING.get(label, ""),
+    }
+
 
 def depth_chart(season: int) -> pl.DataFrame:
     """Latest published depth chart, one row per player.

@@ -166,6 +166,11 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "Expected points added across a simulated season, once your lineup is re-solved around him every week — not his projection, which is a fact about him rather than about your team. The best receiver on the wire adds nothing to a roster already starting three better ones, and a middling tight end adds a great deal to a roster starting nobody there. Same player, same week, opposite answers. This is the mean rather than the median on purpose: in the middle season your starters play and a bench man never leaves the bench, so his entire value lives in the seasons where something goes wrong.",
   },
+  wire_upside: {
+    title: "If he hits",
+    body:
+      "What he adds to your STARTING lineup in his 80th-percentile season — the one he beats about one year in five — rather than in his median one. It is priced separately because the season simulation cannot see it: that simulation fixes your starting order in advance, on purpose, so nobody inside it ever promotes a man who breaks out in September. A bench player's downside is capped, because you simply do not start a bust, while his upside is not, because a hit becomes a starter. That payoff is convex, which is why a flier can be the better claim than a safer man who adds more depth. Kicker and defence are left out: their range is a flat placeholder rather than a measured ceiling, and treating it as upside sorted every defence on the wire to the top.",
+  },
   wire_queue: {
     title: "Why there are four of them",
     body:

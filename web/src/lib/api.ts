@@ -298,6 +298,10 @@ export interface TeamReport {
               edge: number }[];
   /** Starting slots with nobody in them, in lineup order. */
   gaps?: { slot: string; position: string }[];
+  /** Injured-reserve seats this league has, and who is eligible to sit in one. */
+  ir_slots?: number;
+  ir?: { player_id: string; player_name: string; position: string;
+         status?: string | null }[];
   byes: { week: number; count: number; players: string[]; points: number }[];
   draft: { picks: { overall: number; player_id: string; player_name: string;
                     position: string | null;
@@ -369,9 +373,15 @@ export interface Claim {
   position: string;
   ecr?: number | null;
   projected_points: number;
-  /** Expected season points this claim adds once the lineup is re-solved. */
+  /** What he adds as DEPTH — the weeks somebody ahead of him cannot play. */
   adds: number;
+  /** What he adds if he hits his ceiling and takes the job outright. */
+  upside?: number;
+  /** adds + 0.2 x upside. The number the list is ordered on. */
+  worth?: number;
   starts: number;
+  /** Who he plays for. */
+  team?: string | null;
   drop_id?: string | null;
   drop_name?: string | null;
   drop_cost: number;
@@ -389,6 +399,8 @@ export interface Wire {
   empty: boolean;
   roster?: number;
   limit?: number;
+  /** Injured-reserve seats. Not bench: they only hold a man ESPN lists out. */
+  ir_slots?: number;
   full?: boolean;
   pool?: number;
   claims: Claim[];
@@ -398,11 +410,21 @@ export interface Wire {
   rest?: Record<string, {
     player_id: string; player_name: string; position: string;
     projected_points: number; ecr?: number | null; owned?: number | null;
-    headshot?: string | null;
+    headshot?: string | null; team?: string | null;
   }[]>;
-  /** Men on YOUR roster carrying an ESPN injury tag right now. */
+  /** Men on YOUR roster carrying an ESPN injury tag right now, each with what
+   *  the tag MEANS and the availability the engine uses for it. */
   hurt?: { player_id: string; player_name: string; position: string;
-           status: string }[];
+           status: string; label?: string; plays?: number; text?: string }[];
+  /** What to actually do, priced as the swaps they are. */
+  plan?: {
+    headline: string;
+    note: string;
+    moves: { kind: "swap" | "fill"; add: Claim; gain: number; why: string;
+             drop: { player_id: string; player_name: string; position: string;
+                     cost: number } | null }[];
+    dead: { player_id: string; player_name: string; cost: number }[];
+  };
   week?: number;
   note: string;
   streaming?: string;

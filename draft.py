@@ -168,8 +168,71 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     except Exception:
         pass                # a chart we cannot read is not a reason to stop
 
+    b = _attach_team(b)
     _BOARD = add_vor(b, settings)
     return _BOARD
+
+
+def _attach_team(b: pl.DataFrame) -> pl.DataFrame:
+    """Who each man plays for, as the two or three letters everyone reads.
+
+    THREE ID SYSTEMS, THREE SOURCES, because this board is keyed three ways.
+    Skill players carry a gsis and the crosswalk has their team. Kickers are
+    keyed `espn-<id>` and are absent from the crosswalk entirely, but nflverse
+    rosters carry an ESPN id, so they join there. A defence IS a team, and its
+    name says which -- "Patriots D/ST" against the nickname table.
+
+    `chart_team` from the depth chart is the last resort rather than the first:
+    it only covers men listed at a fantasy position on a current chart, which
+    is most players and never a kicker.
+    """
+    team = pl.Series("team", [None] * b.height, dtype=pl.Utf8)
+    out = b.with_columns(team) if "team" not in b.columns else b
+
+    try:
+        from fantasyedge.data import crosswalk as cw
+
+        x = (cw.load().select(["gsis_id", "team"]).drop_nulls()
+             .filter(pl.col("team") != "FA").unique(subset=["gsis_id"]))
+        out = (out.join(x, left_on="player_id", right_on="gsis_id", how="left")
+                  .with_columns(pl.coalesce(["team", "team_right"]).alias("team"))
+                  .drop("team_right"))
+    except Exception:
+        pass
+
+    try:
+        import nflreadpy as nfl
+
+        r = (nfl.load_rosters(seasons=[config.PRODUCTION_TARGET_SEASON - 1])
+             .select(["espn_id", "team"]).drop_nulls()
+             .with_columns((pl.lit("espn-") + pl.col("espn_id").cast(pl.Utf8))
+                           .alias("_key"))
+             .unique(subset=["_key"]).select(["_key", "team"]))
+        out = (out.join(r, left_on="player_id", right_on="_key", how="left")
+                  .with_columns(pl.coalesce(["team", "team_right"]).alias("team"))
+                  .drop("team_right"))
+    except Exception:
+        pass
+
+    try:
+        import nflreadpy as nfl
+
+        t = nfl.load_teams()
+        nick = {r["team_nick"].lower(): r["team_abbr"]
+                for r in t.iter_rows(named=True)
+                if r.get("team_nick") and r.get("team_abbr")}
+        out = out.with_columns(
+            pl.when(pl.col("position") == "DST")
+            .then(pl.col("player_name").str.replace(" D/ST", "")
+                  .str.to_lowercase().replace_strict(nick, default=None))
+            .otherwise(pl.col("team")).alias("team"))
+    except Exception:
+        pass
+
+    if "chart_team" in out.columns:
+        out = out.with_columns(
+            pl.coalesce(["team", "chart_team"]).alias("team"))
+    return out
 
 
 def _name_key() -> pl.Expr:
@@ -289,7 +352,57 @@ def _curve() -> pl.DataFrame:
     cp = config.PROCESSED / "pergame_curve.parquet"
     if not cp.exists():
         pergame_curve.save(pergame_curve.build())
-    return pl.read_parquet(cp)
+    return _extend_tail(pl.read_parquet(cp))
+
+
+# How many fitted ranks at the deep end define "the tail". Enough to average
+# out the noise of one rank, few enough to still be the tail.
+TAIL_RANKS = 5
+
+
+def _extend_tail(curve: pl.DataFrame) -> pl.DataFrame:
+    """Carry the curve past the deepest rank anybody was ever fitted at.
+
+    A MAN WHO FALLS OFF THE BOARD FALLS OFF YOUR TEAM. The curve is fitted on
+    (position, pre-season rank) pairs that actually occurred, so it stops --
+    WR187, RB123, QB67 -- and every deeper player got a null projection and was
+    filtered out of the board entirely. Fifty-three of them, including Keon
+    Coleman, Michael Penix Jr. and Tua Tagovailoa.
+
+    That is not a ranking problem, it is a correctness problem: `my_ids` is
+    intersected with the board, so a rostered player who is not on it silently
+    vanishes from your own team. Jalen Tolbert sat on this roster at ESPN and
+    not in the app, and every number computed from a fifteen-man bench was
+    quietly answering a question about somebody else's team.
+
+    Extending is safe because the curve has already gone FLAT by then -- the
+    last eight fitted WR ranks read 20, 20, 20, 19, 19, 19, 19, 19. So the tail
+    is the mean of the deepest few, carried outwards, and it says what it is:
+    below the fitted range everyone is at replacement level, which is exactly
+    what being ranked that deep means.
+    """
+    if not curve.height:
+        return curve
+
+    tails = (curve.sort("pr", descending=True)
+                  .group_by("position")
+                  .head(TAIL_RANKS)
+                  .group_by("position")
+                  .mean()
+                  .drop("pr"))
+
+    rows = []
+    for r in tails.iter_rows(named=True):
+        pos = r["position"]
+        last = int(curve.filter(pl.col("position") == pos)["pr"].max())
+        # Far enough for any board: the deepest ESPN publishes is ~600 overall.
+        for pr in range(last + 1, last + 260):
+            rows.append({**r, "pr": pr})
+    if not rows:
+        return curve
+    add = pl.DataFrame(rows).select(
+        [pl.col(c).cast(curve.schema[c], strict=False) for c in curve.columns])
+    return pl.concat([curve, add], how="vertical")
 
 
 def _season_distribution(b: pl.DataFrame) -> pl.DataFrame:

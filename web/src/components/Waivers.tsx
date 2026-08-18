@@ -4,6 +4,7 @@ import { api, type Claim, type TeamReport, type Wire } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
 import { Term } from "@/components/Explain";
+import { Floating, useHover } from "@/components/Floating";
 import { Simulating } from "@/components/Simulating";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -70,6 +71,7 @@ function WireCard({ c, i, active, onPick }: {
   c: Claim; i: number; active: boolean; onPick: () => void;
 }) {
   const weekly = c.adds / 17;
+  const worth = c.worth ?? c.adds;
   return (
     <motion.button
       layout
@@ -95,16 +97,18 @@ function WireCard({ c, i, active, onPick }: {
           </span>
         </PlayerHover>
         <span className="block text-[10px] uppercase tracking-wider text-muted">
+          {c.team ? <span className="num mr-1.5 text-chalk">{c.team}</span> : null}
           {QUEUE_LABEL[i] ?? `Number ${i + 1}`}
         </span>
       </div>
       <div className="shrink-0 text-right">
         <span className={cn("num block text-[14px] font-bold leading-none",
-                            c.adds > 0 ? "text-turf" : "text-muted")}>
-          {c.adds > 0 ? "+" : ""}{c.adds.toFixed(1)}
+                            worth > 0 ? "text-turf" : "text-muted")}>
+          {worth > 0 ? "+" : ""}{worth.toFixed(1)}
         </span>
         <span className="num text-[9.5px] text-muted">
-          {weekly >= 0.05 ? `+${weekly.toFixed(1)}/wk` : "no change"}
+          {c.upside ? `depth ${c.adds.toFixed(1)} · ceiling ${c.upside.toFixed(0)}`
+                    : weekly >= 0.05 ? `+${weekly.toFixed(1)}/wk` : "no change"}
         </span>
       </div>
     </motion.button>
@@ -168,6 +172,9 @@ function TheCase({ c, full, onRecord, busy }: {
           </span>
           <span className="text-[10px] font-bold" style={{ color: hue(c.position) }}>
             {c.position}
+            {c.team ? <span className="num ml-1.5 font-normal text-chalk">
+              {c.team}
+            </span> : null}
             {c.ecr ? <span className="ml-1.5 font-normal text-muted">
               drafted #{Math.round(c.ecr)}
             </span> : null}
@@ -181,11 +188,15 @@ function TheCase({ c, full, onRecord, busy }: {
         </Term>
         <div className="mt-0.5 flex items-baseline gap-2">
           <span className={cn("num text-2xl font-bold leading-none",
-                              c.adds > 0 ? "text-turf" : "text-muted")}>
-            {c.adds > 0 ? "+" : ""}{c.adds.toFixed(1)}
+                              (c.worth ?? c.adds) > 0 ? "text-turf" : "text-muted")}>
+            {(c.worth ?? c.adds) > 0 ? "+" : ""}{(c.worth ?? c.adds).toFixed(1)}
           </span>
-          <span className="num text-[11px] text-muted">
-            {(c.adds / 17).toFixed(1)} a week
+          {/* The two halves, always visible. One total nobody can take apart
+              is a number you either believe or do not. */}
+          <span className="num text-[10.5px] text-muted">
+            {c.upside
+              ? `${c.adds.toFixed(1)} as depth + a ${c.upside.toFixed(0)}-point ceiling one year in five`
+              : `${(c.adds / 17).toFixed(1)} a week`}
           </span>
         </div>
       </div>
@@ -263,63 +274,119 @@ function TheCase({ c, full, onRecord, busy }: {
 function Deck({ pos, setPos, wire }: {
   pos: string; setPos: (p: string) => void; wire: Wire | null;
 }) {
-  const rail = useRef<HTMLDivElement>(null);
+  return (
+    <motion.div
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.1}
+      onDragEnd={(_, info) => {
+        const i = DECK.indexOf(pos as typeof DECK[number]);
+        if (info.offset.x < -40) setPos(DECK[Math.min(i + 1, DECK.length - 1)]);
+        if (info.offset.x > 40) setPos(DECK[Math.max(i - 1, 0)]);
+      }}
+      className="flex cursor-grab gap-0.5 rounded-md border border-line bg-ink/40 p-0.5 active:cursor-grabbing"
+    >
+      {DECK.map((p) => {
+        const top = wire?.positions?.[p]?.[0];
+        const on = p === pos;
+        return (
+          <button
+            key={p}
+            onClick={() => setPos(p)}
+            title={top ? `${top.player_name}  ${top.adds > 0 ? "+" : ""}${top.adds.toFixed(1)}`
+                       : `nobody unowned at ${p}`}
+            className={cn(
+              "relative select-none rounded px-2.5 py-1 text-[11px] font-bold transition-colors",
+              on ? "text-ink" : "text-muted hover:text-chalk"
+            )}
+          >
+            {on && (
+              <motion.span
+                layoutId="wire-pos"
+                className="absolute inset-0 rounded bg-turf"
+                transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              />
+            )}
+            <span className="relative z-10">{p}</span>
+          </button>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/**
+ * What to do, rather than what is available.
+ *
+ * Four names at six positions with a number beside each is still a screen you
+ * have to think in front of, and the thinking is the same every week: is
+ * anybody here worth less than what is free, and who replaces him. This is
+ * that question answered — each move priced as the swap it actually is.
+ */
+function Plan({ plan, onOpen }: {
+  plan: NonNullable<Wire["plan"]>; onOpen: (c: Claim) => void;
+}) {
+  const any = plan.moves.length > 0;
+  // Open when there is something to do. A recommendation behind a click is a
+  // recommendation you find after you have already made up your mind.
+  const [open, setOpen] = useState(any);
 
   return (
-    <div className="rounded-lg border border-line bg-panel p-2">
-      <div className="mb-1.5 flex items-center gap-2 px-1">
-        <Term k="wire_queue">
-          <span className="eyebrow">Every position, four deep</span>
-        </Term>
-        <span className="ml-auto text-[10px] text-muted">drag or click</span>
-      </div>
-      <motion.div
-        ref={rail}
-        drag="x"
-        dragConstraints={{ left: 0, right: 0 }}
-        dragElastic={0.12}
-        onDragEnd={(_, info) => {
-          const i = DECK.indexOf(pos as typeof DECK[number]);
-          if (info.offset.x < -50) setPos(DECK[Math.min(i + 1, DECK.length - 1)]);
-          if (info.offset.x > 50) setPos(DECK[Math.max(i - 1, 0)]);
-        }}
-        className="flex cursor-grab gap-2 active:cursor-grabbing"
+    <section className={cn("rounded-lg border bg-panel",
+                           any ? "border-turf/40" : "border-line")}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left"
       >
-        {DECK.map((p) => {
-          const men = wire?.positions?.[p] ?? [];
-          const top = men[0];
-          const on = p === pos;
-          return (
+        <span className={cn("text-[12.5px] font-semibold",
+                            any ? "text-turf" : "text-muted")}>
+          {plan.headline}
+        </span>
+        {any && (
+          <span className="num text-[11px] text-muted">
+            worth +{plan.moves.reduce((s, m) => s + m.gain, 0).toFixed(1)} in total
+          </span>
+        )}
+        <span className="ml-auto text-[10.5px] text-muted">
+          {open ? "hide" : any ? "show me" : "why not"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="tick-in space-y-2 border-t border-line p-2">
+          {plan.moves.map((m, i) => (
             <button
-              key={p}
-              onClick={() => setPos(p)}
-              className={cn(
-                "relative min-w-0 flex-1 select-none rounded-md px-2 py-2 text-left transition-colors",
-                on ? "text-chalk" : "text-muted hover:text-chalk"
-              )}
+              key={i}
+              onClick={() => onOpen(m.add)}
+              className="block w-full rounded-md border border-line bg-raised/40 p-2.5 text-left transition-colors hover:border-turf/40"
             >
-              {on && (
-                <motion.span
-                  layoutId="wire-pos"
-                  className="absolute inset-0 rounded-md border border-turf/50 bg-turf/10"
-                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                />
-              )}
-              <span className="relative z-10 block text-[11px] font-bold"
-                    style={{ color: on ? hue(p) : undefined }}>
-                {p}
-              </span>
-              <span className="relative z-10 block truncate text-[10px] leading-tight">
-                {top ? top.player_name : "nobody"}
-              </span>
-              <span className="num relative z-10 block text-[9.5px] text-muted">
-                {top ? `${top.adds > 0 ? "+" : ""}${top.adds.toFixed(1)}` : "—"}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="num shrink-0 rounded bg-turf/15 px-1.5 py-0.5 text-[10px] font-bold text-turf">
+                  +{m.gain.toFixed(1)}
+                </span>
+                <span className="text-[12px] font-medium">
+                  {m.kind === "swap" ? (
+                    <>
+                      Claim <span className="text-turf">{m.add.player_name}</span>
+                      {", drop "}
+                      <span className="text-alarm">{m.drop?.player_name}</span>
+                    </>
+                  ) : (
+                    <>Claim <span className="text-turf">{m.add.player_name}</span></>
+                  )}
+                </span>
+                <span className="ml-auto shrink-0 text-[9.5px] font-bold"
+                      style={{ color: hue(m.add.position) }}>
+                  {m.add.position}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">{m.why}</p>
             </button>
-          );
-        })}
-      </motion.div>
-    </div>
+          ))}
+          <p className="px-1 text-[10px] leading-relaxed text-muted">{plan.note}</p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -362,9 +429,18 @@ function Rest({ rows, onPrice, pending, chosen }: {
                   <span className="h-6 w-6 shrink-0 rounded bg-raised" />
                 )}
               </PlayerHover>
-              <span className="min-w-0 flex-1 truncate text-[11.5px]">
-                {r.player_name}
-              </span>
+              {/* THE NAME, not only the face. Every other list in the app hangs
+                  the profile off the name, and hanging it off a 24-pixel
+                  thumbnail here meant three hundred kickers and defences had
+                  no profile at all as far as anyone could tell. */}
+              <PlayerHover playerId={r.player_id} className="min-w-0 flex-1">
+                <span className="block cursor-help truncate text-[11.5px]">
+                  {r.player_name}
+                </span>
+              </PlayerHover>
+              {r.team && (
+                <span className="num shrink-0 text-[9.5px] text-muted">{r.team}</span>
+              )}
               {r.owned != null && r.owned >= 25 && (
                 <Term k="wire_own">
                   <span className="num shrink-0 text-[9.5px] text-clock">
@@ -384,11 +460,59 @@ function Rest({ rows, onPrice, pending, chosen }: {
   );
 }
 
+/**
+ * An injury tag you can read into.
+ *
+ * The tooltip is built here rather than added to the glossary because the text
+ * and the availability come from the engine — `depth.status_note` — so the
+ * number in the sentence is the number the simulation uses for him, not a
+ * second copy of it written into the interface.
+ */
+function Hurt({ h }: { h: NonNullable<Wire["hurt"]>[number] }) {
+  const { ref, anchor, show, hide, keep } = useHover({ delay: 60, grace: 180 });
+  return (
+    <span ref={ref} tabIndex={0}
+          onMouseEnter={show} onMouseLeave={hide}
+          onFocus={show} onBlur={hide}
+          className="inline-flex cursor-help">
+      <span className="text-[9px] uppercase tracking-wider text-alarm underline decoration-dotted decoration-alarm/50 underline-offset-2">
+        {(h.label ?? h.status).toLowerCase()}
+      </span>
+      {anchor && (
+        <Floating anchor={anchor} width={264} z={80}
+                  interactive onEnter={keep} onLeave={hide}>
+          <div role="tooltip"
+               className="rounded-md border border-line bg-raised p-2.5 shadow-2xl">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[11px] font-semibold text-alarm">
+                {h.label ?? h.status}
+              </span>
+              {h.plays != null && (
+                <span className="num ml-auto text-[10px] text-muted">
+                  plays {Math.round(h.plays * 100)}% of what is left
+                </span>
+              )}
+            </div>
+            <span className="mt-1 block text-[11px] leading-relaxed text-muted">
+              {h.text || "ESPN has him flagged."}
+            </span>
+            <span className="mt-1.5 block text-[10px] leading-relaxed text-muted">
+              Straight from ESPN's roster feed, which is the only live injury
+              report that exists — nflverse publishes none until the season
+              starts.
+            </span>
+          </div>
+        </Floating>
+      )}
+    </span>
+  );
+}
+
 /** Your roster, with the men a claim would touch marked. */
 function Mine({ team, wire, dropId }: {
   team: TeamReport | null; wire: Wire | null; dropId?: string | null;
 }) {
-  const hurt = new Map((wire?.hurt ?? []).map((h) => [h.player_id, h.status]));
+  const hurt = new Map((wire?.hurt ?? []).map((h) => [h.player_id, h]));
   const rows = team ? [...team.starters, ...team.bench] : [];
 
   return (
@@ -438,9 +562,10 @@ function Mine({ team, wire, dropId }: {
                   </span>
                 </PlayerHover>
                 {tag ? (
-                  <span className="text-[9px] uppercase tracking-wider text-alarm">
-                    {tag.toLowerCase()}
-                  </span>
+                  // The flag explains itself. "QUESTIONABLE" in red raises the
+                  // question and answers none of it; the number the engine
+                  // actually uses for that tag does.
+                  <Hurt h={tag} />
                 ) : (
                   <span className="text-[9px] font-bold"
                         style={{ color: hue(p.position) }}>{p.position}</span>
@@ -569,6 +694,10 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
 
   return (
     <div className="space-y-3">
+      {/* THE POSITION SWITCH LIVES UP HERE. It was a deck along the bottom,
+          which put the control for the whole screen below the fold of the
+          thing it controls — you scrolled down to change position and back up
+          to read the result. */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[12px] text-chalk">
           {wire.pool} players nobody in this league owns
@@ -576,11 +705,23 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
         {wire.pulled && (
           <span className="num text-[10.5px] text-muted">· read at {wire.pulled}</span>
         )}
-        <Button size="sm" variant="ghost" className="ml-auto h-7 text-[11px]"
-                disabled={busy} onClick={() => void pull(true)}>
-          {busy ? "pricing…" : "Re-price the wire"}
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]"
+                  disabled={busy} onClick={() => void pull(true)}>
+            {busy ? "pricing…" : "Re-price"}
+          </Button>
+          <Term k="wire_queue">
+            <span className="eyebrow hidden sm:inline">position</span>
+          </Term>
+          <Deck pos={pos} setPos={(p) => { setAsked(null); setPos(p); setPicked(null); }}
+                wire={wire} />
+        </div>
       </div>
+
+      {wire.plan && (
+        <Plan plan={wire.plan}
+              onOpen={(c) => { setAsked(c); setPos(c.position); setPicked(c.player_id); }} />
+      )}
 
       {drafting && (
         <div className="rounded-md border border-clock/30 bg-clock/10 px-3 py-2">
@@ -593,7 +734,11 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
         </div>
       )}
 
-      <p className="text-[11px] leading-relaxed text-muted">{wire.note}</p>
+      {/* The standing note is about the same roster the plan is about, so it
+          only speaks when the plan has nothing to say. */}
+      {!wire.plan?.moves.length && (
+        <p className="text-[11px] leading-relaxed text-muted">{wire.note}</p>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)_minmax(0,320px)]">
         <Mine team={team} wire={wire} dropId={chosen?.drop_id} />
@@ -639,8 +784,6 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
               </p>}
         </section>
       </div>
-
-      <Deck pos={pos} setPos={(p) => { setPos(p); setPicked(null); }} wire={wire} />
     </div>
   );
 }

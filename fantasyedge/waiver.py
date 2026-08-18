@@ -47,6 +47,31 @@ MIN_ADD = 8.0
 # as the trade search, which shortlists twenty-four out of twenty thousand.
 SHORTLIST = 18
 
+# UPSIDE, AND WHY IT HAS TO BE PRICED SEPARATELY.
+#
+# `simulate_lineup` fixes the starting order in ADVANCE, by season rate, and
+# only availability moves week to week. That was the right fix -- it removed a
+# manager who knows on Wednesday what happens on Sunday -- but it also removed
+# something real: you DO promote a man who breaks out, not with Sunday's
+# results but with September's. Inside the simulation a wire pickup who has a
+# monster season never leaves the bench, so his ceiling is worth nothing to
+# him and the ranking quietly prefers the safe useful add over the flier.
+#
+# That is backwards for waivers specifically. A bench player's downside is
+# capped -- you do not start a bust -- while his upside is not, because a hit
+# becomes a starter. `draft/engine` already says exactly this about bench picks
+# and tolerates more variance there for it.
+#
+# So the ceiling is priced as its own question, of the LINEUP rather than the
+# simulation: with his 80th-percentile season in place of his median, how much
+# does he add to the eleven you would field? Zero if even his good year does
+# not crack it.
+#
+# The weight is the quantile's own exceedance probability -- p80 is by
+# definition the outcome he beats one year in five -- so this is an expected
+# value and not a taste setting.
+P_HIT = 0.20
+
 
 def _num(v) -> float | None:
     """Round for the wire, and let a missing number stay missing."""
@@ -161,14 +186,45 @@ def claims(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
         added = pl.concat([roster.select(cols), one.select(cols)], how="vertical")
         if drop_id:
             added = added.filter(pl.col("player_id") != drop_id)
-        ranked.append((_lineup_points(added, settings) - base, r))
+        at_median = _lineup_points(added, settings)
+        cheap = at_median - base
+
+        # AND WHAT HE IS WORTH IF HE HITS, which is a different question and
+        # the one a wire pickup is actually about. See UPSIDE below: the season
+        # simulation structurally cannot answer it, so it is asked here, of the
+        # lineup, with his ceiling in place of his median.
+        #
+        # MEASURED AGAINST THE SAME ROSTER HE ARRIVES ON, not against the one
+        # before the drop. Against `base` it came back 0.0 for every skill
+        # player on the wire, because the drop empties a slot and the
+        # deterministic solve prices an empty slot at zero -- cutting a kicker
+        # cost 141 points, which buried a receiver's ceiling completely. Both
+        # sides carry the same drop, so it cancels and what is left is the only
+        # thing being asked about: the difference his good season makes.
+        # NOT AT KICKER OR DEFENCE. Their band is not measured -- `models.kdst`
+        # gives every one of them the same flat ±15% around a projection,
+        # because season-long finish at those positions is close to
+        # unpredictable in August and the model says so honestly. Treating that
+        # placeholder as a ceiling turned it into signal: every defence on the
+        # wire came back with 47 points of "upside" and the whole list sorted
+        # kickers and defences to the top of it. There is a real weekly edge at
+        # both, it is a matchup, and it arrives with games.
+        up = 0.0
+        p80 = r.get("season_p80") if r["position"] not in ("K", "DST") else None
+        if p80:
+            hit = one.with_columns(pl.lit(float(p80)).alias("projected_points"))
+            h = pl.concat([roster.select(cols), hit.select(cols)], how="vertical")
+            if drop_id:
+                h = h.filter(pl.col("player_id") != drop_id)
+            up = max(_lineup_points(h, settings) - at_median, 0.0)
+        ranked.append((cheap + P_HIT * up, cheap, up, r))
     ranked.sort(key=lambda x: -x[0])
 
     # --- pass two: price the survivors properly --------------------------
     from fantasyedge.trade.evaluate import evaluate
 
     out = []
-    for cheap, r in ranked[:shortlist]:
+    for score, cheap, up, r in ranked[:shortlist]:
         gain = cheap
         if board is not None:
             v = evaluate(roster, [drop_id] if drop_id else [], [r["player_id"]],
@@ -186,11 +242,16 @@ def claims(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
             # prices depth at zero all over again, which is the third time the
             # same mistake has been found in this engine.
             gain = v.delta_mean
+        # What he is worth AS DEPTH plus what he is worth IF HE HITS, times the
+        # odds he does. Two disjoint things: the first is the weeks somebody
+        # ahead of him cannot play, the second is him taking the job outright.
+        worth = gain + P_HIT * up
+
         # `floor=None` browses rather than recommends. The positional lists
         # have to show the next man up even when he is not worth a claim today,
         # because the whole point of them is what to do when your first choice
         # is gone before your priority comes up.
-        if floor is not None and gain < floor:
+        if floor is not None and worth < floor:
             continue
         out.append({
             "player_id": r["player_id"],
@@ -199,6 +260,11 @@ def claims(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
             "ecr": r.get("ecr"),
             "projected_points": round(float(r.get("projected_points") or 0.0), 1),
             "adds": round(gain, 1),
+            # What the ceiling is worth, and the two combined -- the number the
+            # list is ordered on. Both travel so the card can show its working
+            # rather than quoting one total nobody can take apart.
+            "upside": round(up, 1),
+            "worth": round(worth, 1),
             "starts": round(cheap, 1),
             "drop_id": drop_id,
             "drop_name": drop_name,
@@ -214,7 +280,7 @@ def claims(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
             "owned": _num(r.get("percent_owned")),
         })
 
-    out.sort(key=lambda c: -c["adds"])
+    out.sort(key=lambda c: -c["worth"])
     return out[:top]
 
 
@@ -233,14 +299,16 @@ def best(groups: dict[str, list[dict]], top: int = 12,
     """
     flat = [c for men in groups.values() for c in men]
     if floor is not None:
-        flat = [c for c in flat if c["adds"] >= floor]
-    flat.sort(key=lambda c: -c["adds"])
+        flat = [c for c in flat if c["worth"] >= floor]
+    flat.sort(key=lambda c: -c["worth"])
     return flat[:top]
 
 
 def by_position(roster: pl.DataFrame, free: pl.DataFrame,
                 settings: LeagueSettings, board: pl.DataFrame | None = None,
-                deep: int = 3, n_sims: int = 800) -> dict[str, list[dict]]:
+                deep: int = 3, n_sims: int = 800,
+                cuts: list[tuple[str, str, float]] | None = None
+                ) -> dict[str, list[dict]]:
     """The top few at EVERY position, not just the best claims overall.
 
     THE DRAFT BOARD PROBLEM AGAIN. Waivers are a queue: the man you want can be
@@ -254,8 +322,12 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
     """
     base = _lineup_points(roster, settings)
     full = roster.height >= settings.roster_size
-    cut = (_cuts(roster, settings, base, board, free, n_sims)
-           if full and roster.height else [])
+    # The cut order is a property of the roster, so a caller who already has it
+    # -- the plan needs it whether or not the roster is full -- hands it over
+    # rather than paying for eighteen more simulations.
+    cut = cuts if cuts is not None else (
+        _cuts(roster, settings, base, board, free, n_sims)
+        if full and roster.height else [])
 
     out: dict[str, list[dict]] = {}
     for pos in CLAIMABLE:
@@ -268,6 +340,123 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
         if got:
             out[pos] = got
     return out
+
+
+# A man this cheap to cut is not costing you anything to keep, either. Above
+# it a drop is a real decision; below it the roster spot is the only thing he
+# is doing for you.
+DEAD_WEIGHT = 0.5
+
+
+def plan(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
+         board: pl.DataFrame, groups: dict[str, list[dict]],
+         cuts: list[tuple[str, str, float]], n_sims: int = 2000) -> dict:
+    """What to actually do, this minute, with reasons.
+
+    THE LIST IS NOT THE ANSWER. Four names at six positions with a number
+    beside each is a screen you still have to think in front of, and the
+    thinking is the same every week: is anybody on this roster worth less than
+    what is free, and if so who replaces him. That is a question with an answer,
+    so it gets answered rather than laid out.
+
+    Two shapes of move come out of it:
+
+      SWAP -- somebody on your roster is beaten by a free agent at his own
+      position. This is the move nobody makes, because a man you drafted feels
+      like an asset and the wire feels like scraps; the simulation does not
+      care where he came from. His kicker is worth 2.9 points a season LESS
+      than the best free one, and that is a claim worth making on a roster with
+      no holes and nothing obviously wrong with it.
+
+      FILL -- a spare roster spot and a man on the wire worth more than an
+      empty seat. No drop, no argument.
+
+    Every move is re-priced as the swap it actually is rather than added up
+    from two numbers that were measured separately. `adds` was measured with a
+    different drop in mind, and `cost` was measured with nobody arriving; the
+    pair of them is a third question.
+    """
+    from fantasyedge.trade.evaluate import evaluate
+
+    full = roster.height >= settings.roster_size
+    moves: list[dict] = []
+
+    # --- swaps: a man on the roster the wire beats at his own position ----
+    #
+    # A CLAIM CAN ONLY BE SPENT ONCE. Two men at the same position both worth
+    # dropping is the ordinary case, and taking the best free agent for each of
+    # them proposed the same arrival twice -- a plan you cannot carry out. Each
+    # move takes the next man down the queue, which is what that queue is for.
+    used: set[str] = set()
+    for pid, name, c in cuts:
+        if c > DEAD_WEIGHT:
+            continue
+        row = roster.filter(pl.col("player_id") == pid)
+        if not row.height:
+            continue
+        pos = row["position"][0]
+        best_at = next((m for m in groups.get(pos, [])
+                        if m["adds"] > 0 and m["player_id"] not in used), None)
+        if best_at is None:
+            continue
+        used.add(best_at["player_id"])
+        v = evaluate(roster, [pid], [best_at["player_id"]], settings, board,
+                     n_sims=n_sims, free_agents=free)
+        gain = v.delta_mean
+        if gain <= 0:
+            continue
+        moves.append({
+            "kind": "swap",
+            "add": best_at,
+            "drop": {"player_id": pid, "player_name": name, "position": pos,
+                     "cost": round(c, 1)},
+            "gain": round(gain, 1),
+            "why": (f"{name} is the cheapest man on your roster to lose — "
+                    + (f"losing him costs {c:.1f} points"
+                       if c > 0 else
+                       f"the best free {pos} is worth {abs(c):.1f} points MORE "
+                       f"than he is")
+                    + f". {best_at['player_name']} is that {pos}, and making "
+                      f"the swap is worth {gain:.1f} points across the season."),
+        })
+
+    # --- fills: a spare spot and somebody worth more than an empty seat ---
+    if not full:
+        for c in best(groups, top=3):
+            if c["player_id"] in used:
+                continue
+            used.add(c["player_id"])
+            moves.append({
+                "kind": "fill",
+                "add": c,
+                "drop": None,
+                "gain": c["adds"],
+                "why": (f"You have {settings.roster_size - roster.height} spare "
+                        f"roster spot"
+                        + ("s" if settings.roster_size - roster.height > 1 else "")
+                        + f", so {c['player_name']} costs you nothing but the "
+                          f"claim. He is worth {c['adds']:.1f} points across "
+                          f"the season."),
+            })
+            break
+
+    moves.sort(key=lambda m: -m["gain"])
+
+    if not moves:
+        head = "Nothing to do."
+        note = ("Nobody on the wire beats anybody on your roster, and you have "
+                "nothing spare to cut. That is the usual answer in a settled "
+                "league and it is worth trusting — a claim that does not change "
+                "your lineup is a roster move for its own sake.")
+    else:
+        head = (f"{len(moves)} move{'s' if len(moves) > 1 else ''} worth making")
+        note = ("Priced as swaps, not as two separate numbers added together. "
+                "Each one is what your season is worth after the move minus "
+                "what it is worth now.")
+
+    return {"headline": head, "note": note, "moves": moves,
+            "dead": [{"player_id": p, "player_name": n, "cost": round(c, 1)}
+                     for p, n, c in cuts if c <= DEAD_WEIGHT]}
 
 
 def rest(free: pl.DataFrame, pos: str, skip: set[str],
@@ -355,10 +544,10 @@ def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
     weekly = claim["adds"] / 17.0
     out.append({"k": "wire_adds", "stat": f"+{claim['adds']}",
                 "value": claim["adds"], "text":
-                f"What he adds across a simulated season once the lineup is "
-                f"re-solved around him every week — about "
-                f"{weekly:.1f} points a week. This is the number he was "
-                f"ranked on, not his projection."})
+                f"What he adds as DEPTH across a simulated season — the weeks "
+                f"somebody ahead of him cannot play, about {weekly:.1f} points "
+                f"a week. Not his projection, which is a fact about him rather "
+                f"than about your team."})
 
     # 3. WHAT HE COSTS. A claim on a full roster is a trade with the wire.
     #
@@ -387,6 +576,20 @@ def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
                         f"him is not a cost: the best free {their_pos} is worth "
                         f"{abs(cost):.1f} points MORE than he is over a season. "
                         f"Drop him whether or not you make this claim."})
+
+    # 3b. WHAT HE IS WORTH IF HE HITS. The half of a wire pickup the season
+    #     simulation cannot see, because it fixes the starting order in advance
+    #     and a man who breaks out there never leaves the bench.
+    if claim.get("upside"):
+        up = claim["upside"]
+        out.append({"k": "wire_upside", "stat": f"↑{round(up)}", "value": up,
+                    "text":
+                    f"If he hits his ceiling he does not just cover for "
+                    f"somebody — he starts, and your lineup is {round(up)} "
+                    f"points better for it. That happens about one year in "
+                    f"five, which is what puts {round(P_HIT * up, 1)} of it in "
+                    f"the total above. It is why a flier can outrank a safer "
+                    f"man who adds more depth."})
 
     # 4. HOW SAFE. A wire pickup is usually a bet on a range, not a mean.
     if claim.get("floor") is not None and claim.get("ceiling") is not None:
@@ -446,5 +649,10 @@ def note(roster: pl.DataFrame, settings: LeagueSettings, full: bool,
                 "drop it forces. The man being cut is the one whose loss costs "
                 "your lineup least, which is rarely the one with the smallest "
                 "projection.")
-    return ("You have a spare roster spot, so these cost you nothing but the "
-            "claim itself.")
+    # The COUNT, not "a spare roster spot" -- the plan above this says "you
+    # have 2 spare roster spots" and two sentences disagreeing about the same
+    # roster on the same screen is the kind of thing that makes a reader stop
+    # trusting both of them.
+    spare = settings.roster_size - roster.height
+    return (f"You have {spare} spare roster spot{'s' if spare != 1 else ''}, so "
+            f"these cost you nothing but the claim itself.")

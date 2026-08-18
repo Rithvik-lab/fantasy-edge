@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 import draft as D
 from fantasyedge import config
-from fantasyedge.data import espn_draft, refresh
+from fantasyedge.data import depth, espn_draft, refresh
 from fantasyedge import waiver
 from fantasyedge.draft import explain, report
 from fantasyedge.draft.engine import (
@@ -293,6 +293,7 @@ def _snapshot() -> dict:
         "platform": st.platform,
         "n_teams": st.settings.n_teams,
         "roster_size": st.settings.roster_size,
+        "ir_slots": st.settings.ir_slots,
         "lineup": dict(st.settings.lineup),
         "points_per_reception": st.settings.points_per_reception,
         "my_slot": st.my_slot,
@@ -460,7 +461,7 @@ def connect_espn(cfg: EspnIn) -> dict:
             STATE.settings = LeagueSettings(
                 n_teams=info.n_teams, lineup=info.lineup,
                 points_per_reception=info.points_per_reception,
-                roster_size=info.roster_size)
+                roster_size=info.roster_size, ir_slots=info.ir_slots)
             D._BOARD = None
         tid = espn_draft.my_team_id(payload, swid)
         STATE.swid_matched = tid is not None
@@ -658,6 +659,24 @@ def _ingest(payload: dict) -> None:
             STATE.draft_time = info.draft_time
         STATE.draft_complete = bool(
             info.complete or (total and picks.height >= total))
+
+        # THE ROSTER SHAPE COMES BACK EVERY SYNC, so it is re-read every sync.
+        # It was read once at connect and then trusted forever, which meant a
+        # league saved under a parser that mistook the IR slot for a bench spot
+        # kept the extra man of room for the rest of the season -- and the only
+        # way to correct it was to disconnect and reattach the league.
+        # Settings that arrive free with a call we already make should not need
+        # a migration.
+        if STATE.settings and (
+                STATE.settings.roster_size != info.roster_size
+                or STATE.settings.ir_slots != info.ir_slots):
+            STATE.settings = LeagueSettings(
+                n_teams=STATE.settings.n_teams,
+                lineup=dict(STATE.settings.lineup),
+                points_per_reception=STATE.settings.points_per_reception,
+                roster_size=info.roster_size,
+                ir_slots=info.ir_slots,
+                flex_eligible=STATE.settings.flex_eligible)
 
     if not picks.height:
         # Connected early. Nothing to ingest, but do not leave a stale local
@@ -964,6 +983,7 @@ def team_report() -> dict:
     shape = report.tradeable(strength)
     words = report.summarise(shape, grade)
     shots = _headshots(b)
+    hurt_now = _injury_status()
 
     def rows(df: pl.DataFrame, starting: bool) -> list[dict]:
         if not df.height:
@@ -990,6 +1010,16 @@ def team_report() -> dict:
         # -- and it shows up as an empty slot on the lineup card, which is
         # where you would look for it anyway.
         "gaps": report.unfilled(starters, st.settings),
+        # INJURED RESERVE, as many seats as the league actually has. Shown even
+        # when empty, because an empty IR seat is a thing you can use and an
+        # invisible one is a thing you forget you have -- and it is the reason
+        # the roster limit is what it is rather than one man higher.
+        "ir_slots": st.settings.ir_slots,
+        "ir": [{"player_id": p, "player_name": n, "position": pos,
+                "status": hurt_now.get(p)}
+               for p, n, pos in zip(mine["player_id"], mine["player_name"],
+                                    mine["position"])
+               if hurt_now.get(p) in depth.IR_ELIGIBLE],
         "byes": report.bye_conflicts(
             report.with_byes(mine, config.PRODUCTION_TARGET_SEASON),
             st.settings),
@@ -1377,14 +1407,20 @@ def waivers(top: int = 12, force: bool = False) -> dict:
     # ONE search, two views of it. Every position is priced four deep and the
     # headline list is the best of those -- see waiver.best for why ranking the
     # wire twice put contradicting numbers on the same screen.
+    # The cut order costs eighteen simulations and the PLAN needs it whether or
+    # not the roster is full -- "who is worth dropping" is the question, not a
+    # consequence of being out of room. Computed once, handed to both.
+    cuts = waiver._cuts(mine, st.settings,
+                        waiver._lineup_points(mine, st.settings), b, free)
     groups = waiver.by_position(mine, free, st.settings, board=b,
-                                deep=4, n_sims=2000)
+                                deep=4, n_sims=2000, cuts=cuts)
     for men in groups.values():
         for i, c in enumerate(men):
             c["why"] = waiver.why(c, mine, st.settings, free,
                                   nxt=men[i + 1] if i + 1 < len(men) else None)
     rows = waiver.best(groups, top=top)
     priced = {c["player_id"] for men in groups.values() for c in men}
+    todo = waiver.plan(mine, free, st.settings, b, groups, cuts)
 
     full = mine.height >= st.settings.roster_size
     out = {
@@ -1404,11 +1440,15 @@ def waivers(top: int = 12, force: bool = False) -> dict:
         # column nobody has read yet. They price on click.
         "rest": {pos: _with_free_faces(waiver.rest(free, pos, priced), b)
                  for pos in waiver.CLAIMABLE},
+        # Each flag arrives with what it MEANS and the availability the engine
+        # actually uses for it, so hovering a red tag answers the question it
+        # raises rather than repeating the word in a bigger font.
         "hurt": [{"player_id": p, "player_name": n, "position": pos,
-                  "status": hurt[p]}
+                  "status": hurt[p], **(depth.status_note(hurt[p]) or {})}
                  for p, n, pos in zip(mine["player_id"], mine["player_name"],
                                       mine["position"])
                  if hurt.get(p) and hurt[p] not in ("ACTIVE", "NORMAL")],
+        "plan": todo,
         "week": stamp.week or 0,
         "note": waiver.note(mine, st.settings, full, len(rows)),
         "streaming": ("Kicker and defence are ranked on the season here. Once "
@@ -1447,8 +1487,14 @@ def waiver_price(player_id: str) -> dict:
 
 def _with_free_faces(rows: list[dict], board: pl.DataFrame) -> list[dict]:
     shots = _headshots(board)
+    # Who he plays for, in the letters everyone reads. A wire is a list of
+    # names with no context at all otherwise -- two of them are handcuffs to
+    # men you already own and you cannot tell which without knowing the team.
+    team = ({r["player_id"]: r["team"] for r in board.iter_rows(named=True)}
+            if "team" in board.columns else {})
     for r in rows:
         r["headshot"] = shots.get(r["player_id"])
+        r["team"] = team.get(r["player_id"])
     return rows
 
 
@@ -2561,7 +2607,8 @@ def load_league(league_id: str) -> dict:
             lineup=d.get("lineup") or {"QB": 1, "RB": 2, "WR": 2, "TE": 1,
                                        "FLEX": 1, "K": 1, "DST": 1},
             points_per_reception=d.get("points_per_reception", 1.0),
-            roster_size=d.get("roster_size", 16))
+            roster_size=d.get("roster_size", 16),
+            ir_slots=d.get("ir_slots", 0))
         STATE.platform = d.get("platform") or "espn"
         STATE.league_id = d.get("id") or league_id
         STATE.name = d.get("name") or ""

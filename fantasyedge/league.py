@@ -53,6 +53,13 @@ class LeagueSettings:
     points_per_reception: float = 1.0
     roster_size: int = 16
     flex_eligible: tuple[str, ...] = ("RB", "WR", "TE")
+    # INJURED RESERVE IS NOT BENCH. ESPN reports both in the same map of slot
+    # counts and this counted them together, so a league with sixteen active
+    # spots and one IR read as a seventeen-man roster -- and the app spent that
+    # phantom spot, recommending claims that cost nothing because there was
+    # room for them. There is not. An IR seat only holds a man ESPN lists as
+    # unavailable, which makes it a different resource, not a bigger bench.
+    ir_slots: int = 0
 
     def __post_init__(self) -> None:
         if self.n_teams < 2:
