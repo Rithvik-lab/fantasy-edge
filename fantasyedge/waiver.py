@@ -514,40 +514,77 @@ def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
     """
     out: list[dict] = []
     pos = claim["position"]
+    him = claim["player_name"]
     starters, _ = optimal_lineup(roster, settings)
     at = (starters.filter(pl.col("position") == pos)
           if starters.height else roster.head(0))
     worst = float(at["projected_points"].min()) if at.height else None
     proj = float(claim.get("projected_points") or 0.0)
 
+    # EVERY LINE SAYS WHO IT IS ABOUT. The panel scrolls, the name is at the
+    # top of it, and he asked "who is he?" of a card three reasons deep --
+    # which is the whole answer: prose about "him" is unreadable the moment it
+    # is separated from the one place his name appears.
+    #
+    # A DEFENCE AND A KICKER DO NOT MISS GAMES. They are the two positions
+    # where "the weeks one of them is out" is simply false -- you start one
+    # every week and the only week you do not have him is his bye. Saying it
+    # anyway produced "he does not beat the DSTs you already start", plural,
+    # about a one-slot position, explaining injury cover for a team.
+    flat = pos in ("K", "DST")
+    mine_at = at["player_name"][0] if at.height else None
+    # Whether he walks into the lineup or waits behind somebody, decided once
+    # so the lines below cannot contradict each other. They did: the kicker
+    # card said "Butker starts, two points above Jake Bates" and then called
+    # what he adds "the bye week you would otherwise field nobody".
+    starts = worst is None or proj > worst
+
     # 1. DOES HE CRACK YOUR LINEUP. The half of the question every other
     #    waiver list leaves out.
     if worst is None:
         out.append({"k": "wire_adds", "stat": "empty", "value": proj, "text":
-                    f"You are not starting anybody at {pos}, so he does not "
+                    f"You are not starting anybody at {pos}, so {him} does not "
                     f"have to be good — he has to exist. Everything below is "
                     f"measured against fielding nobody."})
     elif proj > worst:
         beaten = at.sort("projected_points").head(1)
         out.append({"k": "wire_adds", "stat": f"+{round(proj - worst)}",
                     "value": proj - worst, "text":
-                    f"He starts. Projected {round(proj - worst)} points over "
+                    f"{him} starts. Projected {round(proj - worst)} points over "
                     f"the season above {beaten['player_name'][0]}, who is your "
                     f"weakest {pos} starter today."})
+    elif flat:
+        out.append({"k": "wire_adds", "stat": "backup", "value": proj - worst,
+                    "text":
+                    f"{him} does not beat {mine_at}, who you start every week. "
+                    f"A {pos} never misses a game, so the only week this is "
+                    f"worth anything is {mine_at}'s bye — and that is the whole "
+                    f"of the number below."})
     else:
-        out.append({"k": "wire_adds", "stat": "depth", "value": proj - worst, "text":
-                    f"He does not beat the {pos}s you already start. What he "
-                    f"is worth is the weeks one of them is out — which is why "
-                    f"the number below is small but not zero."})
+        many = at.height > 1
+        out.append({"k": "wire_adds", "stat": "depth", "value": proj - worst,
+                    "text":
+                    f"{him} does not beat the {pos}"
+                    + (f"s you already start" if many
+                       else f" you already start, {mine_at}")
+                    + f". What he is worth is the weeks "
+                    + ("one of them is" if many else "he is")
+                    + f" out — which is why the number below is small but not "
+                      f"zero."})
 
     # 2. WHAT HE IS WORTH, from the simulation rather than the projection.
     weekly = claim["adds"] / 17.0
     out.append({"k": "wire_adds", "stat": f"+{claim['adds']}",
                 "value": claim["adds"], "text":
-                f"What he adds as DEPTH across a simulated season — the weeks "
-                f"somebody ahead of him cannot play, about {weekly:.1f} points "
-                f"a week. Not his projection, which is a fact about him rather "
-                f"than about your team."})
+                (f"What {him} adds across a simulated season, once the lineup "
+                 f"is re-solved around him every week"
+                 if starts else
+                 f"What {him} adds as DEPTH across a simulated season — "
+                 + ("the bye week you would otherwise field nobody"
+                    if flat else
+                    "the weeks somebody ahead of him cannot play"))
+                + f", about {weekly:.1f} points a week. Not his projection, "
+                  f"which is a fact about him rather than about your team."})
 
     # 3. WHAT HE COSTS. A claim on a full roster is a trade with the wire.
     #

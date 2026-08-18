@@ -162,7 +162,11 @@ function TheCase({ c, full, onRecord, busy }: {
   // is an abrupt appearance rather than an empty box.
   return (
     <div key={c.player_id} className="tick-in space-y-3">
-      <div className="flex items-center gap-3">
+      {/* STICKY, because the panel scrolls and this is the only place his name
+          appears. He asked "who is he?" of a card three reasons deep, which is
+          the answer on its own: prose about "him" is unreadable the moment it
+          is separated from the name. The reasons name him too now. */}
+      <div className="sticky top-0 z-10 -mx-3 -mt-3 flex items-center gap-3 border-b border-line bg-panel px-3 py-2.5">
         <PlayerHover playerId={c.player_id} className="shrink-0">
           <Face c={c} size={46} />
         </PlayerHover>
