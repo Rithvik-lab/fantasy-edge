@@ -107,7 +107,7 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
         .filter(pl.col("projected_points").is_not_null())
         .select(["player_id", "player_name", "position", "projected_points",
                  "ecr", "sd"]
-                + (["draft_rank"] if "draft_rank" in m.columns else []))
+                + [c for c in ("draft_rank", "percent_owned") if c in m.columns])
         .with_columns(pl.lit(False).alias("rookie"))
     )
 
@@ -141,8 +141,8 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
         if "ecr" not in kd.columns:
             kd = kd.with_columns(pl.col("adp").alias("ecr"))
         keep = ["player_id", "player_name", "position", "projected_points",
-                "ecr", "sd", "draft_rank", "rookie", "season_p20", "season_p50",
-                "season_p80", "expected_games"]
+                "ecr", "sd", "draft_rank", "percent_owned", "rookie",
+                "season_p20", "season_p50", "season_p80", "expected_games"]
         kd = kd.select([c for c in keep if c in kd.columns])
         b = pl.concat([b, kd], how="diagonal")
 

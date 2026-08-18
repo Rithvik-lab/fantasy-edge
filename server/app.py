@@ -15,6 +15,7 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1328,14 +1329,23 @@ def _expected_rows(scope: str, top: int, team_id: int | None = None) -> list[dic
     } for r in rows.iter_rows(named=True)]
 
 
+# The last wire we priced, and what it was priced against. Waivers are the one
+# screen meant to be left open and re-pulled -- an injury on Thursday changes
+# the answer -- and pricing six positions four deep is four seconds of
+# simulation. So the poll is cheap when nothing moved and honest when it did:
+# the key is every input the answer depends on.
+_WIRE: tuple[tuple, dict] | None = None
+
+
 @app.get("/api/waivers")
-def waivers(top: int = 12) -> dict:
+def waivers(top: int = 12, force: bool = False) -> dict:
     """The wire, ranked by what each man would do to YOUR lineup.
 
     Not a list of the best free agents -- that list is identical for all twelve
     managers, which is the tell that it is not about anybody's roster. A claim
     is an add AND a drop, and both are priced here.
     """
+    global _WIRE
     st = _require()
     b = _board()
     free = _free_agents(b)
@@ -1356,15 +1366,42 @@ def waivers(top: int = 12) -> dict:
             free = b2.filter(pl.col("player_id").is_in(free["player_id"].to_list()))
             mine = b2.filter(pl.col("player_id").is_in(st.my_ids))
 
-    rows = waiver.claims(mine, free, st.settings, top=top, board=b)
+    hurt = _injury_status()
+    key = (tuple(sorted(mine["player_id"].to_list())),
+           len(free), hash(tuple(sorted(free["player_id"].to_list()))),
+           stamp.week or 0, top,
+           tuple(sorted((p, s) for p, s in hurt.items())))
+    if not force and _WIRE is not None and _WIRE[0] == key:
+        return _WIRE[1]
+
+    # ONE search, two views of it. Every position is priced four deep and the
+    # headline list is the best of those -- see waiver.best for why ranking the
+    # wire twice put contradicting numbers on the same screen.
+    groups = waiver.by_position(mine, free, st.settings, board=b,
+                                deep=4, n_sims=2000)
+    for men in groups.values():
+        for c in men:
+            c["why"] = waiver.why(c, mine, st.settings, free)
+    rows = waiver.best(groups, top=top)
+
     full = mine.height >= st.settings.roster_size
-    return {
+    out = {
         "empty": False,
         "roster": mine.height,
         "limit": st.settings.roster_size,
         "full": full,
         "pool": free.height,
         "claims": _with_free_faces(rows, b),
+        # EVERY position carries its next few, because waivers are a queue and
+        # the man you want can be claimed before your priority comes up. A
+        # single ranked list leaves you with nothing to do when he is gone.
+        "positions": {pos: _with_free_faces(men, b)
+                      for pos, men in groups.items()},
+        "hurt": [{"player_id": p, "player_name": n, "position": pos,
+                  "status": hurt[p]}
+                 for p, n, pos in zip(mine["player_id"], mine["player_name"],
+                                      mine["position"])
+                 if hurt.get(p) and hurt[p] not in ("ACTIVE", "NORMAL")],
         "week": stamp.week or 0,
         "note": waiver.note(mine, st.settings, full, len(rows)),
         "streaming": ("Kicker and defence are ranked on the season here. Once "
@@ -1372,7 +1409,10 @@ def waivers(top: int = 12) -> dict:
                       "streaming them is actually worth something — the "
                       "softest matchup returns about 3.8 points a week more "
                       "than the toughest at defence."),
+        "pulled": datetime.now().strftime("%H:%M"),
     }
+    _WIRE = (key, out)
+    return out
 
 
 def _with_free_faces(rows: list[dict], board: pl.DataFrame) -> list[dict]:

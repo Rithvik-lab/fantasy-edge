@@ -73,16 +73,35 @@ show("ONE-FOR-ONE — same stud, one comparable back",
 
 show("THREE-FOR-ONE — the other direction: depth out, stud in",
      evaluate(mine, ids(three[:2] + ["Khalil Shakir"]), ids(["Bijan Robinson"]), S, board))
+CONSOLIDATE = dict(LAST)
 
 show("PURE ADD — give nothing, take a bench arm (should be ~free, not huge)",
      evaluate(mine, [], ids(["Jerry Jeudy"]), S, board))
+PURE_ADD = dict(LAST)
 
 
-# THE CLAIM THIS FILE EXISTS TO CHECK, enforced rather than printed. A script
+# THE CLAIMS THIS FILE EXISTS TO CHECK, enforced rather than printed. A script
 # that says "NO — check this" and exits zero is reported green by every runner
 # there is, including mine, which is how the fairness check sat broken through
 # a whole day of commits.
-if not (LAST["naive_value_delta"] < 0 < LAST["delta_median"]):
+#
+# The check used to be "value says lose, lineup says win" on whichever verdict
+# happened to be last, which was the pure add -- and it passed only because
+# subtracting two independently-noisy medians left a point or two of jitter on
+# a trade whose true effect is exactly nothing. Paired, a pure add is 0.0 and
+# the check failed. It was testing the noise.
+#
+# So both claims are stated on the case that carries them, and neither is a
+# strict inequality against zero.
+if not (CONSOLIDATE["opportunity_gap"] > 50):
     raise SystemExit(
-        f"the two scales agree ({LAST['naive_value_delta']:+.0f} vs "
-        f"{LAST['delta_median']:+.0f}) — this file exists to show them disagree")
+        f"three-for-one: value totals {CONSOLIDATE['naive_value_delta']:+.0f} vs "
+        f"lineup {CONSOLIDATE['delta_median']:+.0f} — the value scale is supposed "
+        f"to overstate a consolidation badly, and here it does not")
+
+if abs(PURE_ADD["delta_median"]) > 5 or PURE_ADD["naive_value_delta"] > -20:
+    raise SystemExit(
+        f"pure add: value totals {PURE_ADD['naive_value_delta']:+.0f}, lineup "
+        f"{PURE_ADD['delta_median']:+.0f} — a below-replacement bench arm should "
+        f"be worth roughly nothing to a starting lineup and a large negative on "
+        f"the value scale")

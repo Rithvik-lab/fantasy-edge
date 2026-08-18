@@ -79,7 +79,7 @@ def depth_chart(season: int) -> pl.DataFrame:
         return pl.DataFrame()
 
     latest = d.filter(pl.col("dt") == d["dt"].max())
-    return (
+    c = (
         latest.filter(pl.col("pos_abb").is_in(list(FANTASY_POS)))
         .select([
             pl.col("gsis_id").alias("player_id"),
@@ -91,6 +91,37 @@ def depth_chart(season: int) -> pl.DataFrame:
         .filter(pl.col("player_id").is_not_null())
         .unique(subset=["player_id"], keep="first")
     )
+    return _fullbacks_behind_the_backs(c)
+
+
+def _fullbacks_behind_the_backs(chart: pl.DataFrame) -> pl.DataFrame:
+    """A fullback is not his team's first running back.
+
+    The feed ranks within a position GROUP, so all fourteen fullbacks in the
+    league arrive as FB1 -- depth_rank 1. The board calls them running backs,
+    and `apply` only ever moves a man DOWN, so a fullback was the one back in
+    the league who could never be demoted while every genuine handcuff was.
+
+    The wire made the cost of that obvious: Kyle Juszczyk came back as the best
+    running back available in a twelve-team league, with Patrick Ricard and
+    Reggie Gilliam behind him. Four of the top ten free-agent backs blocked for
+    a living.
+
+    So a fullback is ranked where he actually is -- behind every running back
+    on his own chart. Derived from the chart itself rather than picked: SF list
+    three backs, so Juszczyk is the fourth.
+    """
+    if not chart.height or "FB" not in chart["chart_pos"].unique().to_list():
+        return chart
+    deep = (chart.filter(pl.col("chart_pos") == "RB")
+                 .group_by("chart_team")
+                 .agg(pl.col("depth_rank").max().alias("_backs")))
+    return (chart.join(deep, on="chart_team", how="left")
+            .with_columns(
+                pl.when(pl.col("chart_pos") == "FB")
+                .then(pl.col("depth_rank") + pl.col("_backs").fill_null(2))
+                .otherwise(pl.col("depth_rank")).cast(pl.Int32).alias("depth_rank"))
+            .drop("_backs"))
 
 
 def injuries(season: int, week: int | None = None) -> pl.DataFrame:

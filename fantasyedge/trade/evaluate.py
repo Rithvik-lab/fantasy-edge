@@ -284,6 +284,11 @@ class TradeVerdict:
     dropped: list[dict] = field(default_factory=list)
     naive_value_delta: float = 0.0
     opportunity_gap: float = 0.0
+    # Expected points gained, paired the same way as the median above. This is
+    # the one that can see DEPTH: a backup is worth nothing in the median
+    # season, because in the median season your starter plays -- his entire
+    # value lives in the tail, and a median is blind to tails by construction.
+    delta_mean: float = 0.0
     # False when there was no roster to price against. The difference matters
     # enough that it travels with the verdict rather than being inferred.
     roster_priced: bool = True
@@ -308,8 +313,7 @@ class TradeVerdict:
             # a left-tail effect and nothing else. A verdict quoting only the
             # median is structurally blind to it, which is how a rookie for a
             # veteran at the same projection reads as a coin flip.
-            "delta_mean": round(self.after.get("mean", 0.0)
-                                - self.before.get("mean", 0.0), 1),
+            "delta_mean": round(self.delta_mean, 1),
             "delta_floor": round(self.delta_floor, 1),
             "delta_ceiling": round(self.delta_ceiling, 1),
             "win_probability": round(self.win_probability, 3),
@@ -484,7 +488,20 @@ def evaluate(
     get_rows = _rows(board, get_ids)
     naive = (sum(r.get("vor") or 0.0 for r in get_rows)
              - sum(r.get("vor") or 0.0 for r in give_rows))
-    real = a["median"] - b["median"]
+
+    # PAIRED, NOT TWO MEDIANS SUBTRACTED. Both rosters are simulated on the
+    # same player draws -- that is what the per-player seed is for -- so the
+    # honest answer is the middle of the season-by-season DIFFERENCE, not the
+    # gap between two independently noisy medians.
+    #
+    # The old form threw away everything the common draws bought. Adding one
+    # quarterback to this roster priced at +2.1, +9.7, +2.3, -2.9 as the
+    # simulation count went 500, 1000, 2000, 8000 -- a ten-point swing on a
+    # claim being judged against an eight-point bar, i.e. pure sampling noise
+    # deciding the recommendation. Paired, the same claim is +0.0 at every one
+    # of those counts.
+    diff = after_totals - before_totals
+    real = float(np.median(diff))
 
     note = ""
     if dropped.height:
@@ -503,6 +520,7 @@ def evaluate(
         pct_change=magnitudes(real, b["median"])[0],
         per_week=magnitudes(real, b["median"])[1],
         delta_median=real,
+        delta_mean=float(diff.mean()),
         delta_floor=a["floor"] - b["floor"],
         delta_ceiling=a["ceiling"] - b["ceiling"],
         # Paired: same player draws on both sides, so this is the probability
