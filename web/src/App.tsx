@@ -341,11 +341,13 @@ export default function App() {
           </span>
 
           <div className="ml-auto flex items-center gap-3">
-            {/* Waivers is a question about a roster you already have. While
-                the draft runs, everyone unowned is a PICK, and the board is
-                the screen for that. */}
+            {/* NOTHING IS GATED HERE ANY MORE. Waivers was disabled until the
+                draft finished, for a real reason -- while the draft runs,
+                everyone unowned is a PICK and the board is the screen for that
+                -- and the reason was invisible from the outside. A greyed
+                button says only "no", so the mode opens and explains itself
+                instead. */}
             <ModeSwitch mode={mode} onMode={setMode}
-                        disabled={status.phase === "complete" ? [] : ["waiver"]}
                         complete={status.phase === "complete"} />
             <GlossaryDrawer />
             {/* THE DRAFT CLOCK GOES AWAY WHEN THE DRAFT DOES. Round, overall
@@ -430,7 +432,7 @@ export default function App() {
           </div>
         ) : mode === "waiver" ? (
           <div key="waiver" className="tick-in">
-            <Waivers />
+            <Waivers drafting={status.phase !== "complete"} />
           </div>
         ) : (
         <>

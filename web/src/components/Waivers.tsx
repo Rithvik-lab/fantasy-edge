@@ -459,7 +459,7 @@ function Mine({ team, wire, dropId }: {
   );
 }
 
-export function Waivers() {
+export function Waivers({ drafting }: { drafting?: boolean }) {
   const [wire, setWire] = useState<Wire | null>(null);
   const [team, setTeam] = useState<TeamReport | null>(null);
   const [pos, setPos] = useState<string>("RB");
@@ -581,6 +581,17 @@ export function Waivers() {
           {busy ? "pricing…" : "Re-price the wire"}
         </Button>
       </div>
+
+      {drafting && (
+        <div className="rounded-md border border-clock/30 bg-clock/10 px-3 py-2">
+          <p className="text-[11px] leading-relaxed text-clock">
+            Your draft is not finished, so "unowned" here means UNDRAFTED — this
+            is the draft board with a different question on top of it. The
+            numbers are real, but until the draft ends the men below are picks
+            rather than claims, and the board is the better screen for that.
+          </p>
+        </div>
+      )}
 
       <p className="text-[11px] leading-relaxed text-muted">{wire.note}</p>
 
