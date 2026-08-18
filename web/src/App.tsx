@@ -18,6 +18,7 @@ import { useFlight } from "@/components/Flight";
 import { Booting } from "@/components/Booting";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
+import { Waivers } from "@/components/Waivers";
 import { MyTeam } from "@/components/MyTeam";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -72,7 +73,7 @@ export default function App() {
   // mid-draft.
   const [tab, setTab] = useState<Tab>("room");
   const wasLive = useRef(false);
-  const [mode, setMode] = useState<Mode>("draft");
+  const [mode, setMode] = useState<Mode>("waiver");
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -340,7 +341,11 @@ export default function App() {
           </span>
 
           <div className="ml-auto flex items-center gap-3">
-            <ModeSwitch mode={mode} onMode={setMode} disabled={["waiver"]}
+            {/* Waivers is a question about a roster you already have. While
+                the draft runs, everyone unowned is a PICK, and the board is
+                the screen for that. */}
+            <ModeSwitch mode={mode} onMode={setMode}
+                        disabled={status.phase === "complete" ? [] : ["waiver"]}
                         complete={status.phase === "complete"} />
             <GlossaryDrawer />
             {/* THE DRAFT CLOCK GOES AWAY WHEN THE DRAFT DOES. Round, overall
@@ -422,6 +427,10 @@ export default function App() {
         {mode === "trade" ? (
           <div key="trade" className="tick-in">
             <Trade />
+          </div>
+        ) : mode === "waiver" ? (
+          <div key="waiver" className="tick-in">
+            <Waivers />
           </div>
         ) : (
         <>

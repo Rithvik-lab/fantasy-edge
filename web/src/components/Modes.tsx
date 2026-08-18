@@ -44,7 +44,7 @@ export function ModeSwitch({ mode, onMode, disabled, complete }: {
             key={m.id}
             onClick={() => !off && onMode(m.id)}
             disabled={off}
-            title={off ? "needs the season to have started" : m.hint}
+            title={off ? "not until the draft is over — until then everyone unowned is still a pick" : m.hint}
             className={cn(
               "relative rounded px-3 py-1 text-[11px] font-medium transition-colors",
               on ? "text-ink" : off ? "text-muted/40" : "text-muted hover:text-chalk"

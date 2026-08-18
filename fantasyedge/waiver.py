@@ -61,18 +61,42 @@ def _lineup_points(roster: pl.DataFrame, settings: LeagueSettings) -> float:
         if starters.height else 0.0
 
 
-def _cuts(roster: pl.DataFrame, settings: LeagueSettings,
-          base: float) -> list[tuple[str, str, float]]:
+def _cuts(roster: pl.DataFrame, settings: LeagueSettings, base: float,
+          board: pl.DataFrame | None = None, free: pl.DataFrame | None = None,
+          n_sims: int = 2000) -> list[tuple[str, str, float]]:
     """Everyone on the roster, ordered by what losing him costs the lineup.
 
     Not by projection. The last bench receiver is usually a smaller loss than a
     kicker however the two look side by side, because the kicker is starting
     and the receiver is not.
+
+    AND NOT BY THE DETERMINISTIC LINEUP EITHER, which is the version this
+    started as. That measure prices every bench player at exactly zero -- it
+    solves one lineup, on projections, in which no starter is ever hurt -- so
+    on a full roster every candidate tied at 0.0 and the cut fell to whoever
+    happened to sort first. It picked a startable running back over a spare
+    kicker and reported the cost as "-0.0".
+
+    So the cut is simulated, the same way the claim it pays for is. One pass
+    over the roster, once per request: eighteen simulations, about two seconds,
+    and the difference between dropping the right man and dropping a random one.
     """
-    out = [(r["player_id"], r["player_name"],
-            base - _lineup_points(
-                roster.filter(pl.col("player_id") != r["player_id"]), settings))
-           for r in roster.iter_rows(named=True)]
+    if board is None:
+        return sorted(
+            [(r["player_id"], r["player_name"],
+              base - _lineup_points(
+                  roster.filter(pl.col("player_id") != r["player_id"]), settings))
+             for r in roster.iter_rows(named=True)],
+            key=lambda c: c[2])
+
+    from fantasyedge.trade.evaluate import evaluate
+
+    out = []
+    for r in roster.iter_rows(named=True):
+        v = evaluate(roster, [r["player_id"]], [], settings, board,
+                     n_sims=n_sims, free_agents=free)
+        # Losing him is a negative delta; the COST is how negative.
+        out.append((r["player_id"], r["player_name"], -v.delta_mean))
     out.sort(key=lambda c: c[2])
     return out
 
@@ -116,7 +140,9 @@ def claims(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
     # asking the same question six times over (once per position) -- the cut
     # order is a property of the roster and does not change with the pool.
     if cuts is None:
-        cuts = _cuts(roster, settings, base) if full and roster.height else []
+        cuts = (_cuts(roster, settings, base, board,
+                      pool_all if pool_all is not None else free, n_sims)
+                if full and roster.height else [])
 
     pool = (free.filter(pl.col("position").is_in(list(CLAIMABLE)))
                 .sort("projected_points", descending=True, nulls_last=True)
@@ -228,7 +254,8 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
     """
     base = _lineup_points(roster, settings)
     full = roster.height >= settings.roster_size
-    cut = _cuts(roster, settings, base) if full and roster.height else []
+    cut = (_cuts(roster, settings, base, board, free, n_sims)
+           if full and roster.height else [])
 
     out: dict[str, list[dict]] = {}
     for pos in CLAIMABLE:
@@ -243,8 +270,50 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
     return out
 
 
+def rest(free: pl.DataFrame, pos: str, skip: set[str],
+         limit: int = 40) -> list[dict]:
+    """The rest of the wire at one position, unpriced.
+
+    The four priced men are the RECOMMENDATION; this is the wire itself, which
+    is a different thing and worth having on screen. Nothing here is claimed to
+    be worth adding -- pricing a man is a season simulation and doing it for
+    three hundred names to fill a column would be a waste of four seconds.
+    They price on click.
+    """
+    pool = (free.filter((pl.col("position") == pos)
+                        & ~pl.col("player_id").is_in(list(skip)))
+                .sort("projected_points", descending=True, nulls_last=True)
+                .head(limit))
+    return [{
+        "player_id": r["player_id"],
+        "player_name": r["player_name"],
+        "position": r["position"],
+        "projected_points": round(float(r.get("projected_points") or 0.0), 1),
+        "ecr": r.get("ecr"),
+        "owned": _num(r.get("percent_owned")),
+    } for r in pool.iter_rows(named=True)]
+
+
+def one(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
+        board: pl.DataFrame, player_id: str, n_sims: int = 2000) -> dict | None:
+    """Price a single man off the wire, on demand.
+
+    Same measure as the ranked list, run for somebody you asked about rather
+    than somebody we suggested. A browse list you cannot interrogate is a
+    ranking with extra steps.
+    """
+    got = claims(roster, free.filter(pl.col("player_id") == player_id),
+                 settings, top=1, board=board, n_sims=n_sims, floor=None,
+                 shortlist=1, pool_all=free)
+    if not got:
+        return None
+    c = got[0]
+    c["why"] = why(c, roster, settings, free)
+    return c
+
+
 def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
-        free: pl.DataFrame | None = None) -> list[dict]:
+        free: pl.DataFrame | None = None, nxt: dict | None = None) -> list[dict]:
     """Why this man is worth a claim, from the numbers that ranked him.
 
     Same rule as everywhere else in this project: every line carries the figure
@@ -265,71 +334,89 @@ def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
     # 1. DOES HE CRACK YOUR LINEUP. The half of the question every other
     #    waiver list leaves out.
     if worst is None:
-        out.append({"stat": "empty slot", "value": proj, "text":
+        out.append({"k": "wire_adds", "stat": "empty", "value": proj, "text":
                     f"You are not starting anybody at {pos}, so he does not "
                     f"have to be good — he has to exist. Everything below is "
                     f"measured against fielding nobody."})
     elif proj > worst:
         beaten = at.sort("projected_points").head(1)
-        out.append({"stat": f"+{round(proj - worst)} pts",
+        out.append({"k": "wire_adds", "stat": f"+{round(proj - worst)}",
                     "value": proj - worst, "text":
                     f"He starts. Projected {round(proj - worst)} points over "
                     f"the season above {beaten['player_name'][0]}, who is your "
                     f"weakest {pos} starter today."})
     else:
-        out.append({"stat": "depth", "value": proj - worst, "text":
+        out.append({"k": "wire_adds", "stat": "depth", "value": proj - worst, "text":
                     f"He does not beat the {pos}s you already start. What he "
                     f"is worth is the weeks one of them is out — which is why "
                     f"the number below is small but not zero."})
 
     # 2. WHAT HE IS WORTH, from the simulation rather than the projection.
     weekly = claim["adds"] / 17.0
-    out.append({"stat": f"+{claim['adds']}", "value": claim["adds"], "text":
+    out.append({"k": "wire_adds", "stat": f"+{claim['adds']}",
+                "value": claim["adds"], "text":
                 f"What he adds across a simulated season once the lineup is "
                 f"re-solved around him every week — about "
                 f"{weekly:.1f} points a week. This is the number he was "
                 f"ranked on, not his projection."})
 
     # 3. WHAT HE COSTS. A claim on a full roster is a trade with the wire.
+    #
+    #    AND SOMETIMES THE COST IS NEGATIVE, which is not a rounding artefact.
+    #    The cheapest man to cut is occasionally worth LESS than the free agent
+    #    who would replace him -- a rostered kicker the wire beats by three
+    #    points a season is the common case, and it is the streaming edge
+    #    arriving from the other direction. Saying "this costs you Jake Bates"
+    #    about a move that gains you points would be the screen lying to be
+    #    consistent.
     if claim.get("drop_name"):
-        out.append({"stat": f"−{claim['drop_cost']}",
-                    "value": -claim["drop_cost"], "text":
-                    f"Your roster is full, so this costs you "
-                    f"{claim['drop_name']} — the man whose loss your lineup "
-                    f"feels least, which is rarely the one with the smallest "
-                    f"projection. Already subtracted above."})
+        cost = claim["drop_cost"]
+        who = roster.filter(pl.col("player_id") == claim.get("drop_id"))
+        their_pos = who["position"][0] if who.height else "position"
+        if cost > 0.5:
+            out.append({"k": "wire_drop", "stat": f"−{cost:.1f}",
+                        "value": -cost, "text":
+                        f"Your roster is full, so this costs you "
+                        f"{claim['drop_name']} — the man whose loss your "
+                        f"lineup feels least, which is rarely the one with the "
+                        f"smallest projection. Already subtracted above."})
+        else:
+            out.append({"k": "wire_drop", "stat": f"+{abs(cost):.1f}",
+                        "value": abs(cost), "text":
+                        f"The spot comes from {claim['drop_name']}, and losing "
+                        f"him is not a cost: the best free {their_pos} is worth "
+                        f"{abs(cost):.1f} points MORE than he is over a season. "
+                        f"Drop him whether or not you make this claim."})
 
     # 4. HOW SAFE. A wire pickup is usually a bet on a range, not a mean.
     if claim.get("floor") is not None and claim.get("ceiling") is not None:
-        out.append({"stat": f"{round(claim['floor'])}–{round(claim['ceiling'])}",
+        out.append({"k": "range", "stat": f"{round(claim['floor'])}–{round(claim['ceiling'])}",
                     "value": claim["ceiling"] - claim["floor"], "text":
                     f"Season floor to ceiling, the middle 60% of simulated "
                     f"outcomes. A wide band on the wire is the point: you are "
                     f"paying nothing for the upside."})
 
-    # 5. WHAT IS BEHIND HIM. Replacement level, read off this league's actual
-    #    pool rather than assumed -- if the next man is a point worse, the
-    #    claim is not urgent however good he looks.
-    if free is not None and free.height:
-        rest = (free.filter((pl.col("position") == pos) &
-                            (pl.col("player_id") != claim["player_id"]))
-                    .sort("projected_points", descending=True, nulls_last=True))
-        if rest.height:
-            nxt = float(rest["projected_points"][0] or 0.0)
-            gap = proj - nxt
-            out.append({"stat": f"+{round(gap)} vs wire", "value": gap, "text":
-                        f"The next {pos} on the wire is {rest['player_name'][0]}"
-                        f" at {round(nxt)}. "
-                        + ("Losing this claim costs you little — the drop-off "
-                           "behind him is small."
-                           if gap < 15 else
-                           "That drop-off is what makes this claim worth a "
-                           "priority rather than a shrug.")})
+    # 5. WHAT LOSING THE CLAIM COSTS. Measured against the NEXT MAN IN THE
+    #    QUEUE, not against the highest projection left on the wire -- those
+    #    are different players and only one of them answers the question.
+    #    Comparing on projection had the top quarterback claim reporting a gap
+    #    of "+-33 vs wire" against a man with a bigger number who is worth less
+    #    to this roster, and then calling that a small drop-off.
+    if nxt is not None:
+        cost = claim["adds"] - nxt["adds"]
+        out.append({"k": "wire_next", "stat": f"−{max(cost, 0.0):.1f}", "value": cost,
+                    "text":
+                    f"If somebody claims him first your next option is "
+                    f"{nxt['player_name']} at +{nxt['adds']}, so losing this "
+                    f"claim costs {round(cost, 1)} points. "
+                    + ("Not worth spending waiver priority on."
+                       if cost < 3 else
+                       "That is the gap a priority buys you.")})
 
     # 6. WHAT THE MARKET THINKS. Two independent readings, both facts.
     if claim.get("owned") is not None:
         own = claim["owned"]
-        out.append({"stat": f"{round(own)}% rostered", "value": own, "text":
+        out.append({"k": "wire_own", "stat": f"{round(own)}%", "value": own, "text":
                     (f"Rostered in {round(own)}% of ESPN leagues and free in "
                      f"yours — the rest of the format has already decided he "
                      f"is worth a spot."
@@ -338,7 +425,7 @@ def why(claim: dict, roster: pl.DataFrame, settings: LeagueSettings,
                      f"else wants him either, so the case for him has to come "
                      f"from your roster, not from the market.")})
     if claim.get("ecr"):
-        out.append({"stat": f"#{round(float(claim['ecr']))}",
+        out.append({"k": "adp", "stat": f"#{round(float(claim['ecr']))}",
                     "value": float(claim["ecr"]), "text":
                     "Where the draft room priced him. Nobody in your league "
                     "rostered him, so this is what the market paid for a man "

@@ -1380,9 +1380,11 @@ def waivers(top: int = 12, force: bool = False) -> dict:
     groups = waiver.by_position(mine, free, st.settings, board=b,
                                 deep=4, n_sims=2000)
     for men in groups.values():
-        for c in men:
-            c["why"] = waiver.why(c, mine, st.settings, free)
+        for i, c in enumerate(men):
+            c["why"] = waiver.why(c, mine, st.settings, free,
+                                  nxt=men[i + 1] if i + 1 < len(men) else None)
     rows = waiver.best(groups, top=top)
+    priced = {c["player_id"] for men in groups.values() for c in men}
 
     full = mine.height >= st.settings.roster_size
     out = {
@@ -1397,6 +1399,11 @@ def waivers(top: int = 12, force: bool = False) -> dict:
         # single ranked list leaves you with nothing to do when he is gone.
         "positions": {pos: _with_free_faces(men, b)
                       for pos, men in groups.items()},
+        # The wire ITSELF, beneath the four we priced. Unpriced on purpose --
+        # a season simulation per name would cost four seconds to fill a
+        # column nobody has read yet. They price on click.
+        "rest": {pos: _with_free_faces(waiver.rest(free, pos, priced), b)
+                 for pos in waiver.CLAIMABLE},
         "hurt": [{"player_id": p, "player_name": n, "position": pos,
                   "status": hurt[p]}
                  for p, n, pos in zip(mine["player_id"], mine["player_name"],
@@ -1413,6 +1420,29 @@ def waivers(top: int = 12, force: bool = False) -> dict:
     }
     _WIRE = (key, out)
     return out
+
+
+@app.get("/api/waivers/price")
+def waiver_price(player_id: str) -> dict:
+    """What one man off the wire would do to your lineup.
+
+    For the names below the recommendation. The ranked list is four deep
+    because pricing is not free; this is what makes the other three hundred
+    clickable rather than decorative.
+    """
+    st = _require()
+    b = _board()
+    free = _free_agents(b)
+    mine = b.filter(pl.col("player_id").is_in(st.my_ids))
+    if not mine.height:
+        raise HTTPException(400, "no roster to price him against")
+    if not free.filter(pl.col("player_id") == player_id).height:
+        raise HTTPException(404, "somebody in this league owns him")
+
+    c = waiver.one(mine, free, st.settings, b, player_id)
+    if c is None:
+        raise HTTPException(404, "not on the board")
+    return {"claim": _with_free_faces([c], b)[0]}
 
 
 def _with_free_faces(rows: list[dict], board: pl.DataFrame) -> list[dict]:

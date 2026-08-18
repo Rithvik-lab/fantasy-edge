@@ -161,6 +161,31 @@ export const DEFS: Record<string, { title: string; body: string }> = {
     body:
       "This trade leaves the slot empty, so the lineup is completed with the best player nobody in your league owns. That is what actually happens — nobody starts a week with an empty slot — and it is why emptying one position is survivable and another is not. At quarterback the best free agent is usually close to the man you sent; at running back the wire is picked clean by September. The gap is measured from your league's own pool, not from a rule about which positions are streamable.",
   },
+  wire_adds: {
+    title: "What he adds to your season",
+    body:
+      "Expected points added across a simulated season, once your lineup is re-solved around him every week — not his projection, which is a fact about him rather than about your team. The best receiver on the wire adds nothing to a roster already starting three better ones, and a middling tight end adds a great deal to a roster starting nobody there. Same player, same week, opposite answers. This is the mean rather than the median on purpose: in the middle season your starters play and a bench man never leaves the bench, so his entire value lives in the seasons where something goes wrong.",
+  },
+  wire_queue: {
+    title: "Why there are four of them",
+    body:
+      "Waivers are a queue. The man you want can be claimed before your priority comes up, and a single recommendation leaves you with nothing to do when he is gone — the same problem the draft board has. So every position carries its next few, priced the same way, in the order you should want them. If your first choice goes, the second is already on screen with its own number.",
+  },
+  wire_own: {
+    title: "Rostered elsewhere",
+    body:
+      "The share of ESPN leagues that roster him. It is the only number here that knows something your league does not: a man free in your league and rostered in 60% of the others is somebody eleven other managers have not noticed yet. Low ownership is not an argument against him — it means the case has to come from your roster rather than from the crowd.",
+  },
+  wire_drop: {
+    title: "What the claim costs",
+    body:
+      "A claim on a full roster is a trade with the wire as the counterparty and a roster spot as the price. The man cut is the one your lineup misses least, which is rarely the one with the smallest projection — the last bench receiver usually costs less than a kicker, however the two look side by side. That cost is already subtracted from what the claim adds.",
+  },
+  wire_next: {
+    title: "The drop-off behind him",
+    body:
+      "What the next man at the same position on your league's wire is projected for. It is replacement level, read off this league's actual pool rather than assumed: if the man behind him is a point worse, losing the claim costs you almost nothing and it is not worth a waiver priority. If the drop-off is steep, it is.",
+  },
   cascade: {
     title: "Why more slots move than players",
     body:

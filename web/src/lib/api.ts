@@ -362,6 +362,53 @@ export interface Performance {
           headshot?: string | null; mine?: boolean }[];
 }
 
+/** One free agent, priced against YOUR roster rather than ranked in a vacuum. */
+export interface Claim {
+  player_id: string;
+  player_name: string;
+  position: string;
+  ecr?: number | null;
+  projected_points: number;
+  /** Expected season points this claim adds once the lineup is re-solved. */
+  adds: number;
+  starts: number;
+  drop_id?: string | null;
+  drop_name?: string | null;
+  drop_cost: number;
+  floor?: number | null;
+  ceiling?: number | null;
+  games?: number | null;
+  /** Share of ESPN leagues that roster him. Free here, not free everywhere. */
+  owned?: number | null;
+  headshot?: string | null;
+  /** Each line names its own glossary term — never inferred from the text. */
+  why?: { k?: string; stat: string; value?: number; text: string }[];
+}
+
+export interface Wire {
+  empty: boolean;
+  roster?: number;
+  limit?: number;
+  full?: boolean;
+  pool?: number;
+  claims: Claim[];
+  /** Every position, several deep — the answer to "he was claimed first". */
+  positions?: Record<string, Claim[]>;
+  /** The rest of the wire, unpriced until you click one. */
+  rest?: Record<string, {
+    player_id: string; player_name: string; position: string;
+    projected_points: number; ecr?: number | null; owned?: number | null;
+    headshot?: string | null;
+  }[]>;
+  /** Men on YOUR roster carrying an ESPN injury tag right now. */
+  hurt?: { player_id: string; player_name: string; position: string;
+           status: string }[];
+  week?: number;
+  note: string;
+  streaming?: string;
+  pulled?: string;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -478,4 +525,10 @@ export const api = {
   rosterUnpin: () =>
     req<{ pinned: Record<string, string> }>("/roster/unpin", { method: "POST" }),
   board: (pos?: string) => req<{ players: Suggestion[] }>(`/board${pos ? `?pos=${pos}` : ""}`),
+  // `force` re-prices even when nothing about the roster or the pool changed.
+  // The plain call is cached on those inputs, which is what makes it safe to
+  // poll a screen you leave open all Tuesday.
+  waivers: (force = false) => req<Wire>(`/waivers${force ? "?force=true" : ""}`),
+  waiverPrice: (playerId: string) =>
+    req<{ claim: Claim }>(`/waivers/price?player_id=${encodeURIComponent(playerId)}`),
 };
