@@ -60,6 +60,13 @@ class LeagueSettings:
     # room for them. There is not. An IR seat only holds a man ESPN lists as
     # unavailable, which makes it a different resource, not a bigger bench.
     ir_slots: int = 0
+    # What the LEAGUE says about how long a move takes to become real: a claim
+    # waits `waiver_hours` for processing, an accepted trade is revisable for
+    # `trade_hours`. Both are published by ESPN and both are read rather than
+    # assumed, because they decide how long the app should believe a move that
+    # ESPN has not confirmed yet.
+    waiver_hours: int = 24
+    trade_hours: int = 24
 
     def __post_init__(self) -> None:
         if self.n_teams < 2:

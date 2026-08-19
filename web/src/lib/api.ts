@@ -303,6 +303,10 @@ export interface TeamReport {
               edge: number }[];
   /** Starting slots with nobody in them, in lineup order. */
   gaps?: { slot: string; position: string }[];
+  /** Moves you recorded that ESPN has not confirmed, and how long each has
+   *  before the app gives up and goes back to what ESPN says. */
+  pending?: { player_id: string; player_name: string; kind: "in" | "out";
+              hours_left: number | null }[];
   /** Injured-reserve seats this league has, and who is eligible to sit in one. */
   ir_slots?: number;
   ir?: { player_id: string; player_name: string; position: string;

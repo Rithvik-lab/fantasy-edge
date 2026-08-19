@@ -198,6 +198,35 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
         )}
       </header>
 
+      {/* WAITING ON ESPN. These are moves you told the app about and made in
+          your league yourself; ESPN confirms them on its own schedule, and
+          until it does they are the app disagreeing with the source of truth.
+          Said out loud with a clock, because the alternative is a roster that
+          quietly changes back two days later. */}
+      {!!d.pending?.length && (
+        <div className="border-b border-clock/30 bg-clock/[0.08] px-3 py-1.5">
+          <span className="block text-[10px] uppercase tracking-wider text-clock">
+            waiting on ESPN
+          </span>
+          {d.pending.map((x) => (
+            <span key={x.player_id + x.kind}
+                  className="block text-[10.5px] leading-snug text-chalk">
+              <span className={x.kind === "in" ? "text-turf" : "text-alarm"}>
+                {x.kind === "in" ? "+" : "−"}
+              </span>{" "}
+              {x.player_name}
+              {x.hours_left != null && (
+                <span className="num ml-1 text-muted">
+                  {x.hours_left > 0
+                    ? `· ${Math.round(x.hours_left)}h to confirm`
+                    : "· giving up on this"}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
       <ul>
         {starters.map((p) => (
           <Row key={p.player_id} p={p} slot={p.slot} {...row} />

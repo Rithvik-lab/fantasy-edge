@@ -188,14 +188,25 @@ class Draft:
     # it in hand is about to append to it; `peek` does not, because otherwise
     # merely rendering the league leaves an empty record for all twelve teams
     # and saves them to disk.
-    _NONE: dict[str, list[str]] = {"added": [], "dropped": []}
+    _NONE: dict = {"added": [], "dropped": [], "at": {}}
 
     def edits(self, team_id: int | None) -> dict[str, list[str]]:
         """One team's hand edits, for MUTATION. Created on first use."""
         if team_id is None:
             return dict(self._NONE)
-        return self.moves.setdefault(int(team_id),
-                                     {"added": [], "dropped": []})
+        e = self.moves.setdefault(int(team_id),
+                                  {"added": [], "dropped": [], "at": {}})
+        e.setdefault("at", {})      # leagues saved before edits were timed
+        return e
+
+    def stamp(self, team_id: int | None, ids: list[str]) -> None:
+        """Note when an edit was made, so it can be given up on later."""
+        if team_id is None:
+            return
+        at = self.edits(team_id).setdefault("at", {})
+        now = time.time()
+        for pid in ids:
+            at[pid] = now
 
     def peek(self, team_id: int | None) -> dict[str, list[str]]:
         """One team's hand edits, for reading. Never creates."""
@@ -335,6 +346,8 @@ def _snapshot() -> dict:
         "n_teams": st.settings.n_teams,
         "roster_size": st.settings.roster_size,
         "ir_slots": st.settings.ir_slots,
+        "waiver_hours": st.settings.waiver_hours,
+        "trade_hours": st.settings.trade_hours,
         "lineup": dict(st.settings.lineup),
         "points_per_reception": st.settings.points_per_reception,
         "my_slot": st.my_slot,
@@ -353,7 +366,8 @@ def _snapshot() -> dict:
         "added": list(st.added),
         "dropped": list(st.dropped),
         "moves": {str(k): {"added": list(v["added"]),
-                           "dropped": list(v["dropped"])}
+                           "dropped": list(v["dropped"]),
+                           "at": dict(v.get("at") or {})}
                   for k, v in st.moves.items()},
     }
 
@@ -505,7 +519,9 @@ def connect_espn(cfg: EspnIn) -> dict:
             STATE.settings = LeagueSettings(
                 n_teams=info.n_teams, lineup=info.lineup,
                 points_per_reception=info.points_per_reception,
-                roster_size=info.roster_size, ir_slots=info.ir_slots)
+                roster_size=info.roster_size, ir_slots=info.ir_slots,
+                waiver_hours=info.waiver_hours,
+                trade_hours=info.trade_hours)
             D._BOARD = None
         tid = espn_draft.my_team_id(payload, swid)
         STATE.swid_matched = tid is not None
@@ -687,14 +703,78 @@ def _settle(_live: list[str] | None = None) -> None:
     Every team, because accepting a trade edits two of them and the other
     manager's half goes stale exactly as fast as yours.
     """
+    cutoff = time.time() - _override_window()
     for tid, e in list(STATE.moves.items()):
         have = set(STATE.rosters.get(int(tid), []))
         if not have:
             continue                # never read that roster; nothing to settle
+        at = e.setdefault("at", {})
+
+        # AGREED WITH: ESPN now says what you said, so the correction has done
+        # its job and stops being one.
         e["added"] = [p for p in e["added"] if p not in have]
         e["dropped"] = [p for p in e["dropped"] if p in have]
+
+        # GIVEN UP ON: ESPN has had longer than this league takes to process a
+        # move and still disagrees, so the move did not happen -- the claim
+        # lost, the trade was rejected, or it was never actually made. An
+        # override with no expiry is a private second copy of the roster that
+        # outlives the thing it was correcting, and it gets more wrong every
+        # day it survives.
+        # AN EDIT WITH NO CLOCK IS NOT AN OLD EDIT. Overrides saved before they
+        # were timed arrive with no timestamp, and reading that as "made at the
+        # epoch" expired every one of them the instant the league was opened --
+        # which silently undid a correction made minutes earlier. Unknown age
+        # means start the clock, not run it out.
+        now = time.time()
+        for pid in e["added"] + e["dropped"]:
+            at.setdefault(pid, now)
+        e["added"] = [p for p in e["added"] if at[p] > cutoff]
+        e["dropped"] = [p for p in e["dropped"] if at[p] > cutoff]
+        e["at"] = {p: t for p, t in at.items()
+                   if p in e["added"] or p in e["dropped"]}
         if not e["added"] and not e["dropped"]:
             STATE.moves.pop(int(tid), None)
+
+
+def _pending() -> list[dict]:
+    """My hand edits ESPN has not confirmed, and how long they have left."""
+    b = _board()
+    names = dict(zip(b["player_id"].to_list(), b["player_name"].to_list()))
+    e = STATE.peek(STATE.my_team_id)
+    at = e.get("at") or {}
+    window = _override_window()
+    now = time.time()
+    out = []
+    for kind, ids in (("added", e["added"]), ("dropped", e["dropped"])):
+        for pid in ids:
+            made = at.get(pid)
+            out.append({
+                "player_id": pid,
+                "player_name": names.get(pid, pid),
+                "kind": "in" if kind == "added" else "out",
+                "hours_left": (round((made + window - now) / 3600.0, 1)
+                               if made else None),
+            })
+    return out
+
+
+def _override_window() -> float:
+    """How long a hand edit is allowed to disagree with ESPN, in seconds.
+
+    READ OFF THE LEAGUE, not picked. ESPN publishes both numbers that matter:
+    a claim sits on waivers `waiverHours` before it processes, and an accepted
+    trade stays revisable for `revisionHours`. His league says 24 and 24.
+
+    Doubled, because those clocks start when the LEAGUE gets the move and this
+    one starts when you tell the app about it -- a claim entered on Tuesday
+    evening waits out its 24 hours and then waits again for the next processing
+    window. Three hours, which was the instinct, would revert a perfectly good
+    claim twenty-one hours before ESPN so much as looked at it.
+    """
+    st = STATE.settings
+    hours = max(st.waiver_hours, st.trade_hours) if st else 24
+    return max(hours, 1) * 2 * 3600.0
 
 
 def _ingest(payload: dict) -> None:
@@ -721,13 +801,17 @@ def _ingest(payload: dict) -> None:
         # a migration.
         if STATE.settings and (
                 STATE.settings.roster_size != info.roster_size
-                or STATE.settings.ir_slots != info.ir_slots):
+                or STATE.settings.ir_slots != info.ir_slots
+                or STATE.settings.waiver_hours != info.waiver_hours
+                or STATE.settings.trade_hours != info.trade_hours):
             STATE.settings = LeagueSettings(
                 n_teams=STATE.settings.n_teams,
                 lineup=dict(STATE.settings.lineup),
                 points_per_reception=STATE.settings.points_per_reception,
                 roster_size=info.roster_size,
                 ir_slots=info.ir_slots,
+                waiver_hours=info.waiver_hours,
+                trade_hours=info.trade_hours,
                 flex_eligible=STATE.settings.flex_eligible)
 
     if not picks.height:
@@ -1104,6 +1188,11 @@ def team_report() -> dict:
         # when empty, because an empty IR seat is a thing you can use and an
         # invisible one is a thing you forget you have -- and it is the reason
         # the roster limit is what it is rather than one man higher.
+        # WAITING ON ESPN. A move you recorded here that ESPN has not confirmed
+        # yet, with how long it has left before the app gives up on it and
+        # goes back to what ESPN says. Shown rather than silent, because the
+        # alternative is a roster that quietly changes back.
+        "pending": _pending(),
         "ir_slots": st.settings.ir_slots,
         "ir": [{"player_id": p, "player_name": n, "position": pos,
                 "status": hurt_now.get(p)}
@@ -2047,13 +2136,18 @@ def trade_accept(x: AcceptIn) -> dict:
     }
 
 
-def _move(edits: dict[str, list[str]], out: list[str], into: list[str]) -> None:
+def _move(edits: dict, out: list[str], into: list[str]) -> None:
     """Apply one side of a trade to a team's overrides.
 
     An override is a DISAGREEMENT with ESPN, so a man leaving cancels an
     earlier add rather than stacking a drop on top of it -- otherwise trading
     away somebody you claimed last week leaves him recorded as both.
+
+    Each surviving edit is timed, because an override ESPN never confirms has
+    to be given up on -- see `_override_window`.
     """
+    at = edits.setdefault("at", {})
+    now = time.time()
     for pid in out:
         if pid in edits["added"]:
             edits["added"].remove(pid)
@@ -2064,6 +2158,11 @@ def _move(edits: dict[str, list[str]], out: list[str], into: list[str]) -> None:
             edits["dropped"].remove(pid)
         elif pid not in edits["added"]:
             edits["added"].append(pid)
+    for pid in list(out) + list(into):
+        if pid in edits["added"] or pid in edits["dropped"]:
+            at[pid] = now
+        else:
+            at.pop(pid, None)       # the edit cancelled out; so does its clock
 
 
 def _apply_best_lineup() -> dict:
@@ -2296,6 +2395,7 @@ def add_pick(p: PickIn) -> dict:
                 STATE.added.append(pid)
             if pid in STATE.dropped:
                 STATE.dropped.remove(pid)
+            STATE.stamp(STATE.my_team_id, [pid])
     _autosave()
     return status()
 
@@ -2336,6 +2436,7 @@ def remove_pick(body: RemoveIn) -> dict:
                 STATE.added.remove(body.player_id)
             elif body.player_id not in STATE.dropped:
                 STATE.dropped.append(body.player_id)
+            STATE.stamp(STATE.my_team_id, [body.player_id])
 
         keep = [p for p in STATE.picks if p.get("player_id") != body.player_id]
         if len(keep) == len(STATE.picks):
@@ -2855,7 +2956,9 @@ def load_league(league_id: str) -> dict:
                                        "FLEX": 1, "K": 1, "DST": 1},
             points_per_reception=d.get("points_per_reception", 1.0),
             roster_size=d.get("roster_size", 16),
-            ir_slots=d.get("ir_slots", 0))
+            ir_slots=d.get("ir_slots", 0),
+            waiver_hours=d.get("waiver_hours", 24),
+            trade_hours=d.get("trade_hours", 24))
         STATE.platform = d.get("platform") or "espn"
         STATE.league_id = d.get("id") or league_id
         STATE.name = d.get("name") or ""
@@ -2874,12 +2977,19 @@ def load_league(league_id: str) -> dict:
         # saved before other people's rosters could be edited, and they were
         # always about my seat.
         STATE.moves = {int(k): {"added": list(v.get("added") or []),
-                                "dropped": list(v.get("dropped") or [])}
+                                "dropped": list(v.get("dropped") or []),
+                                "at": dict(v.get("at") or {})}
                        for k, v in (d.get("moves") or {}).items()}
         if not STATE.moves and (d.get("added") or d.get("dropped")):
+            # No clocks on these -- they predate the idea. Stamped now rather
+            # than at zero, which would expire them the instant the league is
+            # opened and silently undo edits made minutes ago.
+            now = time.time()
+            ids = list(d.get("added") or []) + list(d.get("dropped") or [])
             STATE.moves = {int(d.get("my_team_id") or -1): {
                 "added": list(d.get("added") or []),
-                "dropped": list(d.get("dropped") or [])}}
+                "dropped": list(d.get("dropped") or []),
+                "at": {p: now for p in ids}}}
         STATE.rosters = {}
         STATE.slot_confirmed = bool(d.get("slot_confirmed", True))
         STATE.draft_time = d.get("draft_time")

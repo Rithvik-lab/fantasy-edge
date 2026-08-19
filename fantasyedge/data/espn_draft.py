@@ -112,6 +112,13 @@ class LeagueInfo:
     points_per_reception: float = 1.0
     roster_size: int = 16
     ir_slots: int = 0
+    # How long the league itself takes to confirm a move. Both are published:
+    # a claim sits on waivers `waiver_hours` before processing, and an accepted
+    # trade is revisable for `trade_hours` after it. They decide how long a
+    # hand edit is allowed to disagree with ESPN before it is treated as
+    # something that never happened.
+    waiver_hours: int = 24
+    trade_hours: int = 24
     lineup: dict[str, int] = field(default_factory=dict)
     teams: list[dict] = field(default_factory=list)
     in_progress: bool = False
@@ -149,6 +156,9 @@ def league_info(payload: dict) -> LeagueInfo:
             ppr = float(item.get("points", 1.0))
             break
 
+    acq = (settings.get("acquisitionSettings") or {})
+    trd = (settings.get("tradeSettings") or {})
+
     teams = [
         {
             "id": t.get("id"),
@@ -171,6 +181,8 @@ def league_info(payload: dict) -> LeagueInfo:
         points_per_reception=ppr,
         roster_size=(starters + bench) or 16,
         ir_slots=ir,
+        waiver_hours=int(acq.get("waiverHours") or 24),
+        trade_hours=int(trd.get("revisionHours") or 24),
         lineup=lineup or {"QB": 1, "RB": 2, "WR": 2, "TE": 1,
                           "FLEX": 1, "K": 1, "DST": 1},
         teams=teams,
