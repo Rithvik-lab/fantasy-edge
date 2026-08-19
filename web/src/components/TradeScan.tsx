@@ -217,8 +217,10 @@ function Working() {
   );
 }
 
-function TeamCard({ t, active, onOpen, onTake, onSend }: {
+function TeamCard({ t, i, active, onOpen, onTake, onSend }: {
   t: TeamRead;
+  /** Where this manager sits in the call order — best deal first. */
+  i: number;
   active: boolean;
   onOpen: () => void;
   onTake: (p: Piece) => void;
@@ -229,19 +231,37 @@ function TeamCard({ t, active, onOpen, onTake, onSend }: {
       layout
       className={cn(
         "flex flex-col rounded-lg border bg-panel p-2.5 transition-colors",
-        active ? "border-turf/50" : "border-line hover:border-line/80")}
+        active ? "border-turf/50"
+        // The first card is the best deal in the league, so it looks like it.
+        // Colour is the LABEL on the order, not a substitute for it — a green
+        // card seventh in a list sorted by something else was the bug.
+        : i === 0 ? "border-turf/35" : "border-line hover:border-line/80")}
     >
       <header className="flex items-baseline gap-1.5">
+        <span className={cn("num shrink-0 text-[11px] font-bold",
+                            i === 0 ? "text-turf" : "text-muted")}>
+          {i + 1}
+        </span>
         <button onClick={onOpen}
                 className="min-w-0 flex-1 truncate text-left text-[12px] font-medium hover:text-turf">
           {t.team_name}
         </button>
+        {t.best_deal != null && (
+          <Term k="our_gain">
+            <span className="num shrink-0 text-[11px] font-bold text-turf">
+              +{Math.round(t.best_deal)}
+            </span>
+          </Term>
+        )}
+        {/* Where he sits in the league, and the two-way potential. Both are
+            context now rather than the sort key -- the number that decides the
+            order is the one at the front. */}
         {t.rank != null && (
           <span className="num shrink-0 text-[9.5px] text-muted">#{t.rank}</span>
         )}
         <Term k="fit">
-          <span className="num shrink-0 text-[10.5px] font-semibold text-chalk">
-            {Math.round(t.fit)}
+          <span className="num shrink-0 text-[10px] text-muted">
+            fit {Math.round(t.fit)}
           </span>
         </Term>
       </header>
@@ -586,8 +606,8 @@ export function TradeScan({
               className={cn("grid gap-2 sm:grid-cols-2 transition-opacity",
                 busy && "opacity-30")}
             >
-              {tradeable.map((t) => (
-                <TeamCard key={t.team_id} t={t}
+              {tradeable.map((t, i) => (
+                <TeamCard key={t.team_id} t={t} i={i}
                           active={t.team_id === activeTeam}
                           onOpen={() => onOpenTeam(t)}
                           onTake={(p) => onTake(t, p)}

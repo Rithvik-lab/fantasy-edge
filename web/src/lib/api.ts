@@ -248,7 +248,12 @@ export interface TeamRead extends Read {
   team_id: number;
   get_from_them: Piece[];
   they_want_from_you: Piece[];
+  /** Two-way potential — the most either roster could add to the other. */
   fit: number;
+  /** What the best SENDABLE offer with this manager is worth to you. The list
+   *  is ordered on this rather than on fit: fit is potential, and the best
+   *  deal in the league sat seventh in a grid sorted by it. Null = no offer. */
+  best_deal?: number | null;
   note: string;
 }
 

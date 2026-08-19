@@ -1814,11 +1814,45 @@ def trade_scan(s: ScanIn) -> dict:
                                    [p["player_id"] for p in o.get])
                  for o in offers],
         "me": read["me"],
-        "teams": read["teams"],
+        "teams": _by_best_deal(read["teams"], offers),
         "understood": a.read,
         "through_week": week,
         "note": "" if offers else _nothing_found(a),
     }
+
+
+def _by_best_deal(teams: list[dict], offers) -> list[dict]:
+    """Order the managers by the deal that actually exists with each.
+
+    `scan` ranks them on FIT, which is the right measure of two rosters against
+    each other -- the most either side could add to the other -- and the wrong
+    one for "who do I call first". Fit is potential; an offer is a thing you
+    can send. They disagree badly:
+
+        Neil            fit 221.7    best deal  +20.2
+        Akshaj          fit 200.4    best deal   +4.5
+        Waddle Waddle   fit 163.0    best deal  +22.1
+
+    The best deal in the league sat seventh in a list sorted by fit, under a
+    manager whose fit was enormous and whose only sendable offer was worth four
+    points. Colour cannot fix that -- a green card two screens down is still
+    two screens down -- so the ORDER carries it and the fit stays on the card
+    as the context it is.
+
+    Teams with no offer keep their fit order and sit at the back, which is
+    where a manager you cannot do business with belongs.
+    """
+    best: dict[int, float] = {}
+    for o in offers:
+        tid = int(o.team_id)
+        best[tid] = max(best.get(tid, float("-inf")), float(o.our_gain))
+    for i, t in enumerate(teams):
+        t["best_deal"] = round(best[t["team_id"]], 1) \
+            if t["team_id"] in best else None
+        t["_fit_rank"] = i
+    return sorted(teams, key=lambda t: (-(t["best_deal"] is not None),
+                                        -(t["best_deal"] or 0.0),
+                                        t["_fit_rank"]))
 
 
 def _nothing_found(a) -> str:
