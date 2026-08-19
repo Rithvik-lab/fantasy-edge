@@ -307,8 +307,8 @@ def best(groups: dict[str, list[dict]], top: int = 12,
 def by_position(roster: pl.DataFrame, free: pl.DataFrame,
                 settings: LeagueSettings, board: pl.DataFrame | None = None,
                 deep: int = 3, n_sims: int = 800,
-                cuts: list[tuple[str, str, float]] | None = None
-                ) -> dict[str, list[dict]]:
+                cuts: list[tuple[str, str, float]] | None = None,
+                limit: int | None = None) -> dict[str, list[dict]]:
     """The top few at EVERY position, not just the best claims overall.
 
     THE DRAFT BOARD PROBLEM AGAIN. Waivers are a queue: the man you want can be
@@ -321,7 +321,11 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
     browse rather than the one recommendation.
     """
     base = _lineup_points(roster, settings)
-    full = roster.height >= settings.roster_size
+    # `limit` lets a caller say how big this frame's roster REALLY is. A man
+    # with no projection is not on it, so counting rows understates the roster
+    # and the search believes there is room that does not exist.
+    limit = limit or settings.roster_size
+    full = roster.height >= limit
     # The cut order is a property of the roster, so a caller who already has it
     # -- the plan needs it whether or not the roster is full -- hands it over
     # rather than paying for eighteen more simulations.
@@ -336,7 +340,7 @@ def by_position(roster: pl.DataFrame, free: pl.DataFrame,
             continue
         got = claims(roster, pool, settings, top=deep, board=board,
                      n_sims=n_sims, floor=None, shortlist=deep + 3, cuts=cut,
-                     pool_all=free)
+                     pool_all=free, limit=limit)
         if got:
             out[pos] = got
     return out

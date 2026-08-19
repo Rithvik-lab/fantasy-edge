@@ -141,8 +141,13 @@ class Draft:
         # accept. Without these, typing a name into your team did nothing
         # visible at all: the pick was recorded and then the next roster read
         # overwrote it.
-        self.added: list[str] = []
-        self.dropped: list[str] = []
+        # Held per TEAM, not just for mine. Accepting a trade moves men in
+        # both directions across two rosters, and the counterparty's half has
+        # to be as real as yours -- otherwise the scan keeps offering you a
+        # player you already traded for, and prices your own men against a
+        # roster that no longer exists. `added`/`dropped` below are this
+        # structure seen from my seat, so every existing reader is unchanged.
+        self.moves: dict[int, dict[str, list[str]]] = {}
         self.espn: dict | None = None        # league_id / season / cookies
         self.league_name = ""
         self.team_names: dict[int, str] = {}
@@ -179,6 +184,44 @@ class Draft:
 
     # -- derived ----------------------------------------------------------
 
+    # Reading is not editing. `edits` creates the entry because a caller with
+    # it in hand is about to append to it; `peek` does not, because otherwise
+    # merely rendering the league leaves an empty record for all twelve teams
+    # and saves them to disk.
+    _NONE: dict[str, list[str]] = {"added": [], "dropped": []}
+
+    def edits(self, team_id: int | None) -> dict[str, list[str]]:
+        """One team's hand edits, for MUTATION. Created on first use."""
+        if team_id is None:
+            return dict(self._NONE)
+        return self.moves.setdefault(int(team_id),
+                                     {"added": [], "dropped": []})
+
+    def peek(self, team_id: int | None) -> dict[str, list[str]]:
+        """One team's hand edits, for reading. Never creates."""
+        if team_id is None:
+            return self._NONE
+        return self.moves.get(int(team_id), self._NONE)
+
+    def own(self, team_id: int) -> list[str]:
+        """Who this team owns: ESPN's answer with your edits applied on top."""
+        e = self.peek(team_id)
+        drop = set(e["dropped"])
+        live = [p for p in self.rosters.get(int(team_id), []) if p not in drop]
+        return live + [p for p in e["added"] if p not in live]
+
+    @property
+    def added(self) -> list[str]:
+        """My own edits -- what every existing caller means by these two.
+
+        Creating, because callers append to them in place.
+        """
+        return self.edits(self.my_team_id)["added"]
+
+    @property
+    def dropped(self) -> list[str]:
+        return self.edits(self.my_team_id)["dropped"]
+
     @property
     def drafted_ids(self) -> list[str]:
         return [p["player_id"] for p in self.picks if p.get("player_id")]
@@ -208,9 +251,7 @@ class Draft:
         # sometimes by a whole trade negotiation. They are cleared the moment
         # ESPN agrees, so an add is a correction and never a second copy.
         if self.draft_complete and self.my_team_id in self.rosters:
-            drop = set(self.dropped)
-            live = [p for p in self.rosters[self.my_team_id] if p not in drop]
-            return live + [p for p in self.added if p not in live]
+            return self.own(self.my_team_id)
         if self.my_team_id is not None:
             return [p["player_id"] for p in self.picks
                     if p.get("player_id") and p.get("team_id") == self.my_team_id]
@@ -311,6 +352,9 @@ def _snapshot() -> dict:
         "pinned_week": st.pinned_week,
         "added": list(st.added),
         "dropped": list(st.dropped),
+        "moves": {str(k): {"added": list(v["added"]),
+                           "dropped": list(v["dropped"])}
+                  for k, v in st.moves.items()},
     }
 
 
@@ -631,18 +675,26 @@ def _live_rosters(payload: dict, board: pl.DataFrame) -> dict[int, list[str]]:
     return out
 
 
-def _settle(live: list[str]) -> None:
-    """Retire hand edits ESPN has caught up with.
+def _settle(_live: list[str] | None = None) -> None:
+    """Retire hand edits ESPN has caught up with, on every roster.
 
     An override that outlives the thing it was overriding stops being a
     correction and becomes a second, private copy of the roster -- so a man you
     added by hand and then genuinely lost in a trade would sit on your team for
     the rest of the season because you once typed his name. Kept only while
     they still disagree.
+
+    Every team, because accepting a trade edits two of them and the other
+    manager's half goes stale exactly as fast as yours.
     """
-    have = set(live)
-    STATE.added = [p for p in STATE.added if p not in have]
-    STATE.dropped = [p for p in STATE.dropped if p in have]
+    for tid, e in list(STATE.moves.items()):
+        have = set(STATE.rosters.get(int(tid), []))
+        if not have:
+            continue                # never read that roster; nothing to settle
+        e["added"] = [p for p in e["added"] if p not in have]
+        e["dropped"] = [p for p in e["dropped"] if p in have]
+        if not e["added"] and not e["dropped"]:
+            STATE.moves.pop(int(tid), None)
 
 
 def _ingest(payload: dict) -> None:
@@ -847,24 +899,38 @@ def _free_agents(board: pl.DataFrame) -> pl.DataFrame:
     the manual case: a player nobody drafted is a free agent there too.
     """
     owned: set[str] = set()
-    for ids in (STATE.rosters or {}).values():
-        owned.update(ids)
+    for tid in (STATE.rosters or {}):
+        # `own` rather than the raw list: a man you claimed an hour ago is not
+        # a free agent, and a man you dropped for him is. ESPN will agree by
+        # tomorrow; the wire cannot wait that long without offering you
+        # somebody who is already on your team.
+        owned.update(STATE.own(int(tid)))
+    for e in STATE.moves.values():
+        owned.update(e["added"])
     if not owned:
         owned = set(STATE.drafted_ids)
     return board.filter(~pl.col("player_id").is_in(list(owned)))
 
 
 def _team_frames(r: pl.DataFrame) -> tuple[pl.DataFrame, dict[int, pl.DataFrame]]:
-    """Board rows for my roster and for each opponent's."""
+    """Board rows for my roster and for each opponent's.
+
+    THROUGH `own`, NOT STRAIGHT OFF THE ESPN FRAME. This read the payload
+    directly and so ignored every hand edit: a man dropped for a waiver claim
+    was still on my team in trade mode, still being offered in deals, and still
+    priced as mine -- because ESPN will not know about that claim for hours and
+    this asked ESPN. My Team was right the whole time, which is what made it
+    look like a display bug rather than two screens disagreeing about who is on
+    the roster.
+    """
     b = _board()
-    mine = b.filter(pl.col("player_id").is_in(
-        r.filter(pl.col("team_id") == STATE.my_team_id)["player_id"].to_list()))
+    mine = b.filter(pl.col("player_id").is_in(_require().my_ids))
     others: dict[int, pl.DataFrame] = {}
     for tid, grp in r.group_by("team_id"):
         team_id = int(tid[0] if isinstance(tid, tuple) else tid)
         if team_id == STATE.my_team_id:
             continue
-        sub = b.filter(pl.col("player_id").is_in(grp["player_id"].to_list()))
+        sub = b.filter(pl.col("player_id").is_in(STATE.own(team_id)))
         if sub.height:
             others[team_id] = sub
     return mine, others
@@ -1433,6 +1499,15 @@ def waivers(top: int = 12, force: bool = False) -> dict:
             free = b2.filter(pl.col("player_id").is_in(free["player_id"].to_list()))
             mine = b2.filter(pl.col("player_id").is_in(st.my_ids))
 
+    # HOW MANY YOU OWN, not how many of them the board can price. Those differ
+    # whenever a rostered man has no projection -- a hand-typed name ESPN has
+    # never seen, a rookie outside the ADP feed -- and the gap made the app
+    # contradict itself: the wire read 16 of 17, offered a claim that needed no
+    # drop, and the add then refused it with "your roster is full at 17".
+    held = len(st.my_ids)
+    unpriced = held - mine.height
+    full = held >= st.settings.roster_size
+
     hurt = _injury_status()
     key = (tuple(sorted(mine["player_id"].to_list())),
            len(free), hash(tuple(sorted(free["player_id"].to_list()))),
@@ -1449,8 +1524,14 @@ def waivers(top: int = 12, force: bool = False) -> dict:
     # consequence of being out of room. Computed once, handed to both.
     cuts = waiver._cuts(mine, st.settings,
                         waiver._lineup_points(mine, st.settings), b, free)
+    # The search compares `mine.height` against the limit, and `mine` is short
+    # by every rostered man the board cannot price -- so it thought there was a
+    # spare spot, proposed a claim needing no drop, and the add refused it.
+    # Lowering the limit by the same amount makes the frame's own arithmetic
+    # come out right.
+    limit = max(st.settings.roster_size - unpriced, 1)
     groups = waiver.by_position(mine, free, st.settings, board=b,
-                                deep=4, n_sims=2000, cuts=cuts)
+                                deep=4, n_sims=2000, cuts=cuts, limit=limit)
     for men in groups.values():
         for i, c in enumerate(men):
             c["why"] = waiver.why(c, mine, st.settings, free,
@@ -1459,10 +1540,13 @@ def waivers(top: int = 12, force: bool = False) -> dict:
     priced = {c["player_id"] for men in groups.values() for c in men}
     todo = waiver.plan(mine, free, st.settings, b, groups, cuts)
 
-    full = mine.height >= st.settings.roster_size
     out = {
         "empty": False,
-        "roster": mine.height,
+        "roster": held,
+        # Named rather than hidden. A man on your roster with no projection is
+        # a fact about the board, and silently leaving him out of the count is
+        # how he disappeared off the team entirely once before.
+        "unpriced": unpriced,
         "limit": st.settings.roster_size,
         "full": full,
         "pool": free.height,
@@ -2694,8 +2778,16 @@ def load_league(league_id: str) -> dict:
         STATE.my_team_id = d.get("my_team_id")
         STATE.pinned = dict(d.get("pinned") or {})
         STATE.pinned_week = d.get("pinned_week")
-        STATE.added = list(d.get("added") or [])
-        STATE.dropped = list(d.get("dropped") or [])
+        # `moves` is the current shape; `added`/`dropped` are what leagues
+        # saved before other people's rosters could be edited, and they were
+        # always about my seat.
+        STATE.moves = {int(k): {"added": list(v.get("added") or []),
+                                "dropped": list(v.get("dropped") or [])}
+                       for k, v in (d.get("moves") or {}).items()}
+        if not STATE.moves and (d.get("added") or d.get("dropped")):
+            STATE.moves = {int(d.get("my_team_id") or -1): {
+                "added": list(d.get("added") or []),
+                "dropped": list(d.get("dropped") or [])}}
         STATE.rosters = {}
         STATE.slot_confirmed = bool(d.get("slot_confirmed", True))
         STATE.draft_time = d.get("draft_time")
