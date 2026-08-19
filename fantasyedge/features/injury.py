@@ -38,6 +38,38 @@ position and age alone. Beating that baseline is the bar. If the model does
 not clear it, report that — "I tested whether injury history predicts
 availability and it barely does" is a legitimate and more interesting finding
 than a model with an unexamined R-squared.
+
+MEASURED, 2011-2025, 8,585 player-seasons
+─────────────────────────────────────────
+
+That is what happened. The test above is `persistence_check` and it says:
+
+    year-over-year r on games missed    0.130      (7,877 paired seasons)
+
+against this module's own scale, written before the test was run: "<0.15
+mostly noise, use position/age base rates instead". So injury history barely
+predicts next-season availability, and nothing here feeds the board. Expected
+games comes from the per-game curve, which reads realised availability off
+pre-season rank — the position/age base rate this file recommends as the
+fallback, arrived at from the other direction.
+
+The soft-tissue recurrence flag is DELETED rather than dormant, and how it
+died is worth keeping. It never fired once: `injury_panel` filtered on
+`season_type == "REG"`, nflverse only began populating that column in 2025, so
+fourteen of fifteen seasons were silently discarded and a flag that needs LAST
+season's soft-tissue weeks had no last season. With the filter fixed it fires
+269 times and points backwards:
+
+    back-to-back soft tissue     4.67 games missed the next season
+    everyone else                6.73
+
+Which is not a discovery about hamstrings. To appear on the injury report in
+consecutive seasons you have to be rostered and playing in both, so the flag
+selects for durable established starters — the survivorship bias this file
+warned about under "signals that mostly do not", found in its own feature.
+
+A feature that has to be repaired before it can be wrong is a feature nobody
+was reading. The repair stays; the flag does not.
 """
 
 from __future__ import annotations
@@ -84,7 +116,12 @@ def injury_panel(seasons: list[int]) -> pl.DataFrame:
         .filter(
             pl.col("season").is_in(seasons)
             & pl.col("gsis_id").is_not_null()
-            & (pl.col("season_type") == "REG")
+            # A NULL SEASON TYPE IS NOT A POST-SEASON GAME. nflverse only
+            # started populating this column in 2025, so `== "REG"` was true
+            # for one season out of fifteen and quietly discarded the rest --
+            # which is why `soft_tissue_recurrence` never once fired: it needs
+            # last season's soft-tissue weeks, and there was no last season.
+            & (pl.col("season_type") != "POST").fill_null(True)
         )
         .with_columns([
             _contains_any("report_primary_injury", SOFT_TISSUE).alias("_soft"),
@@ -183,24 +220,21 @@ def build_features(seasons: list[int]) -> pl.DataFrame:
 
     # Two-season lookback: the base rate persists, and two years of misses is
     # a much stronger signal than one.
+    #
+    # THE RECURRENCE FLAG USED TO LIVE HERE and it is gone; see MEASURED at the
+    # top of this file. It said soft tissue in back-to-back seasons, it was the
+    # feature this module expected most from, and once it could fire at all it
+    # pointed the wrong way.
     prev = (
-        df.select(["player_id", "season", "games_missed", "weeks_soft_tissue"])
+        df.select(["player_id", "season", "games_missed"])
         .with_columns((pl.col("season") + 1).alias("season"))
-        .rename({
-            "games_missed": "games_missed_prev",
-            "weeks_soft_tissue": "soft_tissue_prev",
-        })
+        .rename({"games_missed": "games_missed_prev"})
     )
 
     return df.join(prev, on=["player_id", "season"], how="left").with_columns([
         pl.col("games_missed_prev").fill_null(0),
-        pl.col("soft_tissue_prev").fill_null(0),
         (pl.col("games_missed") + pl.col("games_missed_prev"))
         .alias("games_missed_2yr"),
-        # Recurrence flag: soft tissue in back-to-back seasons. This is the
-        # single feature most likely to carry real signal.
-        ((pl.col("weeks_soft_tissue") > 0) & (pl.col("soft_tissue_prev") > 0))
-        .alias("soft_tissue_recurrence"),
     ])
 
 
