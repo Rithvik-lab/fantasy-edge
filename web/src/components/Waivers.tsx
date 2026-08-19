@@ -152,8 +152,26 @@ function Range({ c }: { c: Claim }) {
  * passed through untouched. A waiver panel that says "great upside" is
  * describing its own enthusiasm.
  */
-function TheCase({ c, full, onRecord, busy }: {
+/** Three dots that keep moving, so a slow button still looks alive. */
+function Working() {
+  return (
+    <span className="flex items-center gap-1">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="h-1 w-1 rounded-full bg-current"
+          animate={{ opacity: [0.25, 1, 0.25] }}
+          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15 }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function TheCase({ c, full, onRecord, busy, step }: {
   c: Claim; full: boolean; onRecord: (c: Claim) => void; busy: boolean;
+  /** Which part of the claim is running, named rather than spun at. */
+  step?: string | null;
 }) {
   // A CSS keyframe rather than motion's initial/animate, because this panel is
   // the whole point of the screen and CONTENT MUST NOT DEPEND ON AN ANIMATION
@@ -194,7 +212,7 @@ function TheCase({ c, full, onRecord, busy }: {
                 title={c.drop_name
                   ? `Records the add and drops ${c.drop_name}. Put the claim in on ESPN yourself.`
                   : "Records the add here. Put the claim in on ESPN yourself."}>
-          {busy ? "…" : "Claim"}
+          {busy ? <Working /> : "Claim"}
         </Button>
       </div>
 
@@ -268,11 +286,30 @@ function TheCase({ c, full, onRecord, busy }: {
           lineup, the next wire and any trade you price afterwards are all
           about the roster you actually have. The button is in the header; this
           is the sentence that says what pressing it does and does not do. */}
-      <p className="text-[9.5px] leading-relaxed text-muted">
-        <span className="font-semibold text-chalk">Claim</span> records the move
-        here{c.drop_name ? <> and drops <span className="text-alarm">{c.drop_name}</span></> : null}.
-        Put the claim in on ESPN yourself — nothing here can.
-      </p>
+      {step ? (
+        <div className="tick-in rounded-md border border-turf/30 bg-turf/[0.07] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Working />
+            <span className="text-[11px] text-turf">{step}</span>
+          </div>
+          {/* The steps in order, so a failure halfway names what did happen. */}
+          <div className="mt-1.5 flex gap-1">
+            {[c.drop_name ? "drop" : null, "add", "re-price"]
+              .filter(Boolean).map((label, i) => (
+              <span key={i}
+                    className="flex-1 rounded-full bg-turf/20 px-1 py-0.5 text-center text-[9px] text-turf/80">
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[9.5px] leading-relaxed text-muted">
+          <span className="font-semibold text-chalk">Claim</span> records the move
+          here{c.drop_name ? <> and drops <span className="text-alarm">{c.drop_name}</span></> : null}.
+          Put the claim in on ESPN yourself — nothing here can.
+        </p>
+      )}
     </div>
   );
 }
@@ -609,6 +646,9 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
   // suggested, and the queue should not silently reorder around a question.
   const [asked, setAsked] = useState<Claim | null>(null);
   const [pricing, setPricing] = useState<string | null>(null);
+  /** Which step of a claim is running, and what the last one did. */
+  const [step, setStep] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const first = useRef(true);
 
   const pull = useCallback(async (force = false, sync = true) => {
@@ -668,16 +708,29 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
   // takes claims and this reads them.
   const record = useCallback(async (c: Claim) => {
     setBusy(true);
+    // A claim is three real steps and the last one re-prices the whole wire,
+    // so it is seconds rather than instant. Saying which step it is on beats a
+    // button that has gone quiet: the drop and the add are the parts you would
+    // want to know had happened if something failed halfway.
     try {
-      if (c.drop_id) await api.removePick(c.drop_id);
+      if (c.drop_id) {
+        setStep(`dropping ${c.drop_name}…`);
+        await api.removePick(c.drop_id);
+      }
+      setStep(`adding ${c.player_name}…`);
       await api.pick({ player_id: c.player_id, mine: true });
+      setStep("re-pricing the wire…");
       setAsked(null);
       setPicked(null);
       await pull(true, false);
+      setNote(c.drop_name
+        ? `${c.player_name} in, ${c.drop_name} out. Put the claim in on ESPN.`
+        : `${c.player_name} added. Put the claim in on ESPN.`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setStep(null);
     }
   }, [pull]);
 
@@ -730,6 +783,16 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
                 wire={wire} />
         </div>
       </div>
+
+      {note && (
+        <div className="tick-in flex items-center gap-2 rounded-md border border-turf/40 bg-turf/[0.07] px-3 py-2">
+          <span className="flex-1 text-[11.5px] text-turf">{note}</span>
+          <button onClick={() => setNote(null)}
+                  className="shrink-0 text-[10.5px] text-muted hover:text-chalk">
+            dismiss
+          </button>
+        </div>
+      )}
 
       {wire.plan && (
         <Plan plan={wire.plan}
@@ -791,7 +854,7 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
         <section className="rounded-lg border border-line bg-panel p-3">
           {chosen
             ? <TheCase key={chosen.player_id} c={chosen} full={!!wire.full}
-                       onRecord={record} busy={busy} />
+                       onRecord={record} busy={busy} step={step} />
             : <p className="text-[11.5px] text-muted">
                 Pick a name to see the case for him.
               </p>}

@@ -55,6 +55,10 @@ export function Trade() {
   const [balanced, setBalanced] = useState<
     { offers: Balanced[]; before: { our_gain: number }; note: string } | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  /** What the last accepted trade did, so the screen can say so. */
+  const [done, setDone] = useState<Awaited<
+    ReturnType<typeof api.tradeAccept>> | null>(null);
   // Which manager is open. null means the grid of all of them.
   const [focus, setFocus] = useState<number | null>(null);
   const [priced, setPriced] = useState<string | null>(null);
@@ -256,6 +260,32 @@ export function Trade() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setScanning(false); }
+  }
+
+  /**
+   * The deal happened. Move both rosters and set the lineup.
+   *
+   * ONLY IN AUTO MODE, because a trade has a counterparty and manual mode has
+   * two lists of names rather than a manager. Nothing is sent to ESPN --
+   * nothing here can -- but until ESPN processes it, every number in the app
+   * would otherwise be about a roster you no longer have.
+   */
+  async function accept() {
+    if (!auto || them == null) return;
+    setAccepting(true);
+    try {
+      const r = await api.tradeAccept(give, get, them);
+      setDone(r);
+      setErr(null);
+      // Everything downstream reads the roster, so everything downstream is
+      // now stale: the board, the scan, the verdict on screen.
+      setScan(null);
+      setCounters(null);
+      setBalanced(null);
+      readRosters();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setAccepting(false); }
   }
 
   async function askCounter() {
@@ -594,6 +624,16 @@ export function Trade() {
                         title="look for a different, better deal with this manager">
                   Counter this trade
                 </Button>
+                {/* THE DEAL HAPPENED. Only in auto mode, because a trade has a
+                    counterparty and manual mode has two typed lists rather
+                    than a manager. */}
+                {auto && them != null && (
+                  <Button size="sm" className="h-7 text-[11px]"
+                          onClick={accept} disabled={accepting || scanning}
+                          title="record it on both rosters and set your lineup — this does not send anything to ESPN">
+                    {accepting ? "recording…" : "Accept — we did this"}
+                  </Button>
+                )}
               </>
             )}
             {/* A FAILURE BELONGS BESIDE THE BUTTON THAT CAUSED IT. This
@@ -614,6 +654,32 @@ export function Trade() {
               </span>
             )}
           </div>
+          {done && (
+            <div className="tick-in rounded-lg border border-turf/40 bg-turf/[0.07] p-3">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-[12.5px] font-semibold text-turf">
+                  Done — both rosters updated
+                </span>
+                <span className="num text-[11px] text-muted">
+                  {done.roster}/{done.limit}
+                </span>
+              </div>
+              <p className="mt-1 text-[11.5px] leading-relaxed">
+                <span className="text-turf">in: {done.in.join(", ") || "nobody"}</span>
+                {"  ·  "}
+                <span className="text-alarm">out: {done.out.join(", ") || "nobody"}</span>
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                {done.lineup?.changes?.length
+                  ? `Your lineup was re-solved for week ${done.lineup.week}: `
+                    + done.lineup.changes.map((ch) =>
+                        `${ch.player_name} into ${ch.slot}`).join(", ") + "."
+                  : `Your lineup was re-solved for week ${done.lineup?.week ?? ""} `
+                    + "and nothing needed to move."}
+                {" "}Put the trade through on ESPN yourself — nothing here can.
+              </p>
+            </div>
+          )}
           {balancePanel}
           {countersPanel}
           {busy ? <Simulating /> : v ? <TradeVerdict v={v} /> : null}

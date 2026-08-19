@@ -560,6 +560,12 @@ export const api = {
   // The plain call is cached on those inputs, which is what makes it safe to
   // poll a screen you leave open all Tuesday.
   waivers: (force = false) => req<Wire>(`/waivers${force ? "?force=true" : ""}`),
+  // Records a trade both sides agreed to, on BOTH rosters, then solves the
+  // lineup. Sends nothing to ESPN — nothing here can.
+  tradeAccept: (give: string[], get: string[], team_id: number | null) =>
+    req<{ roster: number; limit: number; in: string[]; out: string[];
+          lineup: Suggestion2 }>("/trade/accept", {
+      method: "POST", body: JSON.stringify({ give, get, team_id }) }),
   waiverPrice: (playerId: string) =>
     req<{ claim: Claim }>(`/waivers/price?player_id=${encodeURIComponent(playerId)}`),
 };

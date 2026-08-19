@@ -1538,7 +1538,7 @@ def waivers(top: int = 12, force: bool = False) -> dict:
                                   nxt=men[i + 1] if i + 1 < len(men) else None)
     rows = waiver.best(groups, top=top)
     priced = {c["player_id"] for men in groups.values() for c in men}
-    todo = waiver.plan(mine, free, st.settings, b, groups, cuts)
+    todo = waiver.plan(mine, free, st.settings, b, groups, cuts, limit=limit)
 
     out = {
         "empty": False,
@@ -1984,6 +1984,98 @@ def _nothing_found(a) -> str:
     return ("Nothing worth offering right now — every roster is priced about "
             "right against yours, or the deals that help you would not read "
             "as wins for them.")
+
+
+class AcceptIn(BaseModel):
+    give: list[str] = Field(default_factory=list)
+    get: list[str] = Field(default_factory=list)
+    team_id: int | None = None
+
+
+@app.post("/api/trade/accept")
+def trade_accept(x: AcceptIn) -> dict:
+    """Record a trade that actually happened, on both rosters, and re-solve.
+
+    THIS DOES NOT SEND ANYTHING TO ESPN. Nothing here can -- ESPN takes trades
+    and this reads them. It is the same override the waiver claim uses, applied
+    to two teams at once: ESPN will not show a trade until both managers accept
+    it and the league processes it, which is hours at best, and until then every
+    number in the app would be about a roster you no longer have.
+
+    The lineup is then solved for you rather than offered. A trade that changes
+    who starts and leaves last week's lineup card sitting there is a trade that
+    has not finished happening -- and the solve is the same one the Fix my
+    lineup button runs, so this is pressing it for you rather than a second
+    opinion about it.
+    """
+    st = _require()
+    b = _board()
+    if not x.give and not x.get:
+        raise HTTPException(400, "nothing to accept")
+    if STATE.my_team_id is None:
+        raise HTTPException(400, "could not identify your roster")
+
+    known = set(b["player_id"].to_list())
+    unknown = [p for p in list(x.give) + list(x.get) if p not in known]
+    if unknown:
+        raise HTTPException(400, f"not on the board: {unknown}")
+
+    with STATE.lock:
+        mine = STATE.edits(STATE.my_team_id)
+        _move(mine, out=x.give, into=x.get)
+        # THEIR SIDE TOO. Without it the scan keeps offering you a man you
+        # already traded for, and prices your roster against theirs as it was
+        # before the deal.
+        if x.team_id is not None:
+            theirs = STATE.edits(int(x.team_id))
+            _move(theirs, out=x.get, into=x.give)
+        # A pinned lineup is about the roster that existed when it was pinned.
+        # Keeping a pin for a man who has just left is how a lineup ends up
+        # with a hole in it that no amount of dragging can fill.
+        for pid in x.give:
+            STATE.pinned.pop(pid, None)
+
+    _autosave()
+    S = _apply_best_lineup()
+    names = dict(zip(b["player_id"].to_list(), b["player_name"].to_list()))
+    return {
+        "roster": len(st.my_ids),
+        "limit": st.settings.roster_size,
+        "in": [names.get(p, p) for p in x.get],
+        "out": [names.get(p, p) for p in x.give],
+        "lineup": S,
+    }
+
+
+def _move(edits: dict[str, list[str]], out: list[str], into: list[str]) -> None:
+    """Apply one side of a trade to a team's overrides.
+
+    An override is a DISAGREEMENT with ESPN, so a man leaving cancels an
+    earlier add rather than stacking a drop on top of it -- otherwise trading
+    away somebody you claimed last week leaves him recorded as both.
+    """
+    for pid in out:
+        if pid in edits["added"]:
+            edits["added"].remove(pid)
+        elif pid not in edits["dropped"]:
+            edits["dropped"].append(pid)
+    for pid in into:
+        if pid in edits["dropped"]:
+            edits["dropped"].remove(pid)
+        elif pid not in edits["added"]:
+            edits["added"].append(pid)
+
+
+def _apply_best_lineup() -> dict:
+    """Solve the lineup for the week you can still set, and pin the result."""
+    got = team_suggest()
+    if got.get("empty") or not got.get("pinned"):
+        return got
+    with STATE.lock:
+        STATE.pinned = dict(got["pinned"])
+        STATE.pinned_week = got.get("week")
+    _autosave()
+    return got
 
 
 class CounterIn(BaseModel):

@@ -354,7 +354,8 @@ DEAD_WEIGHT = 0.5
 
 def plan(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
          board: pl.DataFrame, groups: dict[str, list[dict]],
-         cuts: list[tuple[str, str, float]], n_sims: int = 2000) -> dict:
+         cuts: list[tuple[str, str, float]], n_sims: int = 2000,
+         limit: int | None = None) -> dict:
     """What to actually do, this minute, with reasons.
 
     THE LIST IS NOT THE ANSWER. Four names at six positions with a number
@@ -382,7 +383,10 @@ def plan(roster: pl.DataFrame, free: pl.DataFrame, settings: LeagueSettings,
     """
     from fantasyedge.trade.evaluate import evaluate
 
-    full = roster.height >= settings.roster_size
+    # Same correction as `claims`: a man with no projection is not in this
+    # frame, so counting rows says there is a spare spot when there is not --
+    # and the plan then offered a claim needing no drop on a full roster.
+    full = roster.height >= (limit or settings.roster_size)
     moves: list[dict] = []
 
     # --- swaps: a man on the roster the wire beats at his own position ----
