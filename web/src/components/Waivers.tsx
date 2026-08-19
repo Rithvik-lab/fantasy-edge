@@ -184,6 +184,18 @@ function TheCase({ c, full, onRecord, busy }: {
             </span> : null}
           </span>
         </div>
+        {/* THE ACTION SITS WITH THE NAME. It was at the bottom, under every
+            reason, which is the one place you reach only by reading to the end
+            and scrolling past it — and by then the panel no longer says who it
+            is about. Here it travels with the sticky header, so the man and
+            the button you press about him are never on separate screens. */}
+        <Button size="sm" disabled={busy} onClick={() => onRecord(c)}
+                className="shrink-0"
+                title={c.drop_name
+                  ? `Records the add and drops ${c.drop_name}. Put the claim in on ESPN yourself.`
+                  : "Records the add here. Put the claim in on ESPN yourself."}>
+          {busy ? "…" : "Claim"}
+        </Button>
       </div>
 
       <div className="rounded-md border border-line bg-raised/40 px-3 py-2">
@@ -254,15 +266,12 @@ function TheCase({ c, full, onRecord, busy }: {
       {/* THIS DOES NOT PLACE THE CLAIM. Nothing here can -- ESPN takes claims
           and this reads them. It records one that went through, so your
           lineup, the next wire and any trade you price afterwards are all
-          about the roster you actually have. */}
-      <Button size="sm" variant="outline" disabled={busy}
-              className="w-full" onClick={() => onRecord(c)}>
-        {busy ? "recording…"
-          : c.drop_name ? `I claimed him — drop ${c.drop_name}`
-          : "I claimed him"}
-      </Button>
+          about the roster you actually have. The button is in the header; this
+          is the sentence that says what pressing it does and does not do. */}
       <p className="text-[9.5px] leading-relaxed text-muted">
-        Records the move here. Put the claim in on ESPN yourself.
+        <span className="font-semibold text-chalk">Claim</span> records the move
+        here{c.drop_name ? <> and drops <span className="text-alarm">{c.drop_name}</span></> : null}.
+        Put the claim in on ESPN yourself — nothing here can.
       </p>
     </div>
   );

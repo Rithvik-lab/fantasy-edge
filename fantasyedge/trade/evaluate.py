@@ -105,6 +105,21 @@ def _seed_for(player_id: str) -> int:
     return zlib.crc32(f"fantasyedge-trade/{player_id}".encode()) % (2**31 - 1)
 
 
+# Seasons already dealt. A player's draw is a pure function of his id and his
+# numbers -- that is what the fixed seed is FOR -- so dealing it twice is pure
+# waste, and a league scan was dealing it 8,924 times for about six hundred
+# distinct men. Half the runtime of the whole scan was rebuilding identical
+# arrays.
+#
+# Bounded and cleared wholesale rather than evicted one at a time: entries are
+# large (n_sims x 17 floats), the working set inside one request is small, and
+# an LRU's bookkeeping is not worth it for a dictionary that exists to survive
+# a few seconds. Keyed on everything that moves the draw, so a board repriced
+# mid-season deals fresh seasons instead of serving August's.
+_WEEKS: dict[tuple, np.ndarray] = {}
+_WEEKS_MAX = 400
+
+
 def _player_weeks(row: dict, n_sims: int) -> np.ndarray:
     """(n_sims, 17) of weekly points, zero on weeks he does not play.
 
@@ -112,7 +127,18 @@ def _player_weeks(row: dict, n_sims: int) -> np.ndarray:
     detail matters more than it looks: if every player misses the same trailing
     weeks, absences line up perfectly across a roster and depth never gets to
     cover anything, so the simulation quietly prices every bench player at zero.
+
+    THE RESULT IS SHARED, NOT COPIED. Callers stack and mask it and never write
+    into it; anything that starts mutating this array in place is corrupting
+    every other roster it appears on.
     """
+    key = (row["player_id"], n_sims, row.get("season_p20"), row.get("season_p50"),
+           row.get("season_p80"), row.get("expected_games"),
+           row.get("projected_points"))
+    hit = _WEEKS.get(key)
+    if hit is not None:
+        return hit
+
     rng = np.random.default_rng(_seed_for(row["player_id"]))
 
     q20 = row.get("season_p20")
@@ -142,7 +168,12 @@ def _player_weeks(row: dict, n_sims: int) -> np.ndarray:
 
     # A random subset of weeks, of the right size, per simulated season.
     order = rng.random((n_sims, MAX_GAMES)).argsort(axis=1)
-    return np.where(order < played[:, None], weekly, 0.0)
+    out = np.where(order < played[:, None], weekly, 0.0)
+
+    if len(_WEEKS) >= _WEEKS_MAX:
+        _WEEKS.clear()
+    _WEEKS[key] = out
+    return out
 
 
 def simulate_lineup(

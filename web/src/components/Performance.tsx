@@ -109,8 +109,18 @@ export function Performance() {
                       {t.delta > 0 ? "+" : ""}{t.delta.toFixed(1)}
                     </span>
                   )}
-                  <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70">
+                  <span className="num w-12 shrink-0 text-right text-[10.5px] text-chalk/70"
+                        title={t.counted != null && t.starters != null
+                          && t.counted < t.starters
+                          ? `${t.counted} of ${t.starters} starters have played; all three numbers cover those ${t.counted}`
+                          : undefined}>
                     {(t.ppg ?? t.expected_ppg).toFixed(1)}
+                    {t.counted != null && t.starters != null
+                      && t.counted < t.starters && (
+                      <span className="ml-0.5 text-[9px] text-muted">
+                        /{t.counted}
+                      </span>
+                    )}
                   </span>
                 </button>
               </li>

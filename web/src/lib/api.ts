@@ -358,7 +358,11 @@ export interface Performance {
   expected?: boolean;
   /** League scope with no team open: every team, best first. */
   teams?: { team_id: number; name: string; mine: boolean; players: number;
-            expected_ppg: number; ppg: number | null; delta: number }[];
+            expected_ppg: number; ppg: number | null; delta: number;
+            /** How many of the starting lineup have a result yet. All three
+             *  numbers above are over exactly these men, so the row
+             *  reconciles with itself. */
+            counted?: number; starters?: number }[];
   team_id?: number | null;
   week: number;
   scope?: string;

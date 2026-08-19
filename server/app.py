@@ -782,11 +782,30 @@ def season_sync(force: bool = False) -> dict:
     return refresh.describe()
 
 
-def _espn_rosters() -> pl.DataFrame:
-    """Current ownership, with every id spelled the way the board spells it."""
+# The last roster pull and when it landed. Six endpoints call `_espn_rosters`
+# and each one went to ESPN itself: a league scan spent 5.7 of its 14 seconds
+# on a network round trip for a payload it had just been handed, and pressing
+# Scan twice paid for it twice. Rosters do not change while you read one
+# screen -- a claim settles overnight and a trade takes hours to accept -- so a
+# minute of reuse costs nothing real and removes the single largest cost in the
+# heaviest thing the app does.
+_ROSTERS: tuple[float, pl.DataFrame] | None = None
+_ROSTERS_TTL = 60.0
+
+
+def _espn_rosters(fresh: bool = False) -> pl.DataFrame:
+    """Current ownership, with every id spelled the way the board spells it.
+
+    `fresh` forces the round trip, for the paths whose whole job is to find out
+    what changed.
+    """
+    global _ROSTERS
     st = _require()
     if not st.espn:
         raise HTTPException(400, "no ESPN league connected")
+    if (not fresh and _ROSTERS is not None
+            and time.time() - _ROSTERS[0] < _ROSTERS_TTL):
+        return _ROSTERS[1]
     try:
         payload = espn_draft.fetch(**{k: v for k, v in st.espn.items()})
     except espn_draft.DraftUnavailable as exc:
@@ -810,6 +829,7 @@ def _espn_rosters() -> pl.DataFrame:
                          ((tid[0] if isinstance(tid, tuple) else tid, g)
                           for tid, g in r.group_by("team_id"))}
         _settle(STATE.rosters.get(STATE.my_team_id or -1, []))
+    _ROSTERS = (time.time(), r)
     return r
 
 
@@ -857,8 +877,12 @@ def league_rosters() -> dict:
     The draft log freezes the moment the draft ends; waivers, drops and trades
     all happen after it. Trade mode needs current ownership, and the ESPN
     payload has carried it in `mRoster` all along.
+
+    This one always goes to ESPN. Every other caller can read a minute-old
+    roster and be right; the endpoint whose entire job is "who owns whom RIGHT
+    NOW" cannot answer from a cache without contradicting its own name.
     """
-    r = _espn_rosters()
+    r = _espn_rosters(fresh=True)
     if not r.height:
         return {"teams": [], "note": "ESPN returned no rosters for this league"}
 
@@ -1312,13 +1336,26 @@ def _league_teams(obs: pl.DataFrame | None) -> list[dict]:
             "delta": 0.0,
         }
         if obs is not None and obs.height:
+            # ALL THREE NUMBERS OVER THE SAME MEN. `expected_ppg` was summed
+            # across every starter while `ppg` and `delta` covered only the
+            # ones with results, so the row did not reconcile with itself:
+            # 126.7 expected, 135.0 actual, delta +24.8 -- and a team BELOW its
+            # expectation carrying a positive delta, which is the version of
+            # the bug you can see without doing the arithmetic.
+            #
+            # A starter with no result is not a zero, he is a man who has not
+            # played, so he leaves all three sums rather than dragging one of
+            # them down. How many did is reported instead of implied.
             j = starters.join(obs, on="player_id", how="inner")
             if j.height:
                 got = float(j["ppg"].fill_null(0.0).sum())
+                want = float((j["projected_points"]
+                              / j["expected_games"].clip(1.0, None)).sum())
+                row["expected_ppg"] = round(want, 1)
                 row["ppg"] = round(got, 1)
-                row["delta"] = round(got - float(
-                    (j["projected_points"] / j["expected_games"].clip(1.0, None)
-                     ).sum()), 1)
+                row["delta"] = round(got - want, 1)
+                row["counted"] = j.height
+                row["starters"] = starters.height
         out.append(row)
     return sorted(out, key=lambda r: -(r["ppg"] if r["ppg"] is not None
                                        else r["expected_ppg"]))
