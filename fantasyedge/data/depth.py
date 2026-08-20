@@ -43,12 +43,27 @@ FANTASY_POS = frozenset({"QB", "RB", "WR", "TE", "FB"})
 # A backup running back is nearly worthless until he is not; a WR3 still runs
 # routes every week. These scale the projection when the chart disagrees with
 # where the board has him.
+# MEASURED, 2025, 10,509 player-weeks. Each week's published chart against
+# that week's PPR points, per team-position, as a share of what rank 1 scored.
+# The 2025 feed is the only one that publishes ranks deeper than three.
+#
+#     RB   12.59 ppg at rank 1     WR   11.02      TE   8.03      QB  13.89
+#
+# Two things came out of it. The old numbers were consistently generous in the
+# middle -- an RB3 was assumed to be worth 30% of the starter and is worth 13%,
+# a TE2 was 45% and is 36%. And the tail is far steeper than the flat 0.15 /
+# 0.35 / 0.10 / 0.02 it stopped at: an RB4 is worth 2.6%, not 15%.
+#
+# Forced non-increasing, because production cannot systematically rise with
+# depth and the small bumps are noise -- RB rank 6 read higher than rank 5 on
+# 128 observations. Floored at 0.01 rather than the measured 0.000, since a man
+# is never worth literally nothing; he is worth very little.
 BACKUP_DISCOUNT: dict[str, tuple[float, ...]] = {
-    #        rank1  rank2  rank3  rank4+
-    "RB":   (1.00,  0.55,  0.30,  0.15),
-    "WR":   (1.00,  0.85,  0.65,  0.35),
-    "TE":   (1.00,  0.45,  0.20,  0.10),
-    "QB":   (1.00,  0.15,  0.05,  0.02),
+    #        rank1  rank2  rank3  rank4  rank5  rank6  rank7  rank8+
+    "RB":   (1.000, 0.477, 0.128, 0.026, 0.025, 0.025, 0.010),
+    "WR":   (1.000, 0.742, 0.442, 0.247, 0.128, 0.050, 0.018, 0.010),
+    "TE":   (1.000, 0.355, 0.165, 0.045, 0.032, 0.010),
+    "QB":   (1.000, 0.100, 0.013, 0.010),
 }
 
 # Report status -> share of remaining games you should expect him to play.
