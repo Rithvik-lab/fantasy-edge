@@ -31,6 +31,7 @@ from fantasyedge import config
 from fantasyedge.data import depth, espn_draft, refresh
 from fantasyedge import waiver
 from fantasyedge.draft import explain, report
+from fantasyedge.trade.evaluate import SEASON_WEEKS
 from fantasyedge.draft.engine import (
     DraftState,
     recommend,
@@ -737,6 +738,133 @@ def _settle(_live: list[str] | None = None) -> None:
             STATE.moves.pop(int(tid), None)
 
 
+# The streaming model's inputs: fitted opponent residuals plus this season's
+# implied points per team-week. Four seconds to build and it changes when the
+# weekly pull does, so it is held against the stamp rather than rebuilt per
+# request.
+_STREAM: tuple[float, dict] | None = None
+
+
+def _streams(week: int) -> dict[str, dict]:
+    """What each team's kicker and defence are worth in ONE week.
+
+    THE HALF OF K/DST THAT IS NOT FLAT. Season-long finish at these positions
+    is close to unpredictable, which is why the board treats them as
+    interchangeable -- but week to week the betting market prices every game
+    before it is played, and that carries real signal. `models.kdst` fitted it:
+
+        kicker   3.38 + 0.174 x own implied points
+        defence  14.02 - 0.411 x opponent implied points
+
+    The defence slope is the one that matters -- the softest quartile of
+    matchup returns 6.82 a week against 3.02 for the toughest, a 3.81-point gap
+    worth about 65 points across a season. All of it was sitting fitted and
+    unconnected; this is where it joins the app.
+    """
+    global _STREAM
+    from fantasyedge.models import kdst
+
+    stamp = refresh.read_stamp()
+    key = stamp.at or 0.0
+    if _STREAM is None or _STREAM[0] != key:
+        try:
+            _STREAM = (key, refresh.stream_inputs())
+        except Exception:
+            _STREAM = (key, {"edges": {"K": {}, "DST": {}},
+                             "games": pl.DataFrame()})
+    data = _STREAM[1]
+    games = data.get("games")
+    if games is None or not games.height:
+        return {}
+
+    out: dict[str, dict] = {}
+    for r in games.filter(pl.col("week") == int(week)).iter_rows(named=True):
+        team = r["team"]
+        out[team] = {
+            "opp": r["opp"],
+            "implied_for": round(float(r["implied_for"]), 1),
+            "implied_against": round(float(r["implied_against"]), 1),
+            "K": kdst.stream_score("K", r["opp"], r["implied_for"],
+                                   r["implied_against"], data["edges"]),
+            "DST": kdst.stream_score("DST", r["opp"], r["implied_for"],
+                                     r["implied_against"], data["edges"]),
+        }
+    return out
+
+
+def _next_week(stamp=None) -> int:
+    """The one week whose lineup you can still set.
+
+    Before kickoff that is week one; after it, the week following the last set
+    of results. Derived in one place because two screens now ask -- the lineup
+    solver and the wire -- and they must not disagree about which Sunday they
+    are talking about.
+    """
+    stamp = stamp or refresh.read_stamp()
+    return min((stamp.week or 0) + 1, 18) if stamp.got_stats else 1
+
+
+def _stream_in(groups: dict, roster: pl.DataFrame, board: pl.DataFrame,
+               week: int) -> None:
+    """Attach next week's matchup to every kicker and defence, and re-order."""
+    if week <= 0:
+        return
+    st = _streams(week)
+    if not st:
+        return
+    team_of = {r["player_id"]: r.get("team")
+               for r in board.iter_rows(named=True)} if "team" in board.columns else {}
+    # What the man you already start is worth in the same week, so "better than
+    # yours" is a comparison rather than an assertion.
+    starters, _ = optimal_lineup(roster, STATE.settings)
+    mine_at: dict[str, float] = {}
+    for r in starters.iter_rows(named=True):
+        if r["position"] in ("K", "DST"):
+            g = st.get(team_of.get(r["player_id"]) or "")
+            if g and g.get(r["position"]) is not None:
+                mine_at[r["position"]] = float(g[r["position"]])
+
+    for pos in ("K", "DST"):
+        men = groups.get(pos)
+        if not men:
+            continue
+        for c in men:
+            g = st.get(team_of.get(c["player_id"]) or "")
+            pts = (g or {}).get(pos)
+            if pts is None:
+                continue
+            c["week_points"] = round(float(pts), 1)
+            c["week_opp"] = g["opp"]
+            c["week_of"] = week
+            held = mine_at.get(pos)
+            c["week_gain"] = round(float(pts) - held, 1) if held is not None else None
+            c["why"] = [{
+                "k": "stream",
+                "stat": f"{c['week_points']}",
+                "value": c["week_points"],
+                "text": (
+                    f"Week {week} against {g['opp']}, who the market has scoring "
+                    f"{g['implied_against']}. That is the whole case at this "
+                    f"position — season-long finish for a {pos} is close to "
+                    f"unpredictable, but the matchup is priced before kickoff."
+                    if pos == "DST" else
+                    f"Week {week} against {g['opp']}, with his own team implied "
+                    f"for {g['implied_for']} points. A kicker scores when his "
+                    f"offence moves, so that is the number that matters."),
+            }] + ([{
+                "k": "stream",
+                "stat": f"{c['week_gain']:+.1f}",
+                "value": c["week_gain"],
+                "text": (f"Against the {pos} you start this week. "
+                         + ("Worth the claim for one week."
+                            if (c["week_gain"] or 0) > 1.0 else
+                            "Not enough to spend a claim on — stream when the "
+                            "gap is real, not every week.")),
+            }] if c.get("week_gain") is not None else []) + list(c.get("why") or [])
+        # Ordered on the week, because that is the decision being made.
+        men.sort(key=lambda c: -(c.get("week_points") or -99))
+
+
 def _pending() -> list[dict]:
     """My hand edits ESPN has not confirmed, and how long they have left."""
     b = _board()
@@ -1273,7 +1401,7 @@ def team_suggest(week: int | None = None) -> dict:
     # one; after it, the week following the last set of results.
     stamp0 = refresh.read_stamp()
     if week is None:
-        week = min((stamp0.week or 0) + 1, 18) if stamp0.got_stats else 1
+        week = _next_week(stamp0)
 
     # FORM, ONCE THERE IS ANY -- and consistent form, not one loud Sunday.
     # `inseason.reprice` blends the pre-season number with what the season has
@@ -1334,6 +1462,26 @@ def team_suggest(week: int | None = None) -> dict:
     # Solve on who can actually play. Everyone else is benched by the facts
     # rather than by an opinion about him.
     playable = mine.filter(~pl.col("player_id").is_in(out_ids))
+
+    # AND A KICKER OR DEFENCE IS CHOSEN ON THE WEEK, not on the season. Their
+    # season curves are flat by construction, so solving on them picks between
+    # two defences by noise; the matchup is the entire decision. Safe to swap in
+    # here because K and DST are dedicated slots and flex-ineligible -- the
+    # choice among kickers cannot disturb anything else in the lineup. Scaled
+    # to a season so the column keeps one unit.
+    stream = _streams(week)
+    if stream:
+        team_of = ({r["player_id"]: r.get("team")
+                    for r in playable.iter_rows(named=True)}
+                   if "team" in playable.columns else {})
+        wk = []
+        for r in playable.iter_rows(named=True):
+            g = stream.get(team_of.get(r["player_id"]) or "")
+            pts = (g or {}).get(r["position"]) if r["position"] in ("K", "DST") else None
+            wk.append(float(pts) * SEASON_WEEKS if pts is not None
+                      else float(r.get("projected_points") or 0.0))
+        playable = playable.with_columns(pl.Series("projected_points", wk))
+
     starters, bench = optimal_lineup(playable, st.settings)
 
     want = {r["player_id"]: (r.get("slot") or r["position"])
@@ -1363,6 +1511,17 @@ def team_suggest(week: int | None = None) -> dict:
             return "on bye this week"
         if (hurt.get(q) or "").upper() in OUT_FOR_THE_WEEK:
             return f"listed {(hurt.get(q) or 'out').lower().replace('_', ' ')}"
+        # A KICKER OR DEFENCE IS NEVER "BEATEN ON PROJECTION" -- their season
+        # projections are flat and the swap was decided by the matchup, so
+        # saying the generic thing hides the only reason that exists.
+        if pos.get(q) in ("K", "DST") and stream:
+            g = stream.get(team_of.get(q) or "")
+            if g:
+                return (f"his opponent {g['opp']} is implied for "
+                        f"{g['implied_against']} — a better draw is available"
+                        if pos.get(q) == "DST"
+                        else f"his offence is implied for {g['implied_for']} "
+                             f"— a better draw is available")
         f = seen.get(q)
         if f and (f.get("games") or 0) > 0:
             # Name the record, not just the conclusion: how many games, at
@@ -1625,6 +1784,16 @@ def waivers(top: int = 12, force: bool = False) -> dict:
         for i, c in enumerate(men):
             c["why"] = waiver.why(c, mine, st.settings, free,
                                   nxt=men[i + 1] if i + 1 < len(men) else None)
+    # K AND DST ARE A WEEKLY QUESTION, so they are answered weekly. The season
+    # simulation ranks them by a curve that is flat by construction -- every
+    # defence within half a point of every other -- and then the list is sorted
+    # on noise. The matchup is the whole decision at these two positions, so it
+    # decides the order WITHIN them.
+    #
+    # Only within them. A kicker's nine points next Sunday and a receiver's
+    # fifteen across a season are not the same unit, so `worth` stays the
+    # cross-position currency and this sits beside it.
+    _stream_in(groups, mine, b, _next_week(stamp))
     rows = waiver.best(groups, top=top)
     priced = {c["player_id"] for men in groups.values() for c in men}
     todo = waiver.plan(mine, free, st.settings, b, groups, cuts, limit=limit)

@@ -395,6 +395,13 @@ export interface Claim {
   starts: number;
   /** Who he plays for. */
   team?: string | null;
+  /** Kicker and defence only: what he is worth in the week you can still set,
+   *  who he faces, and how much he beats the one you start by. Season-long
+   *  finish at these positions is flat; the matchup is the whole decision. */
+  week_points?: number | null;
+  week_opp?: string | null;
+  week_of?: number | null;
+  week_gain?: number | null;
   drop_id?: string | null;
   drop_name?: string | null;
   drop_cost: number;

@@ -102,14 +102,34 @@ function WireCard({ c, i, active, onPick }: {
         </span>
       </div>
       <div className="shrink-0 text-right">
-        <span className={cn("num block text-[14px] font-bold leading-none",
-                            worth > 0 ? "text-turf" : "text-muted")}>
-          {worth > 0 ? "+" : ""}{worth.toFixed(1)}
-        </span>
-        <span className="num text-[9.5px] text-muted">
-          {c.upside ? `depth ${c.adds.toFixed(1)} · ceiling ${c.upside.toFixed(0)}`
-                    : weekly >= 0.05 ? `+${weekly.toFixed(1)}/wk` : "no change"}
-        </span>
+        {/* A KICKER AND A DEFENCE ARE A WEEKLY DECISION, so they show the week
+            rather than a season total that is flat by construction. */}
+        {c.week_points != null ? (
+          <>
+            <span className="num block text-[14px] font-bold leading-none text-turf">
+              {c.week_points.toFixed(1)}
+            </span>
+            <span className="num text-[9.5px] text-muted">
+              wk{c.week_of} vs {c.week_opp}
+              {c.week_gain != null && (
+                <span className={c.week_gain > 0 ? "ml-1 text-turf" : "ml-1"}>
+                  {c.week_gain > 0 ? "+" : ""}{c.week_gain.toFixed(1)}
+                </span>
+              )}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className={cn("num block text-[14px] font-bold leading-none",
+                                worth > 0 ? "text-turf" : "text-muted")}>
+              {worth > 0 ? "+" : ""}{worth.toFixed(1)}
+            </span>
+            <span className="num text-[9.5px] text-muted">
+              {c.upside ? `depth ${c.adds.toFixed(1)} · ceiling ${c.upside.toFixed(0)}`
+                        : weekly >= 0.05 ? `+${weekly.toFixed(1)}/wk` : "no change"}
+            </span>
+          </>
+        )}
       </div>
     </motion.button>
   );
@@ -844,7 +864,10 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
           </div>
           {pos === "K" || pos === "DST" ? (
             <p className="border-t border-line px-3 py-2 text-[10px] leading-relaxed text-muted">
-              {wire.streaming}
+              Ranked on <span className="text-chalk">week {men[0]?.week_of ?? ""}</span>,
+              not the season — these two are flat across a year and decided by
+              the matchup. The softest quartile of draw returns 6.82 a week at
+              defence against 3.02 for the toughest.
             </p>
           ) : null}
           <Rest rows={wire.rest?.[pos] ?? []} onPrice={price}
