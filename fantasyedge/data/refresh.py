@@ -31,6 +31,14 @@ everything at 2025 and would silently skip the current season. So this asks,
 records what it actually got, and degrades: a missing dataset is a normal
 August condition, not an error. The stamp says what is fresh and what is not,
 so callers can tell "no injuries reported" from "we never looked".
+
+AUGUST IS NOT ACTUALLY EMPTY
+
+Everything above is true of nflverse, which publishes the regular season and
+the playoffs and nothing else -- so the weeks when the backups are the only
+men playing were missing from every source here. They are not missing from
+ESPN. `data/preseason` pulls them, and it is in the source list below, which
+is why the pre-season table above now has a line with rows in it.
 """
 
 from __future__ import annotations
@@ -127,6 +135,9 @@ def _out(name: str, season: int) -> Path:
 # features nothing consumes.
 def _sources() -> dict:
     import nflreadpy as nfl
+
+    from fantasyedge.data import preseason
+
     return {
         "player_stats": lambda s: nfl.load_player_stats(seasons=[s]),
         "depth_charts": lambda s: nfl.load_depth_charts(seasons=[s]),
@@ -159,6 +170,13 @@ def _sources() -> dict:
             seasons=[s], stat_type="weekly"),
         "rosters_weekly": lambda s: nfl.load_rosters_weekly(seasons=[s]),
         "pbp": lambda s: nfl.load_pbp(seasons=[s]),
+        # Not nflverse -- it does not have this and never has. August is the
+        # only football in which the backups are the men on the field, and
+        # `preseason` scrapes it from ESPN. It is last in the dict because it
+        # is the only source that costs HTTP calls per GAME rather than one per
+        # season; it caches finished games, so it is 17s cold and about a
+        # second every week after.
+        "preseason": lambda s: preseason.pull(s),
     }
 
 
@@ -186,10 +204,15 @@ def season(target: int | None = None, force: bool = False) -> Stamp:
             results.append(Result(name, note="empty"))
             continue
         d.write_parquet(_out(name, target))
-        if "week" in d.columns:
+        # WHICH WEEK IT IS COMES FROM RESULTS, NOT FROM ANY FILE WITH A WEEK
+        # COLUMN. This used to take the max over every source, so the published
+        # schedule -- all eighteen weeks of it, months ahead -- made a stamp
+        # taken in August say `week: 18`. Preseason would have made it say 5.
+        # The week of the season is the last week that has been PLAYED, which
+        # is the same file `got_stats` asks about.
+        if name == "player_stats" and "week" in d.columns:
             try:
-                w = int(d["week"].max())
-                week = w if week is None else max(week, w)
+                week = int(d["week"].max())
             except Exception:
                 pass
         results.append(Result(name, rows=d.height, ok=True))
