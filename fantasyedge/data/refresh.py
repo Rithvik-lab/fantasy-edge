@@ -238,13 +238,31 @@ def kickoff(target: int | None = None) -> str | None:
     that only says "not published" reads as broken rather than as early.
     """
     target = target or config.PRODUCTION_TARGET_SEASON
+
+    # THE FILE FIRST. The weekly pull already put this season's schedule on
+    # disk, and `describe()` is called on every status poll -- so going to the
+    # network for a date we own meant a request per poll, and one flaky call
+    # made the app say it did not know when the season starts. It reads "not
+    # published" as broken rather than as early, which is the exact confusion
+    # this function exists to prevent.
+    def _first(s: pl.DataFrame) -> str | None:
+        if not s.height or "gameday" not in s.columns:
+            return None
+        wk1 = s.filter(pl.col("week") == 1)["gameday"].drop_nulls()
+        return str(wk1.min()) if wk1.len() else None
+
+    p = _out("schedules", target)
+    if p.exists():
+        try:
+            got = _first(pl.read_parquet(p))
+            if got:
+                return got
+        except Exception:
+            pass
     try:
         import nflreadpy as nfl
 
-        s = nfl.load_schedules(seasons=[target])
-        if not s.height or "gameday" not in s.columns:
-            return None
-        return str(s.filter(pl.col("week") == 1)["gameday"].min())
+        return _first(nfl.load_schedules(seasons=[target]))
     except Exception:
         return None
 
