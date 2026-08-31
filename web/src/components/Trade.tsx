@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  api, type Ask, type Balanced, type LeagueRoster, type Piece, type Scan,
-  type TeamRead, type TradeOffer, type TradePlayer,
+  api, type Ask, type Balanced, type FoundPlayer, type LeagueRoster,
+  type Piece, type Scan, type TeamRead, type TradeOffer, type TradePlayer,
   type TradeVerdict as Verdict,
 } from "@/lib/api";
 import { TradeVerdict } from "@/components/TradeVerdict";
-import { AddByName, StancePicker, type Stance } from "@/components/TradeDeck";
+import {
+  AddByName, FindPlayer, StancePicker, type Stance,
+} from "@/components/TradeDeck";
 import { ManualRoster, RosterPanel, TradePile } from "@/components/TradeBoard";
 import { TradeScan, TeamSummary } from "@/components/TradeScan";
 import { Simulating } from "@/components/Simulating";
@@ -35,7 +37,10 @@ import { cn } from "@/lib/utils";
 const dealKey = (g: string[], k: string[]) =>
   [...g].sort().join("|") + ">" + [...k].sort().join("|");
 
-export function Trade() {
+export function Trade({ onFindOnWire }: {
+  /** He is unowned — the answer is the waiver board, not a negotiation. */
+  onFindOnWire?: (playerId: string) => void;
+}) {
   const [rosters, setRosters] = useState<LeagueRoster[] | null>(null);
   const [entry, setEntry] = useState<"auto" | "manual" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -62,6 +67,8 @@ export function Trade() {
   // Which manager is open. null means the grid of all of them.
   const [focus, setFocus] = useState<number | null>(null);
   const [priced, setPriced] = useState<string | null>(null);
+  /** What the finder just did, said out loud — it moves things you can't see. */
+  const [notice, setNotice] = useState<string | null>(null);
   // Building the trade, or reading the answer. The scan keeps its own layout:
   // there the board and the read belong together, and he asked for that one
   // to stay exactly as it is.
@@ -331,6 +338,57 @@ export function Trade() {
     else { setV(null); setPriced(null); }
   }
 
+  /**
+   * A name from the finder, sent wherever that man actually is.
+   *
+   * THE ROUTING IS THE FEATURE. Naming a player is the easy half; the half
+   * that costs clicks is working out whose roster he is on and then finding
+   * that manager in a dropdown of twelve. Four destinations, because there are
+   * four answers to "where is he" and they are not variations of each other --
+   * an unowned player is not a cheap trade, he is a different screen.
+   */
+  function hunt(p: FoundPlayer) {
+    // Draw him wherever he lands: the piles render from `known`, and a man
+    // found by search is on no roster this component has loaded.
+    setExtra((m) => new Map(m).set(p.player_id, {
+      player_id: p.player_id, player_name: p.player_name,
+      position: p.position, headshot: p.headshot,
+      projected_points: p.projected_points,
+    }));
+
+    if (p.where === "wire") {
+      setNotice(`${p.player_name} is unowned — opening the waiver board.`);
+      onFindOnWire?.(p.player_id);
+      return;
+    }
+    if (p.where === "unknown") {
+      setNotice(`${p.player_name} is owned, but this league has no live rosters `
+                + `to read, so there is no way to say by whom.`);
+      return;
+    }
+
+    setView("build");
+    setCounters(null);
+    setBalanced(null);
+    if (p.where === "mine") {
+      add("give", p.player_id);
+      setNotice(`${p.player_name} is already yours — put him in what you send.`);
+      return;
+    }
+    // An opponent has him. Open that manager, with him already on the table.
+    if (p.owner_id != null && p.owner_id !== them) {
+      // Everything in the get pile belongs to the manager we are leaving.
+      setGet([]);
+      setThem(p.owner_id);
+      setFocus(p.owner_id);
+    }
+    setGet((cur) => (cur.includes(p.player_id) ? cur : [...cur, p.player_id]));
+    setV(null);
+    setPriced(null);
+    setNotice(`${p.player_name} is on ${p.owner ?? "their team"} — now pick `
+              + `what you would send.`);
+  }
+
   /** A name clicked in the league read goes straight into the right pile. */
   function fromRead(t: TeamRead, p: Piece, side: "give" | "get") {
     setThem(t.team_id);
@@ -549,6 +607,10 @@ export function Trade() {
           ))}
         </div>
         <StancePicker value={stance} onChange={setStance} />
+        {/* THE FINDER IS ONLY HONEST IN AUTOMATIC MODE. Manual has no rosters
+            to search and nobody to own anybody, so "who has him" has no answer
+            there and the box would be a dead end wearing a useful label. */}
+        {auto && <FindPlayer onPick={hunt} busy={scanning} />}
         {auto && (
           <Button size="sm" variant="outline" className="h-7 text-[11px]"
                   onClick={() => runScan({}, true)} disabled={scanning}
@@ -594,6 +656,19 @@ export function Trade() {
           )}
         </div>
       </div>
+
+      {/* THE FINDER MOVES THINGS THAT ARE OFF SCREEN -- it can change which
+          manager you are looking at and drop a name into a pile below the
+          fold. A control whose effect you cannot see has to say what it did. */}
+      {notice && (
+        <div className="tick-in flex items-center gap-2 rounded-md border border-turf/40 bg-turf/[0.07] px-3 py-1.5">
+          <span className="flex-1 text-[11.5px] text-turf">{notice}</span>
+          <button onClick={() => setNotice(null)}
+                  className="shrink-0 text-[10.5px] text-muted hover:text-chalk">
+            dismiss
+          </button>
+        </div>
+      )}
 
       {/* The league read sits ABOVE the board, because it is what you look at
           first: which manager, then which deal. It used to render inside the

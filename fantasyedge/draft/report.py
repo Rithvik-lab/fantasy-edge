@@ -353,8 +353,13 @@ def _rate(by_slot: dict[int, list[str]], board: pl.DataFrame,
         if "season_p20" in starters.columns and starters.height:
             floor = float(starters["season_p20"].drop_nulls().sum())
             ceil = float(starters["season_p80"].drop_nulls().sum())
+        # `expected_games` rides along so the hover can show what a man scores
+        # in a week he plays. The lineup card next to it does, and two lists of
+        # players in different units with neither one labelled is worse than
+        # either choice on its own.
         keep = [c for c in ("player_id", "player_name", "position",
-                            "projected_points") if c in starters.columns]
+                            "projected_points", "expected_games")
+                if c in starters.columns]
         out.append({
             "slot": slot if slot != -1 else (my_slot or 0),
             "mine": slot == -1,

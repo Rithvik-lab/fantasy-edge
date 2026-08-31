@@ -46,6 +46,22 @@ export interface SearchHit {
   headshot: string | null;
 }
 
+/** A name found anywhere in the league, with who has him. */
+export interface FoundPlayer {
+  player_id: string;
+  player_name: string;
+  position: string;
+  /** His NFL club, not a fantasy team. */
+  team: string | null;
+  headshot: string | null;
+  ecr: number | null;
+  projected_points: number | null;
+  /** mine · an opponent's · the wire · we cannot tell */
+  where: "mine" | "team" | "wire" | "unknown";
+  owner_id: number | null;
+  owner: string | null;
+}
+
 export interface Analytics {
   picks_until_next: number | null;
   tiers: {
@@ -296,6 +312,9 @@ export interface TeamReport {
            par?: number; unfilled?: Record<string, number> };
   starters: { player_id: string; player_name: string; position: string;
               slot?: string; projected_points?: number; vor?: number;
+              /** Games the projection expects him to play — the divisor that
+               *  turns a season total into what he scores on a Sunday. */
+              expected_games?: number;
               headshot?: string | null; starting: boolean }[];
   bench: TeamReport["starters"];
   strength: { position: string; have: number; need: number; points: number;
@@ -324,7 +343,8 @@ export interface TeamReport {
              floor: number | null; ceiling: number | null;
              players: number; rank: number;
              lineup?: { player_id: string; player_name: string;
-                        position: string; projected_points?: number }[];
+                        position: string; projected_points?: number;
+                        expected_games?: number }[];
              shape?: { position: string; points: number; league: number;
                        edge: number }[] }[];
   improve?: { position: string; edge: number; percentile: number;
@@ -518,6 +538,8 @@ export const api = {
       + (limit ? `&limit=${limit}` : "")),
   player: (id: string) => req<PlayerProfile>(`/player/${id}`),
   search: (q: string) => req<{ players: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
+  whereis: (q: string) =>
+    req<{ players: FoundPlayer[] }>(`/whereis?q=${encodeURIComponent(q)}`),
   setOwnedPicks: (picks: number[]) =>
     req<Status>("/picks/mine", { method: "POST", body: JSON.stringify({ picks }) }),
   resetOwnedPicks: () => req<Status>("/picks/reset", { method: "POST" }),

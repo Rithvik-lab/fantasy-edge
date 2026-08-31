@@ -618,6 +618,96 @@ def search(q: str, limit: int = 8) -> dict:
     return {"players": out[:limit]}
 
 
+@app.get("/api/whereis")
+def whereis(q: str, limit: int = 8) -> dict:
+    """Find a man anywhere in the league, and say who has him.
+
+    Trade mode's two typeaheads each search ONE roster, and that is the wrong
+    shape for the question people actually arrive with: I want this player, now
+    who do I have to talk to. You cannot search inside a roster you have not
+    picked yet, and picking the roster is the thing the search was for. So this
+    searches the board and answers the ownership question alongside the name.
+
+    Four possible answers, and the caller does something different with each:
+
+        mine     he is already yours -- so he is a chip, not a target
+        team     an opponent has him; that is the manager to open
+        wire     nobody owns him; that is the waiver board, not a trade
+        unknown  a league with no live rosters (manual, or ESPN down). The
+                 draft log still says he was taken, but not by whom, and
+                 guessing a team here would put a name in a pile at random.
+    """
+    st = _require()
+    term = q.strip().lower()
+    if len(term) < 2:
+        return {"players": []}
+
+    b = _board()
+    hits = (
+        b.filter(pl.col("player_name").str.to_lowercase()
+                  .str.contains(term, literal=True))
+        .sort("ecr", nulls_last=True)
+        .head(limit * 4)
+    )
+    if not hits.height:
+        return {"players": []}
+
+    # OWNERSHIP THROUGH `own`, like everywhere else. A man claimed an hour ago
+    # is not on the wire and the man dropped for him is, and ESPN will not
+    # agree until tomorrow -- reading the raw payload here would send you to
+    # negotiate for somebody you already have.
+    try:
+        _espn_rosters()
+    except Exception:
+        pass
+    owner: dict[str, int] = {}
+    for tid in (STATE.rosters or {}):
+        for pid in STATE.own(int(tid)):
+            owner[pid] = int(tid)
+    drafted = set(st.drafted_ids)
+
+    shots = _headshots(b)
+    out = []
+    for r in hits.iter_rows(named=True):
+        pid = r["player_id"]
+        tid = owner.get(pid)
+        if tid is not None:
+            where = "mine" if tid == STATE.my_team_id else "team"
+        elif owner or pid not in drafted:
+            # A live roster map that does not list him means he is unowned.
+            where = "wire"
+        else:
+            where = "unknown"
+        out.append({
+            "player_id": pid,
+            "player_name": r["player_name"],
+            "position": r["position"],
+            "team": r.get("team"),
+            "headshot": shots.get(pid),
+            "ecr": r.get("ecr"),
+            "projected_points": (round(r["projected_points"], 1)
+                                 if r.get("projected_points") is not None
+                                 else None),
+            "where": where,
+            "owner_id": tid,
+            "owner": (STATE.team_names.get(tid, f"Team {tid}")
+                      if tid is not None else None),
+        })
+
+    # A NAME THAT STARTS WITH WHAT WAS TYPED COMES FIRST. Ranking on ecr alone
+    # puts the best player containing the substring on top, so typing "allen"
+    # while hunting Braelon Allen offers Josh Allen and means one more click
+    # every time.
+    def rank(x: dict) -> tuple:
+        name = x["player_name"].lower()
+        last = name.split()[-1] if name.split() else name
+        return (not last.startswith(term), not name.startswith(term),
+                x["ecr"] if x["ecr"] is not None else 9e9)
+
+    out.sort(key=rank)
+    return {"players": out[:limit]}
+
+
 def _name_key(s: str) -> str:
     """Same normalisation the board uses, for matching across id systems."""
     s = re.sub(r"\b(jr|sr|ii|iii|iv|v)\.?$", "", (s or "").lower().strip())

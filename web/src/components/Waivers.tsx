@@ -67,8 +67,8 @@ function Face({ c, size }: { c: Claim; size: number }) {
  * The rank label carries the whole idea: this is not "the best free agent" and
  * then three also-rans, it is what to do first and what to do when that fails.
  */
-function WireCard({ c, i, active, onPick }: {
-  c: Claim; i: number; active: boolean; onPick: () => void;
+function WireCard({ c, i, active, spotlit, onPick }: {
+  c: Claim; i: number; active: boolean; spotlit?: boolean; onPick: () => void;
 }) {
   const weekly = c.adds / 17;
   const worth = c.worth ?? c.adds;
@@ -76,11 +76,17 @@ function WireCard({ c, i, active, onPick }: {
     <motion.button
       layout
       onClick={onPick}
+      // SPOTLIT IS LOUDER THAN ACTIVE ON PURPOSE. Active is where you clicked,
+      // and you know where you clicked; spotlit is the man you asked for on a
+      // board you did not choose to be looking at, so it has to be findable at
+      // a glance rather than merely marked.
       className={cn(
         "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-        active
-          ? "border-turf/60 bg-turf/10"
-          : "border-line bg-panel hover:border-turf/30 hover:bg-raised/50"
+        spotlit
+          ? "border-clock bg-clock/15 ring-2 ring-clock/60"
+          : active
+            ? "border-turf/60 bg-turf/10"
+            : "border-line bg-panel hover:border-turf/30 hover:bg-raised/50"
       )}
     >
       <span className="num w-6 shrink-0 text-center text-[15px] font-bold leading-none"
@@ -467,12 +473,25 @@ function Plan({ plan, onOpen }: {
  * season simulation, so three hundred of them would cost four seconds to fill
  * a list nobody has read — one costs a tenth of a second, on click.
  */
-function Rest({ rows, onPrice, pending, chosen }: {
+function Rest({ rows, onPrice, pending, chosen, spotlit }: {
   rows: NonNullable<Wire["rest"]>[string];
   onPrice: (id: string) => void;
   pending: string | null;
   chosen?: string;
+  /** Searched for from trade mode — he may be anywhere in a list of hundreds. */
+  spotlit?: string | null;
 }) {
+  // EVERY HOOK BEFORE THE FIRST RETURN. `if (!rows.length) return null` used to
+  // be the first statement, and a position with an empty tail would have run
+  // one fewer hook than one without — React counts them and takes the tree down.
+  const found = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    // The tail runs to several hundred names inside a 280px window, so marking
+    // the row he asked for is not enough on its own — it is almost always
+    // scrolled out of sight.
+    if (spotlit) found.current?.scrollIntoView({ block: "center" });
+  }, [spotlit, rows]);
+
   if (!rows.length) return null;
   return (
     <div className="border-t border-line">
@@ -482,13 +501,16 @@ function Rest({ rows, onPrice, pending, chosen }: {
       </div>
       <ul className="max-h-[280px] overflow-y-auto">
         {rows.map((r) => (
-          <li key={r.player_id}>
+          <li key={r.player_id}
+              ref={spotlit === r.player_id ? found : undefined}>
             <button
               onClick={() => onPrice(r.player_id)}
               disabled={!!pending}
               className={cn(
                 "flex w-full items-center gap-2.5 border-t border-line/40 px-3 py-1.5 text-left transition-colors hover:bg-raised/60 disabled:opacity-50",
-                chosen === r.player_id && "bg-turf/10"
+                spotlit === r.player_id
+                  ? "bg-clock/15 ring-1 ring-inset ring-clock/60"
+                  : chosen === r.player_id && "bg-turf/10"
               )}
             >
               <PlayerHover playerId={r.player_id} className="shrink-0">
@@ -654,7 +676,12 @@ function Mine({ team, wire, dropId }: {
   );
 }
 
-export function Waivers({ drafting }: { drafting?: boolean }) {
+export function Waivers({ drafting, focusId, onFocused }: {
+  drafting?: boolean;
+  /** A man named in trade mode who turned out to be unowned. */
+  focusId?: string | null;
+  onFocused?: () => void;
+}) {
   const [wire, setWire] = useState<Wire | null>(null);
   const [team, setTeam] = useState<TeamReport | null>(null);
   const [pos, setPos] = useState<string>("RB");
@@ -669,6 +696,8 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
   /** Which step of a claim is running, and what the last one did. */
   const [step, setStep] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /** Who to light up, and it survives a re-price so he does not vanish. */
+  const [spot, setSpot] = useState<string | null>(null);
   const first = useRef(true);
 
   const pull = useCallback(async (force = false, sync = true) => {
@@ -721,6 +750,47 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
       setPricing(null);
     }
   }, []);
+
+  /**
+   * Somebody was looked up in trade mode and turned out to be unowned.
+   *
+   * ARRIVING ON THE RIGHT POSITION IS MOST OF THE JOB. The board shows one
+   * position at a time, so landing on this screen with the deck still set to
+   * RB and the man you asked about a tight end is indistinguishable from the
+   * search having failed. He is also very often outside the top three, which
+   * is the only part of the board that carries a priced claim — so if he is
+   * down in the tail, he gets priced on the way in, exactly as a click on him
+   * would have done.
+   */
+  useEffect(() => {
+    if (!focusId || !wire) return;
+    const inQueue = Object.entries(wire.positions ?? {}).find(
+      ([, list]) => list.some((c) => c.player_id === focusId));
+    if (inQueue) {
+      setAsked(null);
+      setPos(inQueue[0]);
+      setPicked(focusId);
+      setSpot(focusId);
+      first.current = false;   // do not let the open-on-best effect override it
+      onFocused?.();
+      return;
+    }
+    const inTail = Object.entries(wire.rest ?? {}).find(
+      ([, list]) => list.some((r) => r.player_id === focusId));
+    if (inTail) {
+      setPos(inTail[0]);
+      setSpot(focusId);
+      first.current = false;
+      void price(focusId);
+      onFocused?.();
+      return;
+    }
+    // He is neither. The wire is built from the unowned pool, so this means
+    // somebody claimed him between the search and this render -- which is
+    // worth saying, because "not on the board" reads as a broken hand-off.
+    setNote("He is not on the wire any more — somebody in the league has him.");
+    onFocused?.();
+  }, [focusId, wire, price, onFocused]);
 
   // Record a claim that actually went through, so every number downstream --
   // your lineup, the next wire, a trade you price on Thursday -- is about the
@@ -799,7 +869,9 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
           <Term k="wire_queue">
             <span className="eyebrow hidden sm:inline">position</span>
           </Term>
-          <Deck pos={pos} setPos={(p) => { setAsked(null); setPos(p); setPicked(null); }}
+          <Deck pos={pos} setPos={(p) => {
+                  setAsked(null); setPos(p); setPicked(null); setSpot(null);
+                }}
                 wire={wire} />
         </div>
       </div>
@@ -858,7 +930,10 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
               men.map((c, i) => (
                 <WireCard key={c.player_id} c={c} i={i}
                           active={chosen?.player_id === c.player_id}
-                          onPick={() => { setAsked(null); setPicked(c.player_id); }} />
+                          spotlit={spot === c.player_id}
+                          onPick={() => {
+                            setAsked(null); setPicked(c.player_id); setSpot(null);
+                          }} />
               ))
             )}
           </div>
@@ -871,7 +946,7 @@ export function Waivers({ drafting }: { drafting?: boolean }) {
             </p>
           ) : null}
           <Rest rows={wire.rest?.[pos] ?? []} onPrice={price}
-                pending={pricing} chosen={chosen?.player_id} />
+                pending={pricing} chosen={chosen?.player_id} spotlit={spot} />
         </section>
 
         <section className="rounded-lg border border-line bg-panel p-3">

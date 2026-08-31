@@ -74,6 +74,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("room");
   const wasLive = useRef(false);
   const [mode, setMode] = useState<Mode>("draft");
+  // A player handed over from trade mode for the waiver board to open on.
+  // Cleared once it has been used, so coming back to waivers later does not
+  // jump to a name you looked up on Tuesday.
+  const [wireFocus, setWireFocus] = useState<string | null>(null);
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -435,11 +439,16 @@ export default function App() {
       <main className="mx-auto w-full min-h-0 max-w-[1400px] flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
         {mode === "trade" ? (
           <div key="trade" className="tick-in">
-            <Trade />
+            {/* Searching for a man who turns out to be unowned is not a failed
+                trade search, it is a waiver question — so it changes mode
+                rather than reporting nothing found. */}
+            <Trade onFindOnWire={(id) => { setWireFocus(id); setMode("waiver"); }} />
           </div>
         ) : mode === "waiver" ? (
           <div key="waiver" className="tick-in">
-            <Waivers drafting={status.phase !== "complete"} />
+            <Waivers drafting={status.phase !== "complete"}
+                     focusId={wireFocus}
+                     onFocused={() => setWireFocus(null)} />
           </div>
         ) : (
         <>

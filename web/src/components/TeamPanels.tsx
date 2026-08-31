@@ -3,7 +3,7 @@ import type { TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { Floating, useHover } from "@/components/Floating";
 import { PlayerHover } from "@/components/PlayerHover";
-import { cn } from "@/lib/utils";
+import { cn, perGame } from "@/lib/utils";
 
 /**
  * One team in the standings.
@@ -68,8 +68,10 @@ function TeamRow({ t, max, name }: {
                     {p.position}
                   </span>
                   <span className="flex-1 truncate text-[11px]">{p.player_name}</span>
-                  <span className="num text-[10px] text-muted">
-                    {Math.round(p.projected_points ?? 0)}
+                  {/* Same unit as your own lineup card, for the same reason. */}
+                  <span className="num text-[10px] text-muted"
+                        title={`${Math.round(p.projected_points ?? 0)} across the season`}>
+                    {perGame(p)}
                   </span>
                 </li>
               ))}

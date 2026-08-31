@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { api, type LeagueRoster, type SearchHit, type TradePlayer } from "@/lib/api";
+import {
+  api, type FoundPlayer, type LeagueRoster, type SearchHit, type TradePlayer,
+} from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
 import { cn } from "@/lib/utils";
@@ -108,6 +110,93 @@ export function AddByName({ onAdd, placeholder, restrictTo }: {
                       style={{ color: POS_HUE[h.position] ?? "#8CA096" }}>
                   {h.position}
                 </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Name a player, go to wherever he is.
+ *
+ * The two boxes above each search one roster, which cannot answer the question
+ * you usually walk in with -- I want THIS man, who do I talk to. Picking the
+ * manager is the thing the search was for, so this searches the whole league
+ * and then does the routing itself: an opponent's player opens that manager
+ * with him already in the get pile, one of yours goes into the give pile, and
+ * a free agent is not a trade at all and belongs on the waiver board.
+ */
+export function FindPlayer({ onPick, busy }: {
+  onPick: (p: FoundPlayer) => void;
+  busy?: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<FoundPlayer[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits([]); return; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.whereis(q);
+        if (alive) { setHits(r.players); setOpen(true); }
+      } catch { /* leave the last list up rather than blanking it */ }
+    }, 160);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+
+  const tag = (p: FoundPlayer) =>
+    p.where === "mine" ? "yours"
+      : p.where === "team" ? (p.owner ?? "owned")
+        : p.where === "wire" ? "on the wire"
+          : "owner unknown";
+  const tone = (p: FoundPlayer) =>
+    p.where === "mine" ? "text-alarm/80"
+      : p.where === "wire" ? "text-clock" : "text-turf/80";
+
+  return (
+    <div className="relative min-w-[13rem] flex-1 sm:max-w-[20rem]">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 140)}
+        disabled={busy}
+        placeholder="find any player — I want to trade for…"
+        className="h-7 w-full rounded border border-line bg-ink px-2 text-[11px] placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-turf/50 disabled:opacity-50"
+      />
+      {open && hits.length > 0 && (
+        <ul className="absolute top-full z-40 mt-1 w-full overflow-hidden rounded-md border border-line bg-raised shadow-2xl">
+          {hits.map((h) => (
+            <li key={h.player_id}>
+              <button
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { onPick(h); setQ(""); setHits([]); setOpen(false); }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-turf/12"
+              >
+                {h.headshot ? (
+                  <img src={h.headshot} alt="" loading="lazy"
+                       className="h-6 w-6 shrink-0 rounded object-cover object-top" />
+                ) : <span className="h-6 w-6 shrink-0 rounded bg-line" />}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[11px]">{h.player_name}</span>
+                  <span className={cn("block truncate text-[9.5px]", tone(h))}>
+                    {tag(h)}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[10px] font-bold"
+                      style={{ color: POS_HUE[h.position] ?? "#8CA096" }}>
+                  {h.position}
+                </span>
+                {h.team && (
+                  <span className="num w-7 shrink-0 text-right text-[9px] text-muted">
+                    {h.team}
+                  </span>
+                )}
               </button>
             </li>
           ))}

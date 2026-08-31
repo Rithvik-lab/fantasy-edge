@@ -6,7 +6,7 @@ import { PlayerHover } from "@/components/PlayerHover";
 import { AddByName } from "@/components/TradeDeck";
 import { Term } from "@/components/Explain";
 import { SuggestLineup } from "@/components/SuggestLineup";
-import { cn } from "@/lib/utils";
+import { cn, perGame } from "@/lib/utils";
 
 /**
  * Your roster, in the order a lineup card is written.
@@ -134,9 +134,17 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy,
           {p.position}
         </span>
       </div>
-      <Term k="projected">
-        <span className="num shrink-0 text-[11px] text-muted">
-          {Math.round(p.projected_points ?? 0)}
+      {/* PER WEEK, NOT PER SEASON. A lineup card is a comparison between men
+          for one Sunday, and a season total answers a different question --
+          it folds in how many games he is expected to be there for, so a good
+          player who misses a month and a lesser one who does not read the
+          same. The season figure is a hover away and is still what the solver
+          adds up; it just is not the number to put beside a name here. */}
+      <Term k="expected_ppg">
+        <span className="num shrink-0 text-[11px] text-muted"
+              title={`${Math.round(p.projected_points ?? 0)} across the season, `
+                     + `over ${Math.round(p.expected_games ?? 17)} expected games`}>
+          {perGame(p)}
         </span>
       </Term>
       {onDrop && (
@@ -183,6 +191,13 @@ export function TeamRoster({ d, onSwap, onReset, onAdd, onDrop, onRefresh,
           <span className="eyebrow">Your team</span>
           <span className="num ml-auto text-[10.5px] text-muted">
             {d.starters.length + d.bench.length} players
+          </span>
+          {/* A COLUMN OF BARE NUMBERS NEEDS A UNIT. The same 14 is an
+              excellent week and a catastrophic season, and the only thing
+              telling them apart used to be knowing which one the app had
+              picked. */}
+          <span className="w-full text-right text-[9.5px] uppercase tracking-wider text-muted/70">
+            points per game
           </span>
         </div>
         <div className="mt-1.5">
