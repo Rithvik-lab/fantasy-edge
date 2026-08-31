@@ -1912,8 +1912,12 @@ def waivers(top: int = 12, force: bool = False) -> dict:
         # Each flag arrives with what it MEANS and the availability the engine
         # actually uses for it, so hovering a red tag answers the question it
         # raises rather than repeating the word in a bigger font.
+        # Position goes in because questionable is worth 0.44 at quarterback
+        # and 0.66 at tight end, and a tooltip that quotes the league-wide
+        # average quotes a number no player on the card is priced on.
         "hurt": [{"player_id": p, "player_name": n, "position": pos,
-                  "status": hurt[p], **(depth.status_note(hurt[p]) or {})}
+                  "status": hurt[p],
+                  **(depth.status_note(hurt[p], pos) or {})}
                  for p, n, pos in zip(mine["player_id"], mine["player_name"],
                                       mine["position"])
                  if hurt.get(p) and hurt[p] not in ("ACTIVE", "NORMAL")],

@@ -109,6 +109,17 @@ def fetch(
             "adp_sd": float(own.get("auctionValueAverageChange") or 0.0),
             "percent_owned": float(own.get("percentOwned") or 0.0),
             "percent_started": float(own.get("percentStarted") or 0.0),
+            # THE ONLY INJURY FEED THAT EXISTS BEFORE WEEK ONE. It was in this
+            # payload the whole time and thrown away here, so the board had no
+            # injury column at all and `depth.apply` -- which knows exactly
+            # what to do with one -- fell back on nflverse's weekly report,
+            # which publishes nothing until games are played. In August that
+            # meant a man ESPN had flagged was priced as perfectly healthy.
+            #
+            # `injuryStatus` rather than `injured`: the boolean stays False for
+            # a questionable player, so reading it would have found nothing
+            # wrong with a back who is limping into week one.
+            "espn_injury": p.get("injuryStatus"),
         })
 
     if not rows:

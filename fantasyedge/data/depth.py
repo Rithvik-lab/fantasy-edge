@@ -66,18 +66,123 @@ BACKUP_DISCOUNT: dict[str, tuple[float, ...]] = {
     "QB":   (1.000, 0.100, 0.013, 0.010),
 }
 
-# Report status -> share of remaining games you should expect him to play.
-# "Questionable" is the interesting one: it is close to a coin flip in name
-# only -- questionable players play the large majority of the time.
+# Report status -> share of games you should expect him to play.
+#
+# MEASURED, 2016-2025, 8,308 tagged player-weeks at fantasy positions
+# (`scripts/measure_status_availability.py`). The label is SNAP COUNTS, not the
+# box score: a receiver who played forty snaps and drew no targets has no
+# `player_stats` row, so scoring availability off it marks healthy men absent.
+#
+#     Questionable   n=4524    played 60.6%
+#     Doubtful       n= 531    played  1.1%
+#     Out            n=3251    played  0.1%
+#
+# Every number in this table used to be asserted, and two of them were wrong in
+# the direction that costs money. Questionable said 0.75 against a measured
+# 0.61 -- the comment justifying it, that questionable players "play the large
+# majority of the time", is not what the decade says. Doubtful said 0.08
+# against 0.011, seven times too generous. Both errors price an injured man as
+# healthier than he is, which is exactly the error you get fleeced by.
 STATUS_AVAILABILITY: dict[str, float] = {
-    "Out": 0.0,
-    "Doubtful": 0.08,
-    "Questionable": 0.75,
+    "Out": 0.00,
+    "Doubtful": 0.01,
+    "Questionable": 0.61,
     "Injured Reserve": 0.0,
     "IR": 0.0,
     "PUP": 0.0,
     "Suspension": 0.0,
 }
+
+# Questionable is the only tag with both the sample and the spread to split by
+# position, and the spread is not small -- a questionable quarterback plays
+# less than half the time and a questionable tight end two thirds. Stable
+# across all ten seasons (55-69%), so this is a fact about the position rather
+# than about one year.
+#
+#     QB  n= 334   43.7%      WR  n=2113   64.0%
+#     RB  n=1161   55.6%      TE  n= 862   65.5%
+QUESTIONABLE_BY_POS: dict[str, float] = {
+    "QB": 0.44, "RB": 0.56, "WR": 0.64, "TE": 0.66,
+}
+
+# ---------------------------------------------------------------------------
+# A TAG IN AUGUST AND A TAG ON A FRIDAY ARE NOT THE SAME OBJECT
+#
+# Everything above answers "will he play on Sunday", and using it on a season
+# total is a category error with a very large price: run the weekly number
+# across a whole year and Ja'Marr Chase goes from 15.1 expected games to 9.2
+# for a hamstring, Mahomes lands below replacement, and the top of the board
+# is destroyed by tags that mean almost nothing.
+#
+# So the cost of a tag is measured twice, in the two units it comes in.
+# ---------------------------------------------------------------------------
+
+# BEFORE WEEK ONE: a multiplier on the whole season.
+#
+# MEASURED, 2016-2025, 4,844 player-seasons (`scripts/measure_preseason_tag.py`).
+# Population fixed in advance -- everyone in the top three at his position on
+# the week-one depth chart. Label: share of his team's games in which he took an
+# offensive snap. The stand-in for a late-August tag is the WEEK ONE injury
+# report, filed days later, because no preseason report exists going back a
+# decade.
+#
+#     no tag         n=4592   played 64.8% of the season
+#     Questionable   n= 153   played 64.5%   -> 1.00
+#     Out            n=  82   played 46.5%   -> 0.72
+#
+# A PRE-SEASON QUESTIONABLE COSTS NOTHING MEASURABLE. By position it is 0.92
+# at running back, 0.96 at receiver, 0.92 at tight end on samples of 35-75 --
+# all just under one, none of them distinguishable from it. That is worth
+# knowing in its own right: the man everybody is trying to buy cheap off the
+# back of a camp tag has not, historically, been cheap for a reason.
+PRESEASON_AVAILABILITY: dict[str, float] = {
+    "Questionable": 1.00,
+    # No separate week-one sample for Doubtful -- there are too few. Read as
+    # Out, which is the direction the tag points and the conservative choice.
+    "Doubtful": 0.72,
+    "Out": 0.72,
+    # Not measurable from the injury report, which has no such status. Placed
+    # on IR or PUP before the opener is a rules fact rather than a prediction:
+    # four games minimum and usually the year.
+    "Injured Reserve": 0.0,
+    "IR": 0.0,
+    "PUP": 0.0,
+    "Suspension": 0.0,
+}
+
+# IN SEASON: games, subtracted. Not a fraction of what is left.
+#
+# MEASURED over the same 8,308 tagged player-weeks, each man against his own
+# play rate that season in the weeks he was NOT on the report -- because this
+# population is depth charts full of rotational players who miss games for
+# reasons that have nothing to do with an injury, and five weeks of anybody
+# "loses" 1.6 games before a tag is mentioned.
+#
+#     tag in week W        W+0  W+1  W+2  W+3  W+4    marginal games lost
+#     Questionable         64%  68%  69%  70%  68%           0.55
+#     Doubtful              1%  39%  55%  58%  62%           1.64
+#     Out                   0%  25%  42%  51%  56%           1.87
+#
+# Questionable is back to his own baseline by the following Sunday. It is worth
+# half a game, and the old code charged it a quarter of the season.
+GAMES_LOST: dict[str, float] = {
+    "Questionable": 0.55,
+    "Doubtful": 1.64,
+    "Out": 1.87,
+}
+
+# These are not one-game events and never were, so they stay multiplicative
+# even in season.
+SEASON_ENDING = ("Injured Reserve", "IR", "PUP", "Suspension")
+
+
+def availability(status: str | None, position: str | None = None) -> float:
+    """Share of THIS WEEK'S game a man with this tag plays. 1.0 if untagged."""
+    if not status:
+        return 1.0
+    if status == "Questionable" and position in QUESTIONABLE_BY_POS:
+        return QUESTIONABLE_BY_POS[position]
+    return STATUS_AVAILABILITY.get(status, 1.0)
 
 # ESPN's tag vocabulary against the labels the table above is keyed on. Two
 # feeds, one meaning, and the number stays in one place.
@@ -99,14 +204,13 @@ ESPN_STATUS: dict[str, str] = {
 STATUS_MEANING: dict[str, str] = {
     "Out": "ESPN has him out. He scores nothing, so the slot is somebody "
            "else's this week — the only question is whose.",
-    "Doubtful": "Doubtful. Players carrying this tag almost never play; the "
-                "engine expects him for well under a tenth of what is left, "
-                "which is close enough to nothing that you should plan "
-                "around him.",
-    "Questionable": "Questionable, which is a coin flip in name only — the "
-                    "engine expects him to play about three quarters of the "
-                    "remaining games. Usually he plays. Have a replacement "
-                    "ready rather than a replacement started.",
+    "Doubtful": "Doubtful, and it means it: across ten seasons and 531 of "
+                "these tags, men carrying one played 1% of the time. Treat "
+                "the week as gone rather than as uncertain.",
+    "Questionable": "Questionable really is close to a coin flip. Over ten "
+                    "seasons these men played 61% of the time — 56% at "
+                    "running back, 44% at quarterback. Not 'usually plays'. "
+                    "Have the replacement ready to start, not just ready.",
     "Injured Reserve": "On injured reserve. He is not available for weeks, "
                        "and a roster spot spent on him is a roster spot you "
                        "are not using.",
@@ -122,23 +226,26 @@ STATUS_MEANING: dict[str, str] = {
 IR_ELIGIBLE = frozenset({"INJURY_RESERVE", "IR", "PUP", "NOT_ACTIVE"})
 
 
-def status_note(tag: str | None) -> dict | None:
+def status_note(tag: str | None, position: str | None = None) -> dict | None:
     """An ESPN injury tag, explained, with the number the engine actually uses.
 
     Returns None for a healthy man rather than a cheerful sentence about him,
     because a lineup card covered in "ACTIVE" badges is a lineup card nobody
     reads.
+
+    `position` because questionable is worth a different amount at each one and
+    the tooltip has to quote the number actually used, not a league-wide
+    average that no player is priced on.
     """
     if not tag:
         return None
     label = ESPN_STATUS.get(tag.upper())
     if label is None:
         return None
-    plays = STATUS_AVAILABILITY.get(label, 1.0)
     return {
         "tag": tag,
         "label": label,
-        "plays": plays,
+        "plays": availability(label, position),
         "text": STATUS_MEANING.get(label, ""),
     }
 
@@ -343,8 +450,49 @@ def roles(board: pl.DataFrame, player_ids: list[str], season: int) -> list[dict]
     return sorted(out, key=lambda x: x["discount"])
 
 
+def _expected_after(status: pl.Expr, games: pl.Expr,
+                    started: bool) -> pl.Expr:
+    """Expected games once the tag is priced, in the unit the tag comes in.
+
+    Before week one a tag is about a season, so it scales. In season it is
+    about a Sunday, so it subtracts -- except the long ones, which were never
+    about a Sunday and keep scaling.
+    """
+    if not started:
+        mult = status.replace_strict(PRESEASON_AVAILABILITY, default=1.0,
+                                     return_dtype=pl.Float64).fill_null(1.0)
+        return games * mult
+
+    lost = status.replace_strict(GAMES_LOST, default=0.0,
+                                 return_dtype=pl.Float64).fill_null(0.0)
+    return (pl.when(status.is_in(list(SEASON_ENDING)))
+              .then(pl.lit(0.0))
+              .otherwise((games - lost).clip(0.0, None)))
+
+
 def apply(board: pl.DataFrame, season: int, week: int | None = None) -> pl.DataFrame:
-    """Fold depth chart and injury status onto a board."""
+    """Fold depth chart and injury status onto a board.
+
+    TWO INJURY FEEDS, AND THE ONE THAT WORKS IN AUGUST WINS.
+
+    This used to read nflverse alone, and nflverse publishes no injury report
+    until games are played -- `load_injuries(2026)` is zero rows all summer. So
+    for the entire pre-season, the months in which a hamstring decides where a
+    man goes in your draft, every player on the board was priced as healthy no
+    matter what any source said about him. The machinery below was correct and
+    was being handed an empty table.
+
+    ESPN carries a live tag year round, in the same payload the ADP comes from,
+    and `espn.fetch` now keeps it. It takes precedence where both exist: the
+    weekly report is an official Wednesday/Friday document and ESPN's flag
+    moves when the news does, which is the difference between knowing on Sunday
+    morning and knowing on Sunday afternoon.
+
+    `week` is also the regime switch. None means the season has not started,
+    and a tag then is a claim about a whole year rather than about one Sunday
+    -- two different measurements, in two different units. See the tables.
+    """
+    started = bool(week)
     chart = depth_chart(season)
     inj = injuries(season, week)
 
@@ -358,18 +506,57 @@ def apply(board: pl.DataFrame, season: int, week: int | None = None) -> pl.DataF
             if q in out.columns:
                 out = out.with_columns((pl.col(q) * pl.col("depth_mult")).alias(q))
 
+    # ESPN's vocabulary translated into the labels this module is keyed on, so
+    # the two feeds meet as one column and the numbers live in one place.
+    espn_tag = None
+    if "espn_injury" in out.columns:
+        espn_tag = (pl.col("espn_injury").cast(pl.String).str.to_uppercase()
+                      .replace_strict(ESPN_STATUS, default=None,
+                                      return_dtype=pl.String))
+
     if inj.height:
         out = out.join(inj, on="player_id", how="left")
-        avail = pl.col("injury_status").replace_strict(
-            STATUS_AVAILABILITY, default=1.0, return_dtype=pl.Float64)
-        # Availability, NOT rate. This is the whole point of keeping the two
-        # facts apart -- an injury shortens the season, it does not make him
-        # worse per game when he does play.
-        out = out.with_columns(
-            (pl.col("expected_games") * avail.fill_null(1.0)).alias("expected_games")
-        )
+        # A REPORT GOES STALE. `injuries` keeps the most recent row up to this
+        # week, so a man listed questionable in week three and healthy ever
+        # since still arrives carrying the tag -- and in week ten it would be
+        # charged against him again. Only the last two weeks of report count.
+        if started and "injury_week" in out.columns:
+            out = out.with_columns(
+                pl.when(pl.col("injury_week") >= (week or 0) - 1)
+                  .then(pl.col("injury_status"))
+                  .otherwise(None).alias("injury_status"))
+        tag = (pl.coalesce([espn_tag, pl.col("injury_status")])
+               if espn_tag is not None else pl.col("injury_status"))
+    elif espn_tag is not None:
+        tag = espn_tag
+    else:
+        return out
 
-    return out
+    out = out.with_columns(tag.alias("injury_status"))
+
+    # AVAILABILITY, NOT RATE -- an injury shortens the season, it does not make
+    # him worse per game when he does play. The way to honour that is to move
+    # BOTH the games and the season total by the same factor, so points per
+    # game comes out unchanged and the total falls.
+    #
+    # Moving only `expected_games`, as this did, leaves a man on injured
+    # reserve with nought games and a full season projection -- and the lineup
+    # solver adds up projections, so it will happily start him. A player who
+    # cannot play is not a hole in the availability column, he is a hole in the
+    # lineup, and only one of those is visible to the thing making the decision.
+    fresh = _expected_after(pl.col("injury_status"), pl.col("expected_games"),
+                            started)
+    factor = (pl.when(pl.col("expected_games") > 0)
+                .then(fresh / pl.col("expected_games"))
+                .otherwise(pl.lit(1.0))
+                .clip(0.0, 1.0))
+    out = out.with_columns(factor.alias("_avail"))
+    scaled = ["projected_points"] + [c for c in
+              ("season_p20", "season_p50", "season_p80") if c in out.columns]
+    return (out.with_columns(
+                [(pl.col(c) * pl.col("_avail")).alias(c) for c in scaled]
+                + [fresh.alias("expected_games")])
+               .drop("_avail"))
 
 
 def changed(board: pl.DataFrame, season: int, top: int = 40) -> pl.DataFrame:

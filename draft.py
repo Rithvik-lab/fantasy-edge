@@ -105,9 +105,13 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
         .rename({"gsis_id": "player_id", "market_name": "player_name",
                  "c_points": "projected_points"})
         .filter(pl.col("projected_points").is_not_null())
+        # `espn_injury` rides along with the other market columns. It is the
+        # only injury feed that exists before week one, and dropping it here
+        # was what left `depth.apply` with nothing to apply all summer.
         .select(["player_id", "player_name", "position", "projected_points",
                  "ecr", "sd"]
-                + [c for c in ("draft_rank", "percent_owned") if c in m.columns])
+                + [c for c in ("draft_rank", "percent_owned", "espn_injury")
+                   if c in m.columns])
         .with_columns(pl.lit(False).alias("rookie"))
     )
 
@@ -142,6 +146,7 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
             kd = kd.with_columns(pl.col("adp").alias("ecr"))
         keep = ["player_id", "player_name", "position", "projected_points",
                 "ecr", "sd", "draft_rank", "percent_owned", "rookie",
+                "espn_injury",
                 "season_p20", "season_p50", "season_p80", "expected_games"]
         kd = kd.select([c for c in keep if c in kd.columns])
         b = pl.concat([b, kd], how="diagonal")
@@ -164,7 +169,16 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
     # Before `add_vor` on purpose: replacement level should be computed from
     # what men are actually worth, not from what they were worth in July.
     try:
-        b = depth.apply(b, config.PRODUCTION_TARGET_SEASON)
+        # WHICH WEEK IT IS DECIDES WHAT AN INJURY TAG MEANS. Before the opener
+        # a tag is a claim about a season and scales one; afterwards it is a
+        # claim about a Sunday and costs games. Passing None in October would
+        # keep charging August's rates, so the week comes from the pull rather
+        # than from the default.
+        from fantasyedge.data import refresh
+
+        stamp = refresh.read_stamp()
+        wk = stamp.week if stamp.got_stats else None
+        b = depth.apply(b, config.PRODUCTION_TARGET_SEASON, wk)
     except Exception:
         pass                # a chart we cannot read is not a reason to stop
 
