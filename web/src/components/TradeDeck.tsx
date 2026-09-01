@@ -136,15 +136,37 @@ export function FindPlayer({ onPick, busy }: {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<FoundPlayer[]>([]);
   const [open, setOpen] = useState(false);
+  // A SEARCH THAT FAILS MUST NOT LOOK LIKE A SEARCH THAT FOUND NOBODY. This
+  // swallowed every error and left the list empty, so an engine running from
+  // before the endpoint existed -- which is what a server nobody has restarted
+  // is -- presented as a box you could type into that never did anything.
+  // There was no way to tell that from "no such player" and no way at all to
+  // tell it from a bug.
+  const [state, setState] = useState<"idle" | "busy" | "ok" | "fail">("idle");
+  const [why, setWhy] = useState<string | null>(null);
 
   useEffect(() => {
-    if (q.trim().length < 2) { setHits([]); return; }
+    if (q.trim().length < 2) { setHits([]); setState("idle"); return; }
     let alive = true;
+    setState("busy");
     const t = setTimeout(async () => {
       try {
         const r = await api.whereis(q);
-        if (alive) { setHits(r.players); setOpen(true); }
-      } catch { /* leave the last list up rather than blanking it */ }
+        if (!alive) return;
+        setHits(r.players);
+        setState("ok");
+        setOpen(true);
+      } catch (e) {
+        if (!alive) return;
+        setHits([]);
+        setState("fail");
+        // The api layer already writes these, and writes them well -- a 404
+        // there says "the engine is running older code than this page",
+        // which is the actual diagnosis. Repeating it here in different
+        // words would only give the app two voices for one problem.
+        setWhy(e instanceof Error ? e.message : String(e));
+        setOpen(true);
+      }
     }, 160);
     return () => { alive = false; clearTimeout(t); };
   }, [q]);
@@ -166,16 +188,32 @@ export function FindPlayer({ onPick, busy }: {
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 140)}
         disabled={busy}
-        placeholder="find any player — I want to trade for…"
+        placeholder="Search for player"
         className="h-7 w-full rounded border border-line bg-ink px-2 text-[11px] placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-turf/50 disabled:opacity-50"
       />
+      {/* Every state that is not a list of names says which one it is. */}
+      {open && state !== "ok" && q.trim().length >= 2 && (
+        <div className={cn(
+          "absolute top-full z-40 mt-1 w-full rounded-md border bg-raised px-2 py-1.5 text-[10.5px] leading-snug shadow-2xl",
+          state === "fail" ? "border-alarm/40 text-alarm" : "border-line text-muted")}>
+          {state === "busy" ? "looking…" : why}
+        </div>
+      )}
+      {open && state === "ok" && hits.length === 0 && (
+        <div className="absolute top-full z-40 mt-1 w-full rounded-md border border-line bg-raised px-2 py-1.5 text-[10.5px] text-muted shadow-2xl">
+          Nobody by that name on the board.
+        </div>
+      )}
       {open && hits.length > 0 && (
         <ul className="absolute top-full z-40 mt-1 w-full overflow-hidden rounded-md border border-line bg-raised shadow-2xl">
           {hits.map((h) => (
             <li key={h.player_id}>
               <button
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { onPick(h); setQ(""); setHits([]); setOpen(false); }}
+                onClick={() => {
+                  onPick(h);
+                  setQ(""); setHits([]); setOpen(false); setState("idle");
+                }}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-turf/12"
               >
                 {h.headshot ? (
