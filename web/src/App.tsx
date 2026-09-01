@@ -78,6 +78,12 @@ export default function App() {
   // Cleared once it has been used, so coming back to waivers later does not
   // jump to a name you looked up on Tuesday.
   const [wireFocus, setWireFocus] = useState<string | null>(null);
+  // WHICH news was dismissed, not WHETHER. A boolean here stays true for the
+  // rest of the session, so the next man to get hurt would reprice the board
+  // in silence -- the exact failure the banner exists to prevent. Kept client
+  // side rather than cleared on the server, because the list is also the
+  // record of why today's prices are what they are.
+  const [seenNews, setSeenNews] = useState<string | null>(null);
   const [side, setSide] = useState<"feed" | "room">("feed");
   const [editPicks, setEditPicks] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -341,6 +347,11 @@ export default function App() {
   }
 
   const myTurn = !!status.on_the_clock;
+  // Names the CONTENT of the news, so dismissing this batch does not dismiss
+  // the next one. Includes the destination tag: the same man going
+  // questionable and then out is two different pieces of news.
+  const newsKey = (status.injury_news ?? [])
+    .map((n) => `${n.player_id}:${n.to ?? ""}`).join("|");
 
   return (
     <div className="flex h-full flex-col">
@@ -416,6 +427,35 @@ export default function App() {
           {err}
           <Button size="sm" variant="ghost" className="ml-auto h-6"
                   onClick={() => setErr(null)}>Dismiss</Button>
+        </div>
+      )}
+
+      {/* THE NUMBERS MOVED, AND HERE IS WHY. A tag change drops the board and
+          everything reprices on the next read, which without this reads as
+          the app quietly disagreeing with what it said a minute ago. */}
+      {!!(status.injury_news ?? []).length && newsKey !== seenNews && (
+        <div className="border-b border-alarm/30 bg-alarm/[0.08] px-4 py-2 text-xs">
+          <div className="mx-auto flex max-w-[1400px] items-start gap-3">
+            <span className="shrink-0 font-semibold uppercase tracking-wider text-alarm">
+              repriced
+            </span>
+            <span className="flex-1 leading-relaxed text-chalk">
+              {(status.injury_news ?? []).map((n, i) => (
+                <span key={n.player_id + i}>
+                  {i > 0 && <span className="text-muted"> · </span>}
+                  {n.player_name}{" "}
+                  <span className="text-muted">
+                    {n.from ? n.from.toLowerCase() : "healthy"} &rarr;{" "}
+                  </span>
+                  <span className={n.to ? "text-alarm" : "text-turf"}>
+                    {n.to ? n.to.toLowerCase() : "healthy"}
+                  </span>
+                </span>
+              ))}
+            </span>
+            <Button size="sm" variant="ghost" className="h-6 shrink-0"
+                    onClick={() => setSeenNews(newsKey)}>Dismiss</Button>
+          </div>
         </div>
       )}
 

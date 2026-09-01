@@ -155,6 +155,20 @@ class Draft:
         self.my_team_id: int | None = None
         self.last_sync: float = 0.0
         self.sync_error: str | None = None
+        # Injury tags that moved since the board was priced, and when. The
+        # board is dropped when this fills, so these are the reasons the next
+        # set of numbers differs from the last.
+        self.injury_news: list[dict] = []
+        self.injury_news_at: float = 0.0
+        # Last snapshot of ESPN's tags for rostered players, and whether one
+        # has ever been taken. The flag is separate because an empty map is a
+        # real answer -- a league in which nobody is hurt -- and treating it as
+        # "not looked yet" would make the first injury of the season invisible.
+        self.injury_tags: dict[str, str] = {}
+        self.injury_tags_seen: bool = False
+        # A tag moved and the board has not been rebuilt for it yet.
+        self.injury_dirty: bool = False
+        self.board_dropped_at: float = 0.0
         # ESPN does not publish the pick order until it locks, and before
         # round one there are no picks to infer it from. When neither is
         # available the slot is a GUESS, and a wrong seat quietly poisons
@@ -1071,6 +1085,87 @@ def _ingest(payload: dict) -> None:
                 STATE.slot_confirmed = True
 
 
+def _injury_news(payload: dict) -> list[dict]:
+    """Has anyone's injury tag moved since the board was priced?
+
+    THE BOARD IS A CACHE WITH NO CLOCK, and since injury status started
+    deciding prices that has been a real staleness: an app left running from
+    Sunday to Thursday prices Sunday's injuries. A TTL would fix it by
+    guessing how often football news happens and paying for a full rebuild on
+    quiet days to discover it did not. This watches instead.
+
+    It is free. `sync` already has this payload in hand for the picks, and it
+    carries every rostered player's live tag, so the comparison costs no HTTP
+    at all. That does mean it sees ROSTERED players only -- a free agent's tag
+    still waits for the next rebuild, which is the honest limit of doing this
+    without a second call.
+
+    IT COMPARES THIS FEED AGAINST ITSELF. The board's tags come from ESPN's ADP
+    endpoint and these come from the league endpoint, and two endpoints that
+    merely OUGHT to agree are a rebuild loop waiting to happen: a standing
+    disagreement would invalidate every tick, rebuild, disagree again, forever.
+    Checked on 2026-08-31 -- 43 flagged men across the twelve rosters, 43
+    matching the board, no disagreement at all -- which is why the board's own
+    tags are good enough to SEED the first comparison, closing the gap where a
+    tag moves between a rebuild and the next sync. The cooldown in `sync` is
+    what makes that safe if ESPN ever stops agreeing with itself.
+    """
+    try:
+        r = espn_draft.rosters(payload)
+    except Exception:
+        return []
+    if not r.height or "injury_status" not in r.columns:
+        return []
+
+    now: dict[str, str] = {}
+    names: dict[str, tuple] = {}
+    for row in r.iter_rows(named=True):
+        pid = row.get("player_id")
+        if not pid:
+            continue
+        # ESPN's word translated into the label the board is keyed on. Anything
+        # not in the map -- ACTIVE, NORMAL, a tag we do not model -- is "no
+        # tag", which is also how the board stores it.
+        tag = depth.ESPN_STATUS.get((row.get("injury_status") or "").upper())
+        if tag:
+            now[pid] = tag
+        names[pid] = (row.get("player_name"), row.get("position"))
+
+    priced = D.board_tags()
+    if STATE.injury_tags_seen:
+        was = STATE.injury_tags
+    elif D._BOARD is not None:
+        # Nothing recorded yet, so fall back to what the board was priced on --
+        # restricted to men this league rosters, because that is all this feed
+        # can speak about and a difference outside it would be an artefact of
+        # the two feeds covering different players.
+        was = {pid: tag for pid, tag in priced.items() if pid in names}
+    else:
+        # NO BOARD MEANS NOTHING TO BE STALE. Comparing against an unbuilt
+        # board reads every flag in the league as brand new -- forty-three
+        # men "just got hurt" the moment you open the app -- and the rebuild
+        # that follows would have read today's tags anyway. Record and say
+        # nothing.
+        with STATE.lock:
+            STATE.injury_tags = now
+            STATE.injury_tags_seen = True
+        return []
+    with STATE.lock:
+        STATE.injury_tags = now
+        STATE.injury_tags_seen = True
+
+    news = []
+    for pid in set(now) | set(was):
+        # Only men this league can see. A tag on somebody nobody rosters
+        # cannot change a price here.
+        if now.get(pid) == was.get(pid) or pid not in names:
+            continue
+        name, pos = names[pid]
+        news.append({"player_id": pid, "player_name": name, "position": pos,
+                     "from": was.get(pid), "to": now.get(pid)})
+    return news
+
+
 @app.post("/api/espn/sync")
 def sync() -> dict:
     """Pull the latest picks. The front end calls this on a timer."""
@@ -1080,6 +1175,31 @@ def sync() -> dict:
     try:
         payload = espn_draft.fetch(**{k: v for k, v in st.espn.items()})
         _ingest(payload)
+        # NEWS REPRICES THE BOARD; a quiet tick costs nothing. Dropping the
+        # cache is all that is needed -- the next caller rebuilds, which is a
+        # few seconds once, rather than every hour forever.
+        news = _injury_news(payload)
+        if news:
+            with STATE.lock:
+                # Kept so the change can be SAID. A price that moves on its own
+                # with no explanation is the thing this app keeps refusing to
+                # do, and "why is he suddenly worth less" is the first question
+                # it would raise.
+                STATE.injury_news = (news + STATE.injury_news)[:12]
+                STATE.injury_news_at = time.time()
+                STATE.injury_dirty = True
+        # THE COOLDOWN IS THE SEATBELT. Detection compares one feed against
+        # itself, so it cannot oscillate on its own -- but a rebuild costs a
+        # 600-player ESPN fetch, and the front end syncs every few seconds, so
+        # the cost of being wrong about that is hammering somebody else's API
+        # in a loop. Bounded to one rebuild a minute; a change that arrives
+        # inside the window stays flagged and lands on the next tick.
+        if STATE.injury_dirty and (time.time() - STATE.board_dropped_at
+                                   > INJURY_REBUILD_COOLDOWN):
+            with STATE.lock:
+                D._BOARD = None
+                STATE.injury_dirty = False
+                STATE.board_dropped_at = time.time()
     except espn_draft.DraftUnavailable as exc:
         with STATE.lock:
             STATE.sync_error = str(exc)
@@ -1145,6 +1265,9 @@ def season_sync(force: bool = False) -> dict:
 # heaviest thing the app does.
 _ROSTERS: tuple[float, pl.DataFrame] | None = None
 _ROSTERS_TTL = 60.0
+
+# Most a board rebuild can happen on injury news. See `sync`.
+INJURY_REBUILD_COOLDOWN = 60.0
 
 
 def _espn_rosters(fresh: bool = False) -> pl.DataFrame:
@@ -2766,6 +2889,11 @@ def status() -> dict:
         "slot_confirmed": STATE.slot_confirmed or STATE.espn is None,
         "draft_complete": complete,
         "warnings": warnings,
+        # WHY THE NUMBERS MOVED. Repricing silently on a tag change would be
+        # the app quietly disagreeing with itself between two refreshes, and
+        # the first question that raises -- why is he suddenly worth less --
+        # deserves an answer that is already on screen.
+        "injury_news": STATE.injury_news[:6],
         "league_name": STATE.league_name,
         "describe": STATE.settings.describe(),
         "n_teams": STATE.settings.n_teams,
@@ -3259,6 +3387,13 @@ def load_league(league_id: str) -> dict:
         STATE.draft_started = bool(STATE.picks)
         STATE.draft_complete = len(STATE.picks) >= STATE.settings.total_picks
         D._BOARD = None
+        # A DIFFERENT LEAGUE HAS DIFFERENT ROSTERS, so the tag snapshot taken
+        # against the old one describes men who may not be here. Carrying it
+        # over would announce their injuries as this league's news.
+        STATE.injury_tags = {}
+        STATE.injury_tags_seen = False
+        STATE.injury_news = []
+        STATE.injury_dirty = False
     return status()
 
 

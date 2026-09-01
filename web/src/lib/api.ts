@@ -133,6 +133,11 @@ export interface Status {
   slot_confirmed?: boolean;
   draft_complete?: boolean;
   warnings?: string[];
+  /** Injury tags that moved since the board was priced. The board was dropped
+   *  when these arrived, so they are why the numbers changed. */
+  injury_news?: { player_id: string; player_name: string | null;
+                  position: string | null;
+                  from: string | null; to: string | null }[];
   league_name?: string;
   describe?: string;
   n_teams?: number;

@@ -38,6 +38,25 @@ W = 78
 _BOARD: pl.DataFrame | None = None
 _PLATFORM = "espn"
 
+# WHICH INJURY TAGS THIS BOARD WAS BUILT FROM.
+#
+# The board is a cache with no clock: built once and kept until something
+# deletes it. That was harmless while it held ADP and projections, which move
+# slowly and predictably. It stopped being harmless the moment injury status
+# started deciding prices -- leave the app running from Sunday to Thursday and
+# it prices Sunday's injuries.
+#
+# A timer would be the easy answer and the wrong one: it is a guess about how
+# often football news happens, and it pays for a full rebuild on a quiet
+# Wednesday to find out nothing changed. Recording the tags instead lets the
+# thing that already talks to ESPN every few seconds notice when one moves.
+_BOARD_TAGS: dict[str, str] = {}
+
+
+def board_tags() -> dict[str, str]:
+    """player_id -> injury label the live board is priced on. Empty if none."""
+    return dict(_BOARD_TAGS)
+
 
 def set_platform(name: str) -> None:
     """Choose whose ADP prices the board. Invalidates any cached board."""
@@ -184,7 +203,19 @@ def board(settings: LeagueSettings) -> pl.DataFrame:
 
     b = _attach_team(b)
     _BOARD = add_vor(b, settings)
+    _remember_tags(_BOARD)
     return _BOARD
+
+
+def _remember_tags(b: pl.DataFrame) -> None:
+    """Snapshot the injury tags this board is priced on, for change detection."""
+    global _BOARD_TAGS
+    if "injury_status" not in b.columns:
+        _BOARD_TAGS = {}
+        return
+    hurt = b.filter(pl.col("injury_status").is_not_null())
+    _BOARD_TAGS = dict(zip(hurt["player_id"].to_list(),
+                           hurt["injury_status"].to_list()))
 
 
 def _attach_team(b: pl.DataFrame) -> pl.DataFrame:
