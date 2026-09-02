@@ -3,6 +3,7 @@ import { LayoutGroup, motion } from "motion/react";
 import type { TeamReport } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { InjuryTag } from "@/components/InjuryTag";
 import { AddByName } from "@/components/TradeDeck";
 import { Term } from "@/components/Explain";
 import { SuggestLineup } from "@/components/SuggestLineup";
@@ -124,11 +125,16 @@ function Row({ p, slot, bench, over, setOver, pinned, onSwap, onDrop, busy,
         </PlayerHover>
       ) : <span className="h-7 w-7 shrink-0 rounded-md bg-raised" />}
       <div className="min-w-0 flex-1">
-        <PlayerHover playerId={p.player_id}>
-          <span className="block cursor-help truncate text-[12.5px] leading-tight">
-            {p.player_name}
-          </span>
-        </PlayerHover>
+        {/* The letter sits BESIDE the name, where every fantasy site puts it
+            and where your eye is already looking. */}
+        <span className="flex items-center gap-1.5">
+          <PlayerHover playerId={p.player_id}>
+            <span className="block cursor-help truncate text-[12.5px] leading-tight">
+              {p.player_name}
+            </span>
+          </PlayerHover>
+          <InjuryTag tag={p.injury_status} note={p.injury_note} />
+        </span>
         <span className="text-[10px] font-bold"
               style={{ color: POS_HUE[p.position] ?? "#8CA096" }}>
           {p.position}

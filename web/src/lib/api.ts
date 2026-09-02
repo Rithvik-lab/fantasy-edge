@@ -320,6 +320,10 @@ export interface TeamReport {
               /** Games the projection expects him to play — the divisor that
                *  turns a season total into what he scores on a Sunday. */
               expected_games?: number;
+              /** The tag his price was built from, and what it means. */
+              injury_status?: string | null;
+              injury_note?: { label?: string; plays?: number;
+                              text?: string } | null;
               headshot?: string | null; starting: boolean }[];
   bench: TeamReport["starters"];
   strength: { position: string; have: number; need: number; points: number;

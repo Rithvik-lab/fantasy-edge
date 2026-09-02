@@ -4,7 +4,7 @@ import { api, type Claim, type TeamReport, type Wire } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
 import { Term } from "@/components/Explain";
-import { Floating, useHover } from "@/components/Floating";
+import { InjuryTag } from "@/components/InjuryTag";
 import { Simulating } from "@/components/Simulating";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -552,54 +552,6 @@ function Rest({ rows, onPrice, pending, chosen, spotlit }: {
   );
 }
 
-/**
- * An injury tag you can read into.
- *
- * The tooltip is built here rather than added to the glossary because the text
- * and the availability come from the engine — `depth.status_note` — so the
- * number in the sentence is the number the simulation uses for him, not a
- * second copy of it written into the interface.
- */
-function Hurt({ h }: { h: NonNullable<Wire["hurt"]>[number] }) {
-  const { ref, anchor, show, hide, keep } = useHover({ delay: 60, grace: 180 });
-  return (
-    <span ref={ref} tabIndex={0}
-          onMouseEnter={show} onMouseLeave={hide}
-          onFocus={show} onBlur={hide}
-          className="inline-flex cursor-help">
-      <span className="text-[9px] uppercase tracking-wider text-alarm underline decoration-dotted decoration-alarm/50 underline-offset-2">
-        {(h.label ?? h.status).toLowerCase()}
-      </span>
-      {anchor && (
-        <Floating anchor={anchor} width={264} z={80}
-                  interactive onEnter={keep} onLeave={hide}>
-          <div role="tooltip"
-               className="rounded-md border border-line bg-raised p-2.5 shadow-2xl">
-            <div className="flex items-baseline gap-2">
-              <span className="text-[11px] font-semibold text-alarm">
-                {h.label ?? h.status}
-              </span>
-              {h.plays != null && (
-                <span className="num ml-auto text-[10px] text-muted">
-                  plays {Math.round(h.plays * 100)}% of what is left
-                </span>
-              )}
-            </div>
-            <span className="mt-1 block text-[11px] leading-relaxed text-muted">
-              {h.text || "ESPN has him flagged."}
-            </span>
-            <span className="mt-1.5 block text-[10px] leading-relaxed text-muted">
-              Straight from ESPN's roster feed, which is the only live injury
-              report that exists — nflverse publishes none until the season
-              starts.
-            </span>
-          </div>
-        </Floating>
-      )}
-    </span>
-  );
-}
-
 /** Your roster, with the men a claim would touch marked. */
 function Mine({ team, wire, dropId }: {
   team: TeamReport | null; wire: Wire | null; dropId?: string | null;
@@ -616,16 +568,10 @@ function Mine({ team, wire, dropId }: {
         </span>
       </header>
 
-      {wire?.hurt?.length ? (
-        <div className="border-b border-alarm/25 bg-alarm/10 px-3 py-1.5">
-          <span className="text-[10.5px] leading-snug text-alarm">
-            {wire.hurt.map((h) => h.player_name).join(", ")}
-            {wire.hurt.length > 1 ? " are " : " is "}
-            flagged by ESPN. That is what the wire below is for.
-          </span>
-        </div>
-      ) : null}
-
+      {/* THE PARAGRAPH ABOVE THIS LIST IS GONE. It named the flagged men and
+          then explained that this was what the wire below was for, which is a
+          sentence telling you what screen you are on. The letters in the list
+          say the same thing in the place you were already looking. */}
       <ul className="max-h-[520px] overflow-y-auto">
         {rows.map((p) => {
           const tag = hurt.get(p.player_id);
@@ -646,22 +592,22 @@ function Mine({ team, wire, dropId }: {
                 </PlayerHover>
               ) : <span className="h-7 w-7 shrink-0 rounded bg-raised" />}
               <div className="min-w-0 flex-1">
-                <PlayerHover playerId={p.player_id}>
-                  <span className={cn(
-                    "block cursor-help truncate text-[11.5px] leading-tight",
-                    going && "line-through decoration-alarm/70")}>
-                    {p.player_name}
-                  </span>
-                </PlayerHover>
-                {tag ? (
-                  // The flag explains itself. "QUESTIONABLE" in red raises the
-                  // question and answers none of it; the number the engine
-                  // actually uses for that tag does.
-                  <Hurt h={tag} />
-                ) : (
-                  <span className="text-[9px] font-bold"
-                        style={{ color: hue(p.position) }}>{p.position}</span>
-                )}
+                <span className="flex items-center gap-1.5">
+                  <PlayerHover playerId={p.player_id}>
+                    <span className={cn(
+                      "block cursor-help truncate text-[11.5px] leading-tight",
+                      going && "line-through decoration-alarm/70")}>
+                      {p.player_name}
+                    </span>
+                  </PlayerHover>
+                  <InjuryTag tag={tag?.status ?? p.injury_status}
+                             note={tag ?? p.injury_note} />
+                </span>
+                {/* THE POSITION NO LONGER DISAPPEARS WHEN A MAN IS HURT. The
+                    flag used to take its place, so being injured cost you the
+                    one label that tells you what he is. */}
+                <span className="text-[9px] font-bold"
+                      style={{ color: hue(p.position) }}>{p.position}</span>
               </div>
               {going && (
                 <span className="shrink-0 rounded bg-alarm/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-alarm">

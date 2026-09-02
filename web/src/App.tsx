@@ -19,6 +19,7 @@ import { Booting } from "@/components/Booting";
 import { ModeSwitch, type Mode } from "@/components/Modes";
 import { Trade } from "@/components/Trade";
 import { Waivers } from "@/components/Waivers";
+import { InjuryTag } from "@/components/InjuryTag";
 import { MyTeam } from "@/components/MyTeam";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -434,26 +435,28 @@ export default function App() {
           everything reprices on the next read, which without this reads as
           the app quietly disagreeing with what it said a minute ago. */}
       {!!(status.injury_news ?? []).length && newsKey !== seenNews && (
-        <div className="border-b border-alarm/30 bg-alarm/[0.08] px-4 py-2 text-xs">
-          <div className="mx-auto flex max-w-[1400px] items-start gap-3">
+        <div className="border-b border-alarm/30 bg-alarm/[0.08] px-4 py-1.5 text-[11px]">
+          <div className="mx-auto flex max-w-[1400px] items-center gap-2">
             <span className="shrink-0 font-semibold uppercase tracking-wider text-alarm">
               repriced
             </span>
-            <span className="flex-1 leading-relaxed text-chalk">
-              {(status.injury_news ?? []).map((n, i) => (
-                <span key={n.player_id + i}>
-                  {i > 0 && <span className="text-muted"> · </span>}
-                  {n.player_name}{" "}
-                  <span className="text-muted">
-                    {n.from ? n.from.toLowerCase() : "healthy"} &rarr;{" "}
-                  </span>
-                  <span className={n.to ? "text-alarm" : "text-turf"}>
-                    {n.to ? n.to.toLowerCase() : "healthy"}
-                  </span>
-                </span>
-              ))}
-            </span>
-            <Button size="sm" variant="ghost" className="h-6 shrink-0"
+            {/* THE SAME LETTERS AS THE ROSTER. This spelled the tags out --
+                "questionable → out" -- which is a sentence where a badge
+                does. One vocabulary for injuries across the whole app. */}
+            {(status.injury_news ?? []).map((n, i) => (
+              <span key={n.player_id + i} className="flex items-center gap-1">
+                {i > 0 && <span className="text-muted/60">·</span>}
+                <span className="truncate">{n.player_name}</span>
+                {n.from
+                  ? <InjuryTag tag={n.from} />
+                  : <span className="text-[9px] text-muted">—</span>}
+                <span className="text-muted/60">&rarr;</span>
+                {n.to
+                  ? <InjuryTag tag={n.to} />
+                  : <span className="text-[9px] font-bold text-turf">OK</span>}
+              </span>
+            ))}
+            <Button size="sm" variant="ghost" className="ml-auto h-6 shrink-0"
                     onClick={() => setSeenNews(newsKey)}>Dismiss</Button>
           </div>
         </div>

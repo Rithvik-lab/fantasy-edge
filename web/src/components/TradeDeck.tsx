@@ -5,6 +5,7 @@ import {
 } from "@/lib/api";
 import { POS_HUE } from "@/components/Charts";
 import { PlayerHover } from "@/components/PlayerHover";
+import { InjuryTag } from "@/components/InjuryTag";
 import { cn } from "@/lib/utils";
 
 /**
@@ -279,9 +280,10 @@ export function Row({ p, selected, onToggle, draggable }: {
       <PlayerHover playerId={p.player_id} className="min-w-0 flex-1">
         <span className="block cursor-help truncate text-xs">{p.player_name}</span>
       </PlayerHover>
-      {inj && inj !== "ACTIVE" && (
-        <span className="shrink-0 text-[9px] uppercase text-clock">{inj.slice(0, 3)}</span>
-      )}
+      {/* `inj.slice(0, 3)` gave QUE, DOU, INJ -- three letters of a word
+          rather than the letter every fantasy site uses, and the same INJ for
+          injured reserve as for anything else beginning that way. */}
+      <InjuryTag tag={inj} className="shrink-0" />
       <span className="num w-8 shrink-0 text-right text-[10.5px] text-muted">
         {Math.round(p.projected_points ?? 0)}
       </span>

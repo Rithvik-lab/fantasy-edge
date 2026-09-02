@@ -1505,12 +1505,23 @@ def team_report() -> dict:
             return []
         keep = [c for c in ("player_id", "player_name", "position", "slot",
                             "projected_points", "vor", "ecr", "season_p20",
-                            "season_p50", "season_p80", "expected_games")
+                            "season_p50", "season_p80", "expected_games",
+                            # THE TAG THE PRICE WAS BUILT FROM, not ESPN's live
+                            # one. They are the same string today, and if they
+                            # ever drift the roster must show the flag the
+                            # numbers beside it were computed with -- a badge
+                            # disagreeing with its own projection is worse than
+                            # no badge.
+                            "injury_status")
                 if c in df.columns]
         out = df.select(keep).to_dicts()
         for r in out:
             r["headshot"] = shots.get(r["player_id"])
             r["starting"] = starting
+            # The sentence and the availability come from the engine, so the
+            # number in the hover is the number the simulation used for him.
+            r["injury_note"] = depth.status_note(r.get("injury_status"),
+                                                 r.get("position"))
         return out
 
     return {
