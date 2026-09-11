@@ -9,7 +9,10 @@ is 1.0, and nothing happens. This measures the tail instead of assuming it.
 three for) joined to that week's PPR points, per team-position-week.
 """
 import sys
-sys.path.insert(0, "/Users/rithviksingidi/Downloads/FantasyEdge")
+from pathlib import Path
+# The repo root, found from this file rather than written down. A hardcoded
+# absolute path leaks whoever wrote it and breaks for everybody else.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import polars as pl, nflreadpy as nfl
 
 FANTASY = ("QB", "RB", "WR", "TE", "FB")

@@ -22,8 +22,11 @@ says nothing about what an August tag implies for a whole season, because
 nflverse publishes no preseason injury report to measure it with.
 """
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/Users/rithviksingidi/Downloads/FantasyEdge")
+# The repo root, found from this file rather than written down. A hardcoded
+# absolute path leaks whoever wrote it and breaks for everybody else.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import os
 

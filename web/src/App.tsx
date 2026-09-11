@@ -162,6 +162,18 @@ export default function App() {
    */
   const openLeague = useCallback(async (s: Status) => {
     setBooting(true);
+    // THE LEAGUE BEING OPENED, NOT THE ONE THAT WAS OPEN. `open` does not
+    // reach its own `setStatus` until after it has synced ESPN, so for those
+    // seconds `status` still held the PREVIOUS league -- and the loading
+    // screen reads its name off state. Picking a second league from My
+    // Leagues therefore spent the whole wait insisting you were opening the
+    // first one.
+    //
+    // Setting it here also leaves the app honest if the open fails: the
+    // engine has already switched leagues by the time we are called, so
+    // keeping the old name on screen would have the interface and the server
+    // disagreeing about which league is loaded.
+    setStatus(s);
     // OPENING A LEAGUE LANDS ON MY TEAM, always. Mode is deliberately not
     // persisted, but it survived in memory across a league switch, so leaving
     // waivers open and picking a different league from My Leagues dropped you

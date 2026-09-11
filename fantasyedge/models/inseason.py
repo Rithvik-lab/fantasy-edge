@@ -288,7 +288,7 @@ def measure(seasons: tuple[int, int] = (2002, 2023)) -> dict:
 # most memorable thing that has happened all season, and it moves the price
 # more than three quiet good games do. So true value uses n_eff and perceived
 # value (in trade.market) uses the raw count, amplified. The gap between them
-# is precisely the short-term pop-off Rithvik asked to catch: a player whose
+# is precisely the short-term pop-off this is meant to catch: a player whose
 # perceived value has run away from his effective one is a sell, and the
 # reverse is a buy.
 SPIKE_PENALTY = 0.8

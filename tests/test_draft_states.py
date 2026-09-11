@@ -15,7 +15,7 @@ TEAMS = [{"id": i, "name": f"Team {i}", "abbrev": f"T{i}",
           "owners": [SWID if i == 7 else "{OTHER}"]} for i in range(1, 13)]
 
 SETTINGS = {
-    "name": "Sunday Money",
+    "name": "Test League",
     "size": 12,
     "rosterSettings": {"lineupSlotCounts": {
         "0": 1, "2": 2, "4": 2, "6": 1, "23": 1, "16": 1, "17": 1, "20": 7}},

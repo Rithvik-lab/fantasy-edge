@@ -30,8 +30,11 @@ the box score, because a receiver who played and drew no targets has no
 `player_stats` row and would otherwise count as absent.
 """
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/Users/rithviksingidi/Downloads/FantasyEdge")
+# The repo root, found from this file rather than written down. A hardcoded
+# absolute path leaks whoever wrote it and breaks for everybody else.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import os
 
